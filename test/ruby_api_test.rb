@@ -323,14 +323,11 @@ class RubyAPITest < ExpectTest
     first, first_writer = pipe_session
     second, second_writer = pipe_session
     first_writer.close
-    background do
-      sleep 0.03
-      second_writer.write("ready")
-    end
     observed = []
     result = Expect.expect_result(timeout: 1) do |patterns|
       patterns.eof(from: first) do |connection|
         observed << connection
+        second_writer.write("ready")
         connection.continue(reset_timeout: false)
       end
       patterns.on("ready", from: second)

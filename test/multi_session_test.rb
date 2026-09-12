@@ -31,13 +31,10 @@ class MultiSessionTest < ExpectTest
     second, second_writer = pipe_session
     first_writer.close
     ended = []
-    background do
-      sleep 0.04
-      second_writer.write("done")
-    end
     result = Expect.expect_result(timeout: 1) do
       eof(from: first) do |connection|
         ended << connection
+        second_writer.write("done")
         Expect.continue(reset_timeout: false)
       end
       on("done", from: second)

@@ -93,8 +93,8 @@ class EdgeCaseTest < ExpectTest
   end
 
   def test_multiple_real_pty_processes
-    first = child('sleep 0.03; puts "one"')
-    second = child('sleep 0.07; puts "two"')
+    first = child('puts "one"')
+    second = child('STDIN.gets; puts "two"', raw_pty: true)
     seen = []
     record_session = lambda do |session|
       seen << session
@@ -102,7 +102,11 @@ class EdgeCaseTest < ExpectTest
     end
     result = Expect.expect_result(timeout: 2) do
       on(/one/, from: first, &record_session)
-      eof(from: first) { Expect.continue(reset_timeout: false) }
+      eof(from: first) do
+        # 明确建立两个进程的顺序，不能通过 sleep 推断启动和输出的先后。
+        second.puts("continue")
+        Expect.continue(reset_timeout: false)
+      end
       on("two", from: second)
     end
     assert_equal [first], seen
