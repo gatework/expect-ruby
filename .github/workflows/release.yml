@@ -1,0 +1,63 @@
+name: Release
+
+# 手动选择版本标签运行；本地 script/release.rb 发布不会再触发第二次上传。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require the tag to match the gem version
+        run: |
+          version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
+          test "$GITHUB_REF" = "refs/tags/v${version}"
+          ruby -r ./script/release -e 'Release.release_notes(File.read("CHANGELOG.md"), Expect::VERSION)'
+
+  verify:
+    name: Verify release artifact
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish GitHub Release and RubyGems
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0'
+      - name: Download the gem verified by CI
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: expect-pty-${{ github.sha }}
+          path: pkg/ci
+      - name: Publish the verified artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
+          ruby script/release.rb --artifact "pkg/ci/expect-pty-${version}.gem"

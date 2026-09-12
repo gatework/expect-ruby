@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
   spec.files = Dir[
     "lib/**/*.rb", "examples/**/*.rb", "examples/**/*.md", "docs/**/*.md",
     "test/**/*.rb", "test/**/*.sh", "test/**/*.md", "Gemfile", "Rakefile",
-    ".rubocop.yml", "expect-pty.gemspec", "README.md", "LICENSE", "CHANGELOG.md", "script/ci"
+    ".rubocop.yml", "expect-pty.gemspec", "README.md", "LICENSE", "CHANGELOG.md", "script/ci", "script/release.rb"
   ]
   spec.require_paths = ["lib"]
   spec.metadata["rubygems_mfa_required"] = "true"

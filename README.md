@@ -247,7 +247,9 @@ ruby examples/ssh_interact.rb --auto
 
 [GitHub Actions](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml) 在推送 `main`、推送 `v*` 标签、提交到 `main` 的 Pull Request 或手动触发时运行。流水线覆盖 Ubuntu 24.04 / macOS 15 与 Ruby 3.2、3.3、3.4、4.0 的 8 种组合；每个环境执行 `script/ci`，包括真实 PTY 测试和构建包的隔离安装验证。Ubuntu / Ruby 4.0 作业保留已验证的 Gem 构建产物 14 天，可从该次工作流的 Artifacts 下载。
 
-运行前先执行 `bundle install`。Gem 库的开发锁文件 `Gemfile.lock` 保留在本地，各 Ruby 环境按 `Gemfile` 解析兼容依赖。生成文件写入已忽略的 `pkg/ci/` 和 `tmp/`；流水线仅验证和保存构建产物，不自动发布 RubyGems 或创建 GitHub Release。更新工作流中的 Action 时，应同步更新固定的提交 SHA 和版本注释。
+运行前先执行 `bundle install`。Gem 库的开发锁文件 `Gemfile.lock` 保留在本地，各 Ruby 环境按 `Gemfile` 解析兼容依赖。生成文件写入已忽略的 `pkg/ci/` 和 `tmp/`。更新工作流中的 Action 时，应同步更新固定的提交 SHA 和版本注释。
+
+版本发布使用 `ruby script/release.rb`，直接复用本机已有的 Gem 和 GitHub 登录状态；脚本会完成验证、创建 GitHub Release 并推送同一个 Gem 到 RubyGems。也可以在 GitHub Actions 手动运行 Release 工作流。版本准备、Actions 凭据和失败重试见 [发布说明](docs/RELEASING.md)。
 
 SSH 示例用 `SSH_USER`、`SSH_HOST`、`SSH_KNOWN_HOSTS` 配置，密码隐藏输入或从 `EXPECT_PASSWORD` 读取；非本地主机要求受信任的 known_hosts 文件。`ssh_auto.rb` 顶部 `COMMANDS` 可直接修改，日志写入 `tmp/ssh-auto/`，权限 0600。
 

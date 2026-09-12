@@ -9,6 +9,9 @@ bundle exec ruby examples/dialogue.rb
 mkdir -p pkg/ci
 gem_version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
 gem_file="pkg/ci/expect-pty-${gem_version}.gem"
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+fi
 gem build expect-pty.gemspec --output "$gem_file"
 
 # 在独立目录安装刚构建的包，避免源码路径或 Bundler 掩盖打包遗漏。
