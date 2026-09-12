@@ -25,48 +25,45 @@ class TimeoutTest < ExpectTest
 
   def test_continue_resets_timeout
     session, writer = pipe_session
-    background do
-      sleep 0.07
-      writer.write("A")
-      sleep 0.09
-      writer.write("B")
-    end
-    number = session.expect(timeout: 0.13) do
-      on("A") { Expect.continue }
-      on("B")
+    number = with_timed_input(writer, [[7, "A"], [16, "B"]]) do
+      session.expect(timeout: 13) do
+        on("A") { Expect.continue }
+        on("B")
+      end
     end
     assert_equal 2, number
   end
 
   def test_continue_timeout_preserves_deadline
     session, writer = pipe_session
-    background do
-      sleep 0.07
-      writer.write("A")
-      sleep 0.12
-      writer.write("B")
-    end
-    start = Expect.monotonic
-    number = session.expect(timeout: 0.14) do
-      on("A") { Expect.continue(reset_timeout: false) }
-      on("B")
+    number = with_timed_input(writer, [[7, "A"], [19, "B"]]) do
+      result = session.expect(timeout: 14) do
+        on("A") { Expect.continue(reset_timeout: false) }
+        on("B")
+      end
+      assert_equal 14, Expect.monotonic
+      result
     end
     assert_nil number
-    assert_operator Expect.monotonic - start, :<, 0.19
     assert_equal :timeout, session.error
   end
 
   def test_restart_timeout_on_receive
     session, writer = pipe_session
     session.reset_timeout_on_read = true
-    background do
-      4.times do
-        sleep 0.06
-        writer.write(".")
-      end
-      writer.write("done")
+    number = with_timed_input(writer, [[6, "."], [12, "."], [18, "."], [24, ".done"]]) do
+      session.expect("done", timeout: 10)
     end
-    assert_equal 1, session.expect("done", timeout: 0.1)
+    assert_equal 1, number
+  end
+
+  def test_receive_keeps_deadline_without_reset
+    session, writer = pipe_session
+    result = with_timed_input(writer, [[6, "."], [12, "done"]]) do
+      session.expect_result("done", timeout: 10)
+    end
+    assert result.timeout?
+    assert_equal ".", session.buffer
   end
 
   def test_timeout_callback_receives_group_and_can_retry
@@ -146,5 +143,28 @@ class TimeoutTest < ExpectTest
       assert_equal 1, session.expect("ready", timeout: 1)
     end
     assert_equal "ready", session.match
+  end
+
+  private
+
+  # 按虚拟时间向真实管道写入数据；select 仍按调用方给定的期限决定就绪或超时。
+  # 这样可精确检查期限是否重置，不依赖 CI 线程能否在几十毫秒内获得调度。
+  def with_timed_input(writer, events, &block)
+    now = 0.0
+    pending = events.dup
+    select = lambda do |readers, _writers, _errors, timeout|
+      deadline = now + timeout
+      if pending.any? && pending.first[0] <= deadline
+        now, data = pending.shift
+        writer.write(data)
+        [readers, [], []]
+      else
+        now = deadline
+        nil
+      end
+    end
+    Expect.stub(:monotonic, -> { now }) do
+      IO.stub(:select, select, &block)
+    end
   end
 end

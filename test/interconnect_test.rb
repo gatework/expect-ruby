@@ -90,7 +90,8 @@ class InterconnectTest < ExpectTest
     source.on_sequence("original")
     background do
       writer.write("hello\n")
-      sleep 0.12
+      # 收到真实响应后才发送退出键，避免将子进程启动速度当成交互完成条件。
+      bounded { sleep 0.001 until sink.string == "reply:hello\n" }
       writer.write("\x1dtail")
     end
     assert_same(source, bounded { session.interact(input: source, escape: "\x1d", output: sink, timeout: 2) })

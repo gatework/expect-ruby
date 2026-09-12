@@ -133,7 +133,8 @@ class EdgeCaseTest < ExpectTest
         session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60", log_stdout: false)
         session.pid
       end
-      pid = abandoned
+      # Ruby 的保守 GC 可能扫描到创建线程栈上残留的引用；先结束该线程，确保会话确实不可达。
+      pid = Thread.new { abandoned }.value
       20.times do
         GC.start
         sleep 0.02
@@ -145,6 +146,7 @@ class EdgeCaseTest < ExpectTest
         end
       end
       Process.kill("KILL", pid) rescue nil
+      Process.waitpid(pid) rescue nil
       abort "abandoned child survived GC"
     RUBY
     output, status = Open3.capture2e(RbConfig.ruby, "--disable-gems", "-I", File.expand_path("../lib", __dir__), "-e",
