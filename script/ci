@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+bundle exec rake
+bundle exec ruby examples/dialogue.rb
+
+mkdir -p pkg/ci
+gem_version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
+gem_file="pkg/ci/expect-pty-${gem_version}.gem"
+gem build expect-pty.gemspec --output "$gem_file"
+
+# 在独立目录安装刚构建的包，避免源码路径或 Bundler 掩盖打包遗漏。
+smoke_dir="$(mktemp -d)"
+trap 'rm -rf "$smoke_dir"' EXIT
+gem install --local --no-document --install-dir "$smoke_dir/gems" "$gem_file"
+
+(
+  cd "$smoke_dir"
+  unset BUNDLE_GEMFILE BUNDLE_BIN_PATH RUBYOPT RUBYLIB
+  export GEM_HOME="$smoke_dir/gems" GEM_PATH="$smoke_dir/gems"
+  ruby -r expect/pty -r rbconfig <<'RUBY'
+spec = Gem.loaded_specs.fetch("expect-pty")
+# 临时目录可能经由符号链接访问，先统一为实际路径再检查。
+install_root = File.realpath(ENV.fetch("GEM_HOME"))
+abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
+
+child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'
+Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, log_stdout: false) do |session|
+  abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5)
+
+  session.puts("expect-ruby")
+  abort "installed gem PTY dialogue failed" unless session.expect("reply:expect-ruby", timeout: 5)
+  status = session.soft_close(timeout: 5)
+  abort "installed gem child did not exit successfully" unless status&.success?
+end
+
+puts "Installed #{spec.full_name}: PTY dialogue and process cleanup passed"
+RUBY
+)

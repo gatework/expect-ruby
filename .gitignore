@@ -1,0 +1,36 @@
+# Bundler 和本地依赖；Gem 库不提交开发环境的锁文件。
+/.bundle/
+/vendor/
+/Gemfile.lock
+
+# 构建产物、测试报告和运行日志。
+/pkg/
+/*.gem
+/coverage/
+/tmp/
+/log/
+*.log
+/.yardoc/
+/doc/
+/rdoc/
+/.rubocop_cache/
+/.ruby-lsp/
+
+# 本地环境和 SSH 凭据；保留可公开的配置示例。
+.env
+.env.*
+!.env.example
+!.env.*.example
+/.ssh/
+/.secrets/
+*.pem
+*.key
+
+# 编辑器和操作系统临时文件。
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+._*

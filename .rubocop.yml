@@ -1,0 +1,29 @@
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "pkg/**/*"
+    - "tmp/**/*"
+    - "vendor/**/*"
+
+# Protocol state machines and integration scenarios are reviewed by behavior,
+# rather than split merely to meet a line or branch count.
+Metrics:
+  Enabled: false
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Style/Documentation:
+  Exclude:
+    - "test/**/*"
+
+Naming/RescuedExceptionsVariableName:
+  PreferredName: error
+
+Layout/LineLength:
+  Max: 120
