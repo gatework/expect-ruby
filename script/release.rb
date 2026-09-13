@@ -33,15 +33,20 @@ class Release
     @commit = capture("git", "rev-parse", "HEAD") unless @dry_run
 
     command("bash", "script/ci") if @build
-    verify_package
-    @sha256 = Digest::SHA256.file(@artifact).hexdigest
+    # 独占目录中的副本贯穿校验和上传，其他构建不会改变本次发布的字节。
     directory = File.join("pkg", "release", @version)
     FileUtils.mkdir_p(directory)
+    directory = Dir.mktmpdir("candidate-", directory)
+    candidate = File.join(directory, "expect-pty-#{@version}.gem")
+    FileUtils.cp(@artifact, candidate)
+    @artifact = File.expand_path(candidate)
+    verify_package
+    @sha256 = Digest::SHA256.file(@artifact).hexdigest
     @checksum_file = File.join(directory, "SHA256SUMS")
     @notes_file = File.join(directory, "release-notes.md")
     File.write(@checksum_file, "#{@sha256}  #{File.basename(@artifact)}\n")
     File.write(@notes_file, "#{notes}\n")
-    puts "Verified #{@tag}: #{@sha256}"
+    puts "Verified #{@tag}: #{@sha256}\nArtifact: #{@artifact}"
     return puts "Dry run complete: #{@artifact}" if @dry_run
 
     verify_remote_source
@@ -54,7 +59,10 @@ class Release
   def self.release_notes(changelog, version)
     raise "Use a stable X.Y.Z version" unless /\A\d+\.\d+\.\d+\z/.match?(version)
 
-    sections = changelog.split(/^## /).drop(1).map { |section| section.split("\n", 2) }
+    sections = changelog.split(/^## /).drop(1).map do |section|
+      heading, body = section.split("\n", 2)
+      [heading.strip, body]
+    end
     unreleased = sections.find { |heading, _body| heading == "Unreleased" }
     if unreleased && !unreleased[1].to_s.strip.empty?
       raise "Move Unreleased changes into the versioned changelog before releasing"
@@ -115,14 +123,19 @@ class Release
     end
     raise "Artifact file list differs from the source" unless package.contents.sort == expected.files.sort
 
-    Dir.mktmpdir("expect-release-") do |directory|
-      package.extract_files(directory)
-      expected.files.each do |file|
-        content = File.binread(File.join(directory, file))
-        raise "Artifact differs from source: #{file}" unless content == File.binread(file)
-        next if File.stat(File.join(directory, file)).mode & 0o111 == File.stat(file).mode & 0o111
+    # 直接检查归档中的权限，避免解包时本机 umask 改写执行位。
+    File.open(@artifact, "rb") do |io|
+      Gem::Package::TarReader.new(io) do |archive|
+        data = archive.find { |entry| entry.full_name == "data.tar.gz" }
+        package.open_tar_gz(data) do |tar|
+          tar.each do |entry|
+            file = entry.full_name
+            raise "Artifact differs from source: #{file}" unless entry.file? && entry.read == File.binread(file)
+            next if entry.header.mode & 0o111 == File.stat(file).mode & 0o111
 
-        raise "Artifact executable permissions differ: #{file}"
+            raise "Artifact executable permissions differ: #{file}"
+          end
+        end
       end
     end
   end
@@ -165,7 +178,12 @@ class Release
     assets = [@artifact, @checksum_file]
     if release
       existing, missing = assets.partition do |asset|
-        release.fetch("assets").any? { |entry| entry.fetch("name") == File.basename(asset) }
+        entry = release.fetch("assets").find { |item| item.fetch("name") == File.basename(asset) }
+        if entry && entry.fetch("state") != "uploaded"
+          raise "Incomplete GitHub asset: #{entry.fetch("name")}; stop any active upload, remove the incomplete " \
+                "asset in GitHub Release, then retry with the same artifact"
+        end
+        entry
       end
       verify_github_assets(existing)
       missing.each { |asset| command("gh", "release", "upload", @tag, asset, "--repo", REPOSITORY) }

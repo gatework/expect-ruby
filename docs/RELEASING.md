@@ -5,10 +5,10 @@
 ## 准备版本
 
 1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.2.0`。
-2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.2.0 - 2026-09-12`；可以保留空的 `Unreleased` 标题。
+2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.2.0 - 2026-09-13`；可以保留空的 `Unreleased` 标题。
 3. 提交并推送到 `main`。发布时工作区必须干净，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
-发布脚本只接受正式版 `X.Y.Z`。仓库当前的 `0.1.1` 仍有未归档的接口变更，应先完成上述版本准备。
+发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
 
 ## 本地发布
 
@@ -20,7 +20,7 @@ ruby script/release.rb --dry-run
 ruby script/release.rb
 ```
 
-默认执行 `script/ci` 的检查、完整测试、构建和隔离安装验证，再核对包内文件，在 `pkg/release/版本号/` 生成发布说明和校验文件。正式发布先创建 GitHub Release，再上传 RubyGems，最后下载 RubyGems 上的包核对 SHA256。GitHub 上还没有标签时，会为当前提交创建 `v版本号` 标签。
+默认执行 `script/ci` 的检查、完整测试、构建和隔离安装验证，再把 Gem 复制到 `pkg/release/版本号/candidate-*/` 的独占目录，核对包内文件并生成发布说明和校验文件。该副本贯穿后续发布，目录会保留供失败重试。正式发布先创建 GitHub Release，再上传 RubyGems，最后下载 RubyGems 上的包核对 SHA256。GitHub 上还没有标签时，会为当前提交创建 `v版本号` 标签。
 
 `--dry-run` 只做本地验证，可在提交前使用。它仍要求版本号和发布说明完整。
 
@@ -42,7 +42,7 @@ gh workflow run release.yml --ref v0.2.0 --repo gatework/expect-ruby
 
 ## 失败后继续
 
-保留首次验证的 Gem，用它重试发布；更换 RubyGems 工具版本或重新构建可能得到不同字节，同一个版本不得覆盖已有内容。
+保留脚本输出的 `Artifact` 路径，用该候选 Gem 重试发布；更换 RubyGems 工具版本或重新构建可能得到不同字节，同一个版本不得覆盖已有内容。也可以直接指定从 CI 或 Release 下载的原包：
 
 ```sh
 ruby script/release.rb --artifact pkg/ci/expect-pty-0.2.0.gem
@@ -51,3 +51,5 @@ ruby script/release.rb --artifact pkg/ci/expect-pty-0.2.0.gem
 工作流失败时优先使用 Re-run failed jobs，继续使用本次 CI 保存的产物。需要在本地恢复时，检出发布标签对应的干净源码，下载该 Release 的 Gem，再通过 `--artifact` 指定它。
 
 脚本会校验现有 RubyGems 版本和 GitHub Release 附件的 SHA256；一致时复用，不一致时中止。已有 GitHub Release 缺少附件时会补传，已有版本和附件不会被覆盖。
+
+上传中断若留下 `starter` 状态的空附件，脚本会明确指出附件名称。先确认没有其他发布或上传在运行，再在 GitHub Release 中删除该失败附件，使用原包重试；脚本不会自动删除可能仍在上传的附件。

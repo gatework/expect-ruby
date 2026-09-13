@@ -8,7 +8,13 @@
 
 ## 安装和运行
 
-项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。本项目尚未发布到 RubyGems，可在应用的 Gemfile 中从 GitHub 安装，然后运行 `bundle install`：
+项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
+
+```ruby
+gem "expect-pty", "~> 0.2.0"
+```
+
+也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
 
 ```ruby
 gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "main"
@@ -18,7 +24,7 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 gem build expect-pty.gemspec
-gem install ./expect-pty-0.1.1.gem
+gem install ./expect-pty-0.2.0.gem
 ```
 
 ```ruby

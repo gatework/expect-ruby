@@ -15,6 +15,7 @@ class ReleaseTest < Minitest::Test
       assert_raises(RuntimeError) { Release.release_notes(changelog, "0.2.0") }
     end
     assert_raises(RuntimeError) { Release.release_notes("## 0.2.0.rc1\n- Preview.", "0.2.0.rc1") }
+    assert_raises(RuntimeError) { Release.release_notes("## Unreleased \t\n- Pending.\n## 0.2.0\n- Ready.", "0.2.0") }
   end
 
   def test_dry_run_verifies_the_artifact_without_remote_calls
@@ -24,10 +25,12 @@ class ReleaseTest < Minitest::Test
           capture_io { release.run }
         end
       end
-      directory = File.join("pkg", "release", Expect::VERSION)
+      directory = Dir.glob(File.join("pkg", "release", Expect::VERSION, "candidate-*")).fetch(0)
       checksum = File.read(File.join(directory, "SHA256SUMS"))
       assert_equal "#{Digest::SHA256.file(artifact).hexdigest}  #{File.basename(artifact)}\n", checksum
       assert_equal "- Release fixture.\n", File.read(File.join(directory, "release-notes.md"))
+      File.write(artifact, "another build")
+      assert_equal checksum.split.first, Digest::SHA256.file(File.join(directory, File.basename(artifact))).hexdigest
     end
   end
 
@@ -93,6 +96,33 @@ class ReleaseTest < Minitest::Test
       release.stub(:github, github) do
         assert_match "another commit", assert_raises(RuntimeError) { release.send(:verify_remote_source) }.message
       end
+    end
+  end
+
+  def test_package_validation_uses_archive_modes_regardless_of_umask
+    with_package do |release, artifact|
+      File.chmod(0o755, "payload.rb")
+      capture_io { Gem::Package.build(Gem::Specification.load(File.expand_path("expect-pty.gemspec"))) }
+      previous_umask = File.umask(0o077)
+      begin
+        release.send(:verify_package)
+        assert File.file?(artifact)
+        File.chmod(0o644, "payload.rb")
+        assert_match "permissions differ", assert_raises(RuntimeError) { release.send(:verify_package) }.message
+      ensure
+        File.umask(previous_umask)
+      end
+    end
+  end
+
+  def test_incomplete_github_asset_has_an_explicit_recovery_message
+    release = Release.new
+    release.instance_variable_set(:@checksum_file, "SHA256SUMS")
+    remote = { "assets" => [{ "name" => "SHA256SUMS", "state" => "starter" }] }
+    release.stub(:github_release, remote) do
+      error = assert_raises(RuntimeError) { release.send(:publish_github) }
+      assert_match "Incomplete GitHub asset: SHA256SUMS", error.message
+      assert_match "stop any active upload", error.message
     end
   end
 
