@@ -1,28 +1,39 @@
 # 发布版本
 
-项目名为 `expect-ruby`，RubyGems 名为 `expect-pty`。发布脚本会创建 GitHub Release，附带 Gem 和 `SHA256SUMS`，并把同一个 Gem 推送到 RubyGems。
+项目名为 `expect-ruby`，RubyGems 名为 `expect-pty`。使用 `script/release.rb --rubygems-only` 可仅发布 RubyGems；不加该选项时还会创建 GitHub Release，附带同一个 Gem 和 `SHA256SUMS`。生成文件统一放在已被 Git 忽略的 `tmp/` 下。
 
 ## 准备版本
 
 1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.2.0`。
 2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.2.0 - 2026-09-13`；可以保留空的 `Unreleased` 标题。
-3. 提交并推送到 `main`。发布时工作区必须干净，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
+3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
 发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
 
-## 本地发布
+## 仅发布 RubyGems
 
-本地已登录 `gem` 时，脚本直接使用已有凭据；GitHub 使用 `gh auth login` 的登录状态。如果 RubyGems 要求一次性验证码，`gem push` 会提示输入。
+本地已登录 `gem` 时，脚本直接使用已有凭据。如果 RubyGems 要求一次性验证码，`gem push` 会提示输入。此模式不调用 `gh`，不要求推送到 GitHub，也不创建标签或 GitHub Release。
 
 ```sh
 bundle install
+ruby script/release.rb --rubygems-only --dry-run
+ruby script/release.rb --rubygems-only
+```
+
+默认执行 `script/ci` 的检查、完整测试、构建和隔离安装验证，构建包保存在 `tmp/ci/expect-pty-版本号.gem`。随后复制到 `tmp/release/版本号/candidate-*/` 的独占目录，核对包内文件并生成发布说明和校验文件。该副本贯穿后续发布，目录会保留供失败重试。正式发布前再次确认源码未变，上传 RubyGems 后下载远端包核对 SHA256。
+
+`--dry-run` 只做本地验证，可在提交前使用。它仍要求版本号和发布说明完整。
+
+## 同时发布 GitHub Release
+
+此模式还会复用 `gh auth login` 的登录状态：
+
+```sh
 ruby script/release.rb --dry-run
 ruby script/release.rb
 ```
 
-默认执行 `script/ci` 的检查、完整测试、构建和隔离安装验证，再把 Gem 复制到 `pkg/release/版本号/candidate-*/` 的独占目录，核对包内文件并生成发布说明和校验文件。该副本贯穿后续发布，目录会保留供失败重试。正式发布先创建 GitHub Release，再上传 RubyGems，最后下载 RubyGems 上的包核对 SHA256。GitHub 上还没有标签时，会为当前提交创建 `v版本号` 标签。
-
-`--dry-run` 只做本地验证，可在提交前使用。它仍要求版本号和发布说明完整。
+正式发布先创建 GitHub Release，再上传 RubyGems，最后下载 RubyGems 上的包核对 SHA256。GitHub 上还没有标签时，会为当前提交创建 `v版本号` 标签。
 
 ## GitHub Actions 发布
 
@@ -45,8 +56,10 @@ gh workflow run release.yml --ref v0.2.0 --repo gatework/expect-ruby
 保留脚本输出的 `Artifact` 路径，用该候选 Gem 重试发布；更换 RubyGems 工具版本或重新构建可能得到不同字节，同一个版本不得覆盖已有内容。也可以直接指定从 CI 或 Release 下载的原包：
 
 ```sh
-ruby script/release.rb --artifact pkg/ci/expect-pty-0.2.0.gem
+ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.3.0.gem
 ```
+
+将示例路径替换为实际输出的 `Artifact` 路径。`--artifact` 会跳过构建和测试，但仍核对包与当前源码是否一致；需要同时恢复 GitHub Release 时去掉 `--rubygems-only`。
 
 工作流失败时优先使用 Re-run failed jobs，继续使用本次 CI 保存的产物。需要在本地恢复时，检出发布标签对应的干净源码，下载该 Release 的 Gem，再通过 `--artifact` 指定它。
 

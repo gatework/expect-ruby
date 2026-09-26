@@ -6,9 +6,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 bundle exec rake
 bundle exec ruby examples/dialogue.rb
 
-mkdir -p pkg/ci
+mkdir -p tmp/ci
 gem_version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
-gem_file="pkg/ci/expect-pty-${gem_version}.gem"
+gem_file="tmp/ci/expect-pty-${gem_version}.gem"
 if git rev-parse --git-dir >/dev/null 2>&1; then
   export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
 fi

@@ -25,12 +25,78 @@ class ReleaseTest < Minitest::Test
           capture_io { release.run }
         end
       end
-      directory = Dir.glob(File.join("pkg", "release", Expect::VERSION, "candidate-*")).fetch(0)
+      directory = Dir.glob(File.join("tmp", "release", Expect::VERSION, "candidate-*")).fetch(0)
       checksum = File.read(File.join(directory, "SHA256SUMS"))
       assert_equal "#{Digest::SHA256.file(artifact).hexdigest}  #{File.basename(artifact)}\n", checksum
       assert_equal "- Release fixture.\n", File.read(File.join(directory, "release-notes.md"))
       File.write(artifact, "another build")
       assert_equal checksum.split.first, Digest::SHA256.file(File.join(directory, File.basename(artifact))).hexdigest
+    end
+  end
+
+  def test_rubygems_only_publishes_the_verified_copy_without_github
+    with_package do |_release, artifact|
+      release = Release.new(artifact: artifact, rubygems_only: true)
+      bytes = File.binread(artifact)
+      checksum = Digest::SHA256.hexdigest(bytes)
+      published = false
+      capture = ->(*arguments) { arguments.include?("rev-parse") ? "verified" : "" }
+      get = lambda do |path|
+        if path.start_with?("/downloads/")
+          Struct.new(:code, :body).new("200", bytes)
+        elsif published
+          Struct.new(:code, :body).new("200", JSON.generate("sha" => checksum, "yanked" => false))
+        else
+          Struct.new(:code, :body).new("404", "")
+        end
+      end
+      push = lambda do |*arguments|
+        candidate = arguments.fetch(2)
+        assert_equal ["gem", "push", candidate, "--host", "https://rubygems.org"], arguments
+        assert_match %r{/tmp/release/#{Regexp.escape(Expect::VERSION)}/candidate-[^/]+/}, candidate
+        assert_equal bytes, File.binread(candidate)
+        refute_equal File.expand_path(artifact), candidate
+        published = true
+      end
+      release.stub(:capture, capture) do
+        release.stub(:get, get) do
+          release.stub(:system, push) do
+            release.stub(:github, ->(*) { flunk "RubyGems-only release contacted GitHub" }) do
+              release.stub(:publish_github, -> { flunk "RubyGems-only release published to GitHub" }) do
+                output, = capture_io { release.run }
+                assert_includes output, "SHA256 verified"
+              end
+            end
+          end
+        end
+      end
+      assert published
+    end
+  end
+
+  def test_rubygems_only_rejects_uncommitted_source_before_publishing
+    with_package do |_release, artifact|
+      release = Release.new(artifact: artifact, rubygems_only: true)
+      release.stub(:capture, " M payload.rb") do
+        release.stub(:get, ->(*) { flunk "uncommitted source contacted RubyGems" }) do
+          assert_match "Commit all source changes", assert_raises(RuntimeError) { release.run }.message
+        end
+      end
+    end
+  end
+
+  def test_rubygems_only_rechecks_source_after_verification
+    with_package do |_release, artifact|
+      release = Release.new(artifact: artifact, rubygems_only: true)
+      statuses = ["", " M payload.rb"]
+      capture = ->(*arguments) { arguments.include?("rev-parse") ? "verified" : statuses.shift }
+      release.stub(:capture, capture) do
+        release.stub(:get, ->(*) { flunk "changed source contacted RubyGems" }) do
+          capture_io do
+            assert_match "Source changed", assert_raises(RuntimeError) { release.run }.message
+          end
+        end
+      end
     end
   end
 

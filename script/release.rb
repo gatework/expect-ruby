@@ -16,11 +16,12 @@ class Release
   REPOSITORY = "gatework/expect-ruby"
   GEM_HOST = "https://rubygems.org"
 
-  def initialize(artifact: nil, dry_run: false)
+  def initialize(artifact: nil, dry_run: false, rubygems_only: false)
     @version = Expect::VERSION
     @tag = "v#{@version}"
-    @artifact = File.expand_path(artifact || "pkg/ci/expect-pty-#{@version}.gem")
+    @artifact = File.expand_path(artifact || "tmp/ci/expect-pty-#{@version}.gem")
     @dry_run = dry_run
+    @rubygems_only = rubygems_only
     @build = artifact.nil?
   end
 
@@ -34,7 +35,7 @@ class Release
 
     command("bash", "script/ci") if @build
     # 独占目录中的副本贯穿校验和上传，其他构建不会改变本次发布的字节。
-    directory = File.join("pkg", "release", @version)
+    directory = File.join("tmp", "release", @version)
     FileUtils.mkdir_p(directory)
     directory = Dir.mktmpdir("candidate-", directory)
     candidate = File.join(directory, "expect-pty-#{@version}.gem")
@@ -49,9 +50,13 @@ class Release
     puts "Verified #{@tag}: #{@sha256}\nArtifact: #{@artifact}"
     return puts "Dry run complete: #{@artifact}" if @dry_run
 
-    verify_remote_source
-    verify_registry_checksum(registry_version)
-    publish_github
+    if @rubygems_only
+      verify_local_source
+    else
+      verify_remote_source
+      verify_registry_checksum(registry_version)
+      publish_github
+    end
     publish_rubygems
   end
 
@@ -97,10 +102,14 @@ class Release
     JSON.parse(output)
   end
 
+  def verify_local_source
+    return if capture("git", "rev-parse", "HEAD") == @commit && capture("git", "status", "--porcelain").empty?
+
+    raise "Source changed during verification; commit the changes and start again"
+  end
+
   def verify_remote_source
-    unless capture("git", "rev-parse", "HEAD") == @commit && capture("git", "status", "--porcelain").empty?
-      raise "Source changed during verification; commit the changes and start again"
-    end
+    verify_local_source
 
     comparison = github("compare/#{@commit}...main")
     raise "Push this commit to #{REPOSITORY}/main first" unless %w[ahead identical].include?(comparison.fetch("status"))
@@ -249,7 +258,10 @@ end
 if $PROGRAM_NAME == __FILE__
   options = {}
   parser = OptionParser.new do |arguments|
-    arguments.banner = "Usage: ruby script/release.rb [--dry-run] [--artifact PATH]"
+    arguments.banner = "Usage: ruby script/release.rb [--rubygems-only] [--dry-run] [--artifact PATH]"
+    arguments.on("--rubygems-only", "Publish only to RubyGems using the existing gem login; no GitHub access") do
+      options[:rubygems_only] = true
+    end
     arguments.on("--artifact PATH", "Publish an already verified gem without rebuilding") do |path|
       options[:artifact] = File.expand_path(path)
     end
