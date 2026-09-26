@@ -6,6 +6,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 bundle exec rake
 bundle exec ruby examples/dialogue.rb
 
+# 只检查小规模工作负载的正确性，不为共享 CI 机器设置性能阈值。
+for benchmark in matching relay send_slow; do
+  bundle exec ruby "benchmark/${benchmark}.rb" --smoke
+done
+
 mkdir -p tmp/ci
 gem_version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
 gem_file="tmp/ci/expect-pty-${gem_version}.gem"

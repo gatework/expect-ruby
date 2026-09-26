@@ -87,14 +87,20 @@ class Expect
 
   # 转发一个会话的待处理缓冲并剔除转义；返回 false 表示应结束整个转接。
   # 字面序列暂存潜在前缀，正则序列结合历史匹配；final 为真时不再等待后续字节。
+  # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 转义匹配、前缀暂存和回调消费属于同一轮扫描。
   def self.relay_buffer(session, buffers, final: false)
     buffer = buffers.fetch(session)
     loop do
       sequences = session.__send__(:sequences).except(:eof)
       history = session.__send__(:relay_history)
+      text = nil
+      utf8_regexp = false
       matches = sequences.filter_map do |key, handler|
         if key.is_a?(Regexp)
-          position = Pattern.new(value: key).locate(history + buffer, final: final)
+          # 仅在本轮扫描复用组合文本；回调可能更换规则或消费缓冲，下一轮必须重新构造。
+          text ||= history + buffer
+          utf8_regexp ||= key.fixed_encoding? && key.encoding == Encoding::UTF_8
+          position = Pattern.new(value: key).locate(text, final: final)
           if position
             offset, length, = position
             raise ArgumentError, "escape regexp must consume at least one byte" if length.zero?
@@ -148,12 +154,12 @@ class Expect
         data = buffer.byteslice(0, count)
         block_given? ? yield(data) : session.__send__(:propagate, data)
       end
-      if sequences.keys.any?(Regexp)
+      if text
         history << buffer.byteslice(0, count)
         limit = session.buffer_limit || REGEXP_ESCAPE_HISTORY_LIMIT
         if history.bytesize > limit
           history.replace(history.byteslice(-limit, limit))
-          if sequences.keys.any? { |key| key.is_a?(Regexp) && key.fixed_encoding? && key.encoding == Encoding::UTF_8 }
+          if utf8_regexp
             # 窗口可能从 UTF-8 续字节开始；丢弃不完整的首字符后再交给固定编码正则。
             history.slice!(0) while (byte = history.getbyte(0)) && (0x80..0xBF).cover?(byte)
           end
@@ -163,6 +169,7 @@ class Expect
       return block_given? && count.positive? ? :pending : true
     end
   end
+  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   private_class_method :relay_buffer
 

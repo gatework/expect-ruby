@@ -15,7 +15,8 @@ Gem::Specification.new do |spec|
   spec.files = Dir[
     "lib/**/*.rb", "examples/**/*.rb", "examples/**/*.md", "docs/**/*.md", "benchmark/**/*.rb",
     "test/**/*.rb", "test/**/*.sh", "test/**/*.md", "Gemfile", "Rakefile",
-    ".rubocop.yml", "expect-pty.gemspec", "README.md", "LICENSE", "CHANGELOG.md", "script/ci", "script/release.rb"
+    ".rubocop.yml", "expect-pty.gemspec", "README.md", "CONTRIBUTING.md", "LICENSE", "CHANGELOG.md",
+    "script/ci", "script/release.rb"
   ]
   spec.require_paths = ["lib"]
   # 显式声明可独立升级的标准库 gem，供应用的 Bundler 解析完整运行时依赖。

@@ -234,6 +234,43 @@ class RelayRecoveryTest < ExpectTest
     end
   end
 
+  def test_split_literal_and_short_write_failures_preserve_delivery_and_callback_order
+    [1, 2, 3].product([1, 2, 3], [0, 2]).each do |split, step, failure_offset|
+      source, writer = pipe_session
+      fast = StringIO.new
+      received = "".b
+      failed = false
+      slow = Object.new
+      slow.define_singleton_method(:write) do |data|
+        if !failed && received.bytesize == failure_offset
+          failed = true
+          raise IOError, "injected partial delivery"
+        end
+        count = [step, data.bytesize].min
+        count = [count, failure_offset - received.bytesize].min unless failed
+        received << data.byteslice(0, count)
+        count
+      end
+      callbacks = []
+      source.listeners = [fast, slow]
+      source.on_sequence("STOP") do
+        callbacks << [fast.string.dup, received.dup]
+        false
+      end
+      source.buffer = "head#{"STOP".byteslice(0, split)}"
+      writer.write("#{"STOP".byteslice(split..)}tail")
+      assert_raises(IOError) { bounded { Expect.interconnect(source, timeout: 1) } }
+      assert_empty callbacks
+      assert source.pending_output?
+      assert_same(source, bounded { Expect.interconnect(source, timeout: 1) })
+      assert_equal [%w[head head]], callbacks
+      assert_equal "tail", source.buffer
+      assert_equal "head", fast.string
+      assert_equal "head", received
+      refute source.pending_output?
+    end
+  end
+
   def test_flush_failure_retries_flush_without_replaying_data
     source, = pipe_session
     output = StringIO.new

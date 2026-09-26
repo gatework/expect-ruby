@@ -133,6 +133,41 @@ class IOTest < ExpectTest
     assert_equal 1, session.expect("ABC", timeout: 1)
   end
 
+  def test_send_slow_zero_delay_only_polls_and_later_reply_remains_readable
+    client, peer = Socket.pair(:UNIX, :STREAM, 0)
+    @ios.push(client, peer)
+    session = Expect.open(client, log_stdout: false)
+    @sessions << session
+    waits = []
+    original = client.method(:wait_readable)
+    client.stub(:wait_readable, lambda { |timeout|
+      waits << timeout
+      original.call(0)
+    }) do
+      assert_equal 8, session.send_slow("a中😀", delay: 0)
+    end
+    assert_equal [0, 0, 0], waits
+    assert_equal("a中😀".b, bounded { peer.read(8) })
+    peer.write("late reply")
+    assert_equal 1, session.expect("late reply", timeout: 1)
+    assert_empty session.buffer
+  end
+
+  def test_send_slow_preserves_character_delay_and_write_timeout
+    session, = pipe_session
+    calls = []
+    failure = Expect::WriteTimeout.new(bytes_written: 0)
+    session.stub(:sleep, ->(duration) { calls << [:sleep, duration] }) do
+      session.stub(:write, lambda { |data|
+        calls << [:write, data]
+        raise failure
+      }) do
+        assert_same failure, assert_raises(Expect::WriteTimeout) { session.send_slow("中b", delay: 0.25) }
+      end
+    end
+    assert_equal [[:sleep, 0.25], [:write, "中"]], calls
+  end
+
   def test_large_bidirectional_write_does_not_deadlock
     session = child("STDIN.binmode; STDOUT.binmode; loop { print STDIN.readpartial(4096) }", raw_pty: true,
                                                                                              write_timeout: 3)

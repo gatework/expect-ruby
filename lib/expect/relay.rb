@@ -12,6 +12,7 @@ class Expect
       @previous = @sessions.to_h { |session| [session, session.__send__(:interaction_buffer)] }
     end
 
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 共享读写循环统一维护来源和目标期限。
     def run
       @sessions.each { |session| session.__send__(:interaction_buffer=, @buffers.fetch(session)) }
       outputs.each(&:restart_timeout)
@@ -66,7 +67,7 @@ class Expect
 
               begin
                 if @buffers.key?(session)
-                  session.__send__(:read_available, propagate: false, buffer: @buffers.fetch(session))
+                  session.__send__(:read_available, propagate: false, buffer: @buffers.fetch(session), trim: false)
                 else
                   session.__send__(:read_available, propagate: false)
                 end
@@ -87,6 +88,7 @@ class Expect
       @previous.each { |session, buffer| session.__send__(:interaction_buffer=, buffer) }
       @buffers.each { |session, buffer| session.__send__(:restore_relay_buffer, buffer) }
     end
+    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     private
 

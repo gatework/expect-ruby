@@ -21,6 +21,8 @@ class Expect
   CONTINUE = :continue
   CONTINUE_WITHOUT_RESET = :continue_without_reset
   READ_SIZE = 16_384
+  CONFIGURATION_MUTEX = Mutex.new
+  private_constant :CONFIGURATION_MUTEX
 
   class SpawnError < StandardError; end
 
@@ -40,14 +42,20 @@ class Expect
       return @configuration if defined?(@configuration)
       return superclass.configuration unless self == Expect
 
-      @configuration = Configuration.new.freeze
+      CONFIGURATION_MUTEX.synchronize { @configuration ||= Configuration.new.freeze }
     end
 
     # 基于旧快照构造可修改副本，全部赋值与配置块成功后才发布，异常时保留原配置。
     def configure(**)
-      updated = Configuration.new(**configuration.to_h, **)
-      yield updated if block_given?
-      @configuration = updated.freeze
+      raise ThreadError, "nested configure is not supported" if CONFIGURATION_MUTEX.owned?
+
+      # 初始化默认快照后，将整个读改写过程串行化，避免并发配置丢失更新。
+      configuration
+      CONFIGURATION_MUTEX.synchronize do
+        updated = Configuration.new(**configuration.to_h, **)
+        yield updated if block_given?
+        @configuration = updated.freeze
+      end
     end
 
     # 创建并启动会话；有块时返回块结果并确保关闭，无块时由调用方负责生命周期。
@@ -173,6 +181,7 @@ class Expect
   end
 
   # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
+  # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- PTY 子进程启动与失败回传共用一次生命周期。
   def spawn(*command, env: {}, chdir: nil)
     raise SpawnError, "cannot reuse a spawned session" if @command
     raise SpawnError, "only a new PTY session can spawn" unless @slave && !@slave.closed? && !closed?
@@ -223,6 +232,7 @@ class Expect
     from_child&.close unless from_child&.closed?
     to_parent&.close unless to_parent&.closed?
   end
+  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   # 在当前会话等待文本或事件，返回模式序号或 nil。
   def expect(...) = expect_result(...).number
@@ -297,6 +307,7 @@ class Expect
   end
 
   # 按 Ruby to_s 规则原样写入所有字节，返回字节数；背压等待受 write_timeout 限制。
+  # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 写入、背压排空和同一期限必须同步推进。
   def write(*objects)
     raise IOError, "closed Expect session" if closed? || writer.closed?
 
@@ -339,6 +350,7 @@ class Expect
     end
     data.bytesize
   end
+  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   # 链式写入单个对象，返回当前会话。
   def <<(object)
@@ -364,7 +376,7 @@ class Expect
       object.to_s.each_char do |character|
         sleep(pause) if pause.positive?
         count += write(character)
-        read_available if !eof? && to_io.wait_readable(0.01)
+        read_available if !eof? && to_io.wait_readable(0)
       end
     end
     count
@@ -497,27 +509,48 @@ class Expect
 
   # 共用的进程关闭流程；force 控制是否允许 KILL，只有资源创建者能够操作直属子进程。
   def finish_close(timeout:, term_timeout:, force:)
+    failure = nil
+    # 预期的清理错误延后传播，保证其余所属资源和直属子进程仍能完成清理。
+    cleanup = lambda do |&step|
+      step.call
+    rescue IOError, SystemCallError => error
+      failure ||= error
+      nil
+    end
     # IO 关闭与进程退出独立记录：软关闭可能已经 closed?，但仍保留活跃 PID。
-    @resources.close_handles
+    cleanup.call { @resources.close_handles }
     @closed = true
-    @interact_inputs&.each_value { |input| input.close(graceful: false) }
-    @interact_inputs&.clear
+    @interact_inputs&.delete_if do |_io, input|
+      cleanup.call do
+        input.close(graceful: false)
+        true
+      end
+    end
     @interact_output = nil
     @relay_outputs&.clear
     @relay_history&.clear
     @relay_callback = nil
+    status = finish_child_close(timeout: timeout, term_timeout: term_timeout, force: force)
+    completed = true
+    status
+  ensure
+    cleanup.call { self.log_output = nil }
+    # 用本次流程的完成状态判断异常传播，不能误把调用者 rescue 中的异常当成当前错误。
+    raise failure if failure && completed
+  end
+
+  # 句柄清理失败不改变进程策略；未回收 PID 保留给重复关闭或终结器继续处理。
+  def finish_child_close(timeout:, term_timeout:, force:)
     return process_status unless @resources.owner == Process.pid && pid
     return process_status if wait(timeout: timeout)
 
     signal_child("TERM")
     return process_status if wait(timeout: term_timeout)
 
-    if force
-      signal_child("KILL")
-      wait(timeout: 1)
-    end
-  ensure
-    self.log_output = nil
+    return unless force
+
+    signal_child("KILL")
+    wait(timeout: 1)
   end
 
   # 统一初始化 PTY 与已有 IO 会话，复制配置并注册不直接捕获会话的资源终结器。
@@ -568,13 +601,14 @@ class Expect
   end
 
   # 先将读取字节交给匹配或转接缓冲，再记录日志；日志失败也能恢复输入。
-  def read_available(propagate: true, buffer: @buffer)
+  def read_available(propagate: true, buffer: @buffer, trim: true)
     return nil if eof?
 
     # 写入背压也会读取；转接期间统一交给转义处理器，不能直接转发或另存匹配缓冲。
     if @interaction_buffer
       buffer = @interaction_buffer
       propagate = false
+      trim = false
     end
 
     begin
@@ -597,7 +631,7 @@ class Expect
     end
     data = data.b
     buffer << data
-    trim_buffer if buffer.equal?(@buffer)
+    trim_buffer if trim
     trace("received #{data.inspect}", level: 2) if debug_level >= 2
     trace("buffer #{@buffer.inspect}", level: 3) if debug_level >= 3
     # 仅在真实读取时记录日志，后续匹配或人工转接重用缓冲时不会重复记录。

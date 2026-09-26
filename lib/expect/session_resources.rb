@@ -20,7 +20,13 @@ class Expect
       return unless own
 
       # PTY 的读写端可能是同一个对象，先去重，重复关闭也保持安全。
-      [reader, writer, slave].compact.uniq.each { |io| io.close unless io.closed? }
+      failure = nil
+      [reader, writer, slave].compact.uniq.each do |io|
+        io.close unless io.closed?
+      rescue IOError, SystemCallError => error
+        failure ||= error
+      end
+      raise failure if failure
     end
 
     # 非阻塞回收直属子进程，缓存 Process::Status，成功后清空 PID 以支持重复查询。
@@ -42,15 +48,27 @@ class Expect
     def finalize
       return unless owner == Process.pid
 
-      close_handles
-      owned_log.close if owned_log && !owned_log.closed?
-      reap
-      return unless pid
-
-      Process.kill("KILL", pid)
-      # 将最终 wait 交给后台回收线程，避免在 GC 终结器中阻塞等待。
-      Process.detach(pid)
-      @pid = nil
+      begin
+        close_handles
+      ensure
+        begin
+          owned_log.close if owned_log && !owned_log.closed?
+        ensure
+          # 每个阶段独立收尾；句柄或日志关闭失败不能跳过进程回收。
+          reap
+          if pid
+            begin
+              Process.kill("KILL", pid)
+            rescue Errno::ESRCH
+              # 子进程可能刚好退出，仍需尝试 wait，不能留下僵尸进程。
+              nil
+            end
+            # 将最终 wait 交给后台回收线程，避免在 GC 终结器中阻塞等待。
+            Process.detach(pid)
+            @pid = nil
+          end
+        end
+      end
     rescue IOError, SystemCallError
       nil
     end

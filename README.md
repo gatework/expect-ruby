@@ -6,12 +6,14 @@
 
 要求 **Ruby 3.2+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由 RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 类，不修改标准库的 `IO#expect`。
 
+源码中的解释性注释主要使用中文；欢迎用中文或英文提交 issue 和 PR，参与方式见 [贡献指南](CONTRIBUTING.md)。
+
 ## 安装和运行
 
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.3.1", require: "expect/pty"
+gem "expect-pty", "~> 0.3.2", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -24,8 +26,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.3.1.gem
-gem install ./tmp/expect-pty-0.3.1.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.3.2.gem
+gem install ./tmp/expect-pty-0.3.2.gem
 ```
 
 ```ruby
@@ -67,7 +69,7 @@ Expect.spawn("/bin/sh", "-i", timeout: 3) do |session|
 end
 ```
 
-`configure` 校验后发布冻结的配置对象；块异常不会发布部分修改。每个会话独立持有配置，优先使用构造参数；修改默认值不会改变已有会话，修改一个会话也不会影响其他会话。子类继承父类默认配置，可独立覆盖。
+`configure` 校验后发布冻结的配置对象；块异常不会发布部分修改。并发调用按顺序完成读改写，不会互相覆盖不同属性。配置块在锁内执行，应保持简短，不要在块内再次调用 `configure`（会抛出 `ThreadError`）或等待其他配置线程。每个会话独立持有配置，优先使用构造参数；修改默认值不会改变已有会话，修改一个会话也不会影响其他会话。子类继承父类默认配置，可独立覆盖。
 
 | 属性 | 默认值 | 行为 |
 | --- | --- | --- |
@@ -187,6 +189,8 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 | `winsize` / `winsize=` | 读取/修改 `[rows, cols]`，由内核通知前台进程 |
 | `slave` / `tty_name` / `to_io` / `writer` / `fileno` / `tty?` | 底层 IO 和终端信息 |
 
+`send_slow` 在每次写入后只检查已经可读的回复，不附加固定等待；返回时不保证收齐最后一个字符引发的回复，完整对话请继续使用 `expect`。
+
 大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，`error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的 `EINTR` 均保留原期限重试。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、`__send__` 保留 Ruby 反射语义。
 
 ## 日志与人工交互
@@ -248,6 +252,13 @@ session.close(graceful: true) # 先软关闭，必要时继续硬关闭
 - `closed?` 表示会话 IO 已关闭；`alive?` / `pid` 表示子进程状态。软关闭后可能同时 `closed? == true`、`alive? == true`。成功回收后 PID 为 `nil`。
 
 关闭只负责会话直接启动的子进程；垃圾回收提供非阻塞的强制清理兜底，不执行软关闭等待。优先使用块或 `ensure` 管理资源。
+
+## 安全注意事项
+
+- 将不可信命令和参数分别传给 `spawn`，例如 `Expect.spawn("ssh", host)`；单个命令字符串会使用 Ruby 的 shell 语义。`stty` 参数经拆分后作为独立参数传给进程，不拼接 shell 命令。
+- 会话日志可能记录密码回显、令牌和其他敏感字节。新日志文件以 `0600` 创建，已有文件保留原权限；请按需关闭 `log_to`、`log_stdout` 和调试输出，并管理日志留存。
+- `spawn` 在子进程中使用 `fork` 后的 Ruby 操作与 `exec`。高度多线程的宿主进程，尤其使用第三方 C 扩展时，可能受到 fork 时其他线程持锁的影响；尽量在启动其他线程前创建会话，并在自己的运行环境中验证。
+- 不可信正则可能耗费较长时间；使用带 `timeout:` 的 `Regexp` 实例，并为匹配缓冲设置合适的 `buffer_limit`。普通 `expect` 的 IO 期限不打断单次正则或同步回调。
 
 ## 示例和验证
 

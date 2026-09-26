@@ -28,9 +28,9 @@ class Expect
         found = value.match(text)
         return unless found
 
-        # Ruby 正则偏移按字符计算，缓冲切片按字节计算，必须转换；捕获组也统一返回字节串。
-        offset = text[0...found.begin(0)].bytesize
-        return [offset, found[0].bytesize, found.captures.map { |capture| capture&.b }]
+        # 直接使用正则的字节范围，避免为转换字符偏移创建前缀切片；捕获组也返回字节串。
+        offset, finish = found.byteoffset(0)
+        return [offset, finish - offset, found.captures.map { |capture| capture&.b }]
       end
       nil
     end

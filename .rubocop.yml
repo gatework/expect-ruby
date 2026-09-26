@@ -7,10 +7,39 @@ AllCops:
     - "tmp/**/*"
     - "vendor/**/*"
 
-# Protocol state machines and integration scenarios are reviewed by behavior,
-# rather than split merely to meet a line or branch count.
-Metrics:
+# Length and ABC counts are poor signals for protocol loops and integration scenarios.
+# Branch complexity remains checked for production code; reviewed state machines
+# carry local exemptions at the method that needs them.
+Metrics/AbcSize:
   Enabled: false
+
+Metrics/BlockLength:
+  Enabled: false
+
+Metrics/BlockNesting:
+  Enabled: false
+
+Metrics/ClassLength:
+  Enabled: false
+
+Metrics/MethodLength:
+  Enabled: false
+
+Metrics/ModuleLength:
+  Enabled: false
+
+Metrics/ParameterLists:
+  Enabled: false
+
+Metrics/CyclomaticComplexity:
+  Max: 13
+  Exclude:
+    - "test/**/*"
+
+Metrics/PerceivedComplexity:
+  Max: 13
+  Exclude:
+    - "test/**/*"
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes

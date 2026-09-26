@@ -49,12 +49,18 @@ class Expect
     private
 
     # 按声明组、会话、模式的顺序寻找首个匹配，不按文本中的出现位置重新排序。
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮快照须在同一次扫描保持一致。
     def find_match
-      @patterns.groups.each do |sessions, patterns|
+      # 单组且来源不重复时无需缓存；重复来源才为本轮扫描建立快照表。
+      groups = @patterns.groups
+      if groups.size > 1 || (groups.first && groups.first.first.size > @sessions.size)
+        snapshots = {}.compare_by_identity
+      end
+      groups.each do |sessions, patterns|
         sessions.each do |session|
           next if @handled_eof.include?(session)
 
-          buffer = session.buffer
+          buffer = snapshots ? (snapshots[session] ||= session.buffer) : session.buffer
           stalled = @stalled_matches[session]
           if stalled && stalled[:buffer] != buffer
             @stalled_matches.delete(session)
@@ -70,6 +76,7 @@ class Expect
       end
       nil
     end
+    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。
     def handle_match(session, pattern, position)
@@ -126,8 +133,13 @@ class Expect
 
     # 每个就绪 IO 读取一次，将异常归属到对应会话；仅显式启用时按接收数据刷新期限。
     def read_ready(readable, sessions)
+      # select 返回 IO 对象本身；共享同一 IO 时仍选择声明顺序中的首个会话。
+      if readable.size > 1
+        by_io = {}.compare_by_identity
+        sessions.each { |session| by_io[session.to_io] ||= session }
+      end
       readable.each do |io|
-        session = sessions.find { |candidate| candidate.to_io.equal?(io) }
+        session = by_io ? by_io.fetch(io) : sessions.find { |candidate| candidate.to_io.equal?(io) }
         begin
           # 转接回调消费匹配内容，余下字节交回 Relay，不能在这里提前转发两次。
           data = session.__send__(:read_available, propagate: !@relay_buffers.key?(session))

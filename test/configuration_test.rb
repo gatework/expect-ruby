@@ -56,6 +56,49 @@ class ConfigurationTest < ExpectTest
     assert_equal 2, Expect.configuration.timeout
   end
 
+  def test_concurrent_configure_updates_are_serialized
+    subclass = Class.new(Expect)
+    entered = Queue.new
+    second_started = Queue.new
+    release = Queue.new
+    first = Thread.new do
+      subclass.configure do |config|
+        entered << true
+        release.pop
+        config.timeout = 1
+      end
+    end
+    entered.pop
+    second = Thread.new do
+      second_started << true
+      subclass.configure(debug_level: 2)
+    end
+    second_started.pop
+    # 第一轮尚未发布时，第二轮不能从同一旧快照完成更新。
+    refute second.join(0.05), "concurrent configure published before the first update finished"
+    release << true
+    first.value
+    second.value
+    assert_equal 1, subclass.configuration.timeout
+    assert_equal 2, subclass.configuration.debug_level
+  ensure
+    release&.push(true)
+    first&.join
+    second&.join
+  end
+
+  def test_nested_configure_fails_without_publishing_partial_changes
+    subclass = Class.new(Expect)
+    previous = subclass.configuration
+    assert_raises(ThreadError) do
+      subclass.configure do |config|
+        config.timeout = 1
+        subclass.configure(debug_level: 2)
+      end
+    end
+    assert_same previous, subclass.configuration
+  end
+
   def test_attribute_validation_preserves_the_current_value_and_buffer
     session, = pipe_session(buffer_limit: 8, timeout: 1, write_timeout: 2, debug_level: 1)
     session.buffer = "contents"

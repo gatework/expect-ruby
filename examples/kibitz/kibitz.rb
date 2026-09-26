@@ -51,6 +51,7 @@ module Kibitz
     value
   end
 
+  # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- CLI 建连、终端接管和 ensure 清理共享一次生命周期。
   def self.run(argv, input: $stdin, output: $stdout)
     options = { escape: ESCAPE }
     parser = OptionParser.new do |opts|
@@ -134,6 +135,7 @@ module Kibitz
     File.unlink(socket_path) if socket_path && File.socket?(socket_path)
     Dir.rmdir(directory) if directory && Dir.exist?(directory)
   end
+  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 end
 
 exit Kibitz.run(ARGV) if $PROGRAM_NAME == __FILE__

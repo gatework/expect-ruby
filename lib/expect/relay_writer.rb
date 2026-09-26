@@ -27,6 +27,7 @@ class Expect
     def done? = @offset == @data.bytesize && @flushed
 
     # 每轮每目标至多一次写入；真实 IO 永不在此等待，交给 Relay 的共同 select。
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 游标、短写、flush 和期限按单个目标推进。
     def advance(check_timeout: true)
       return false if done?
       raise IOError, "closed Expect session" if target.is_a?(Expect) && target.closed?
@@ -54,6 +55,7 @@ class Expect
       check_timeout! if check_timeout
       true
     end
+    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     def check_timeout!
       return unless deadline && Expect.monotonic >= deadline
