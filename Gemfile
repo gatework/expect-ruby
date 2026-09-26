@@ -8,7 +8,8 @@ group :development, :test do
   # RuboCop 的依赖也必须支持最低 Ruby 版本。
   gem "parallel", "~> 1.27", require: false
   gem "rake", "~> 13.0", require: false
-  gem "rubocop", "~> 1.89", require: false
+  # 固定已审阅的规则集，避免不同 CI 环境自动启用新 cop 改变发布门槛。
+  gem "rubocop", "= 1.89.0", require: false
 
   # 测试、示例和发布工具直接使用的标准库 gem，不依赖其他开发工具间接引入。
   gem "digest", require: false
