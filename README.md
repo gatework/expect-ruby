@@ -4,27 +4,28 @@
 
 用 Ruby 自动操作交互式程序：启动拥有控制终端的子进程，等待文本或正则，发送输入，处理超时、EOF 和回调，也能接管已有 IO、同时监听多个会话和转接人工交互。交互能力参考 [Expect.pm](https://github.com/jacoby/expect.pm)，接口采用 Ruby 的属性、关键字参数和代码块。
 
-要求 **Ruby 3.2+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 类，不修改标准库的 `IO#expect`。
+要求 **Ruby 3.2+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由 RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 类，不修改标准库的 `IO#expect`。
 
 ## 安装和运行
 
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.2.0"
+gem "expect-pty", "~> 0.3.1", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
 
 ```ruby
-gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "main"
+gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "main", require: "expect/pty"
 ```
 
-本地开发可改用 `gem "expect-pty", path: "/path/to/expect-ruby"`，也可在源码目录构建安装：
+本地开发可改用 `gem "expect-pty", path: "/path/to/expect-ruby", require: "expect/pty"`，也可在源码目录构建安装：
 
 ```sh
-gem build expect-pty.gemspec
-gem install ./expect-pty-0.2.0.gem
+mkdir -p tmp
+gem build expect-pty.gemspec --output tmp/expect-pty-0.3.1.gem
+gem install ./tmp/expect-pty-0.3.1.gem
 ```
 
 ```ruby
@@ -265,7 +266,18 @@ ruby examples/ssh_interact.rb --auto
 
 [GitHub Actions](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml) 在推送 `main`、推送 `v*` 标签、提交到 `main` 的 Pull Request 或手动触发时运行。流水线覆盖 Ubuntu 24.04 / macOS 15 与 Ruby 3.2、3.3、3.4、4.0 的 8 种组合；每个环境执行 `script/ci`，包括真实 PTY 测试和构建包的隔离安装验证。Ubuntu / Ruby 4.0 作业保留已验证的 Gem 构建产物 14 天，可从该次工作流的 Artifacts 下载。
 
-运行前先执行 `bundle install`。Gem 库的开发锁文件 `Gemfile.lock` 保留在本地，各 Ruby 环境按 `Gemfile` 解析兼容依赖。生成文件写入已忽略的 `tmp/`，Gem 构建产物位于 `tmp/ci/`，发布候选包位于 `tmp/release/`。更新工作流中的 Action 时，应同步更新固定的提交 SHA 和版本注释。
+运行前先执行 `bundle install`。Gem 库的开发锁文件 `Gemfile.lock` 保留在本地，各 Ruby 环境按 `Gemfile` 解析兼容依赖。生成文件写入已忽略的 `tmp/`，Gem 构建产物位于 `tmp/ci/`，发布候选包位于 `tmp/release/`。安装验证会清除外部 Bundler 环境，分别运行普通 RubyGems 加载和只声明 `expect-pty` 的 Bundler 应用，检查运行时依赖、终端模式、窗口大小及真实 PTY 对话。更新工作流中的 Action 时，应同步更新固定的提交 SHA 和版本注释。
+
+运行时依赖只在 `expect-pty.gemspec` 声明，开发依赖放在 Gemfile 的 `development` / `test` 组；安装或使用本库不会引入 Minitest、Rake、RuboCop 及发布工具的依赖。
+
+| 运行时模块 | Gem | 用途 |
+| --- | --- | --- |
+| `forwardable` | `forwardable` | 会话配置委托 |
+| `io/console` | `io-console` | 终端模式和窗口大小 |
+| `io/wait` | `io-wait` | IO 可读等待 |
+| `shellwords` | `shellwords` | `stty` 参数拆分 |
+| `stringio` | `stringio` | Ruby `puts` 语义 |
+| `pty` | Ruby 自带扩展 | POSIX 伪终端，无独立 gem |
 
 仅发布 RubyGems 使用 `ruby script/release.rb --rubygems-only`，直接复用本机已有的 Gem 登录状态；添加 `--dry-run` 可先完成本地检查、测试、构建和安装验证。需要同时创建 GitHub Release 时使用 `ruby script/release.rb`，也可以在 GitHub Actions 手动运行 Release 工作流。版本准备、Actions 凭据和失败重试见 [发布说明](docs/RELEASING.md)。
 

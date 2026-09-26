@@ -17,19 +17,44 @@ gem build expect-pty.gemspec --output "$gem_file"
 # 在独立目录安装刚构建的包，避免源码路径或 Bundler 掩盖打包遗漏。
 smoke_dir="$(mktemp -d)"
 trap 'rm -rf "$smoke_dir"' EXIT
-gem install --local --no-document --install-dir "$smoke_dir/gems" "$gem_file"
+gem_file="$(pwd)/$gem_file"
+bundler_version="$(bundle exec ruby -rbundler -e 'print Bundler::VERSION')"
+bundler_gem="$(bundle exec ruby -e 'print Gem.loaded_specs.fetch("bundler").cache_file')"
 
 (
   cd "$smoke_dir"
-  unset BUNDLE_GEMFILE BUNDLE_BIN_PATH RUBYOPT RUBYLIB
+  # 清除 Bundler 的自动加载与路径设置；Ruby 4 还会通过 BUNDLER_SETUP 自动启用 Bundler。
+  for bundle_variable in ${!BUNDLE_@} ${!BUNDLER_@}; do
+    unset "$bundle_variable"
+  done
+  unset RUBYOPT RUBYLIB RUBYGEMS_GEMDEPS
   export GEM_HOME="$smoke_dir/gems" GEM_PATH="$smoke_dir/gems"
-  ruby -r expect/pty -r rbconfig <<'RUBY'
+  gem install --local --no-document "$gem_file"
+
+  cat > smoke.rb <<'RUBY'
+require "expect/pty"
+require "rbconfig"
+
 spec = Gem.loaded_specs.fetch("expect-pty")
 # 临时目录可能经由符号链接访问，先统一为实际路径再检查。
 install_root = File.realpath(ENV.fetch("GEM_HOME"))
 abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
+abort "Bundler leaked into the plain gem smoke" if ARGV.first == "plain" && defined?(Bundler)
+unexpected = %w[minitest rake rubocop parallel].select { |name| Gem.loaded_specs.key?(name) }
+abort "development dependencies leaked into the application: #{unexpected.join(', ')}" unless unexpected.empty?
+spec.runtime_dependencies.each do |dependency|
+  loaded = Gem.loaded_specs.fetch(dependency.name)
+  abort "incompatible dependency: #{dependency}" unless dependency.matches_spec?(loaded)
+end
+
+# 检查实际使用的标准库已在包元数据中声明，默认 gem 可加载不能代替依赖声明。
+%w[forwardable io-console io-wait shellwords stringio].each do |name|
+  abort "undeclared runtime dependency: #{name}" unless spec.runtime_dependencies.any? { |dependency| dependency.name == name }
+end
 child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'
-Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, log_stdout: false) do |session|
+Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_stdout: false) do |session|
+  session.winsize = [30, 100]
+  abort "io-console terminal size failed" unless session.winsize == [30, 100]
   abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5)
 
   session.puts("expect-ruby")
@@ -38,6 +63,19 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, log_stdout: false) do
   abort "installed gem child did not exit successfully" unless status&.success?
 end
 
-puts "Installed #{spec.full_name}: PTY and isolated installation passed"
+puts "Installed #{spec.full_name}: #{ARGV.fetch(0)} PTY and runtime dependencies passed"
 RUBY
+  ruby smoke.rb plain
+
+  # 消费方仅声明当前 Gem，不能借用项目 Gemfile 中的测试和发布依赖。
+  # 单独安装本次开发检查使用的 Bundler，避免依赖宿主 Ruby 的默认 Bundler 副本。
+  if [ -f "$bundler_gem" ]; then
+    gem install --local --no-document "$bundler_gem"
+  else
+    gem install --no-document bundler --version "$bundler_version"
+  fi
+  export BUNDLE_IGNORE_CONFIG=true
+  printf 'source "https://rubygems.org"\ngem "expect-pty", "= %s", require: "expect/pty"\n' "$gem_version" > Gemfile
+  bundle lock --local
+  bundle exec ruby -rbundler -e 'Bundler.require; load "smoke.rb"' bundler
 )
