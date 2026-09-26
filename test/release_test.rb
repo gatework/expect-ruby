@@ -63,14 +63,34 @@ class ReleaseTest < Minitest::Test
           release.stub(:system, push) do
             release.stub(:github, ->(*) { flunk "RubyGems-only release contacted GitHub" }) do
               release.stub(:publish_github, -> { flunk "RubyGems-only release published to GitHub" }) do
-                output, = capture_io { release.run }
-                assert_includes output, "SHA256 verified"
+                [nil, "true"].each do |github_actions|
+                  with_environment("GITHUB_ACTIONS" => github_actions,
+                                   "GEM_HOST_API_KEY" => (github_actions ? "test-only-api-key" : nil)) do
+                    published = false
+                    output, = capture_io { release.run }
+                    assert_includes output, "SHA256 verified"
+                    assert published
+                  end
+                end
               end
             end
           end
         end
       end
-      assert published
+    end
+  end
+
+  def test_ci_publish_requires_an_api_key_before_pushing
+    release = Release.new(rubygems_only: true)
+    release.stub(:registry_version, nil) do
+      release.stub(:system, ->(*) { flunk "pushed without a CI API key" }) do
+        [nil, ""].each do |api_key|
+          with_environment("GITHUB_ACTIONS" => "true", "GEM_HOST_API_KEY" => api_key) do
+            error = assert_raises(RuntimeError) { release.send(:publish_rubygems) }
+            assert_includes error.message, "RUBYGEMS_API_KEY"
+          end
+        end
+      end
     end
   end
 
@@ -193,6 +213,17 @@ class ReleaseTest < Minitest::Test
   end
 
   private
+
+  # 发布测试显式控制凭据环境，避免本机登录状态或 CI 标记影响用例结果。
+  def with_environment(values)
+    previous = values.to_h { |name, _value| [name, ENV.fetch(name, nil)] }
+    begin
+      values.each { |name, value| ENV[name] = value }
+      yield
+    ensure
+      previous.each { |name, value| ENV[name] = value }
+    end
+  end
 
   def with_package
     Dir.mktmpdir("expect-release-test-") do |directory|
