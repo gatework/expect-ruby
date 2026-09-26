@@ -36,9 +36,10 @@ class ProcessTest < ExpectTest
     assert session.slave.tty?
     session.slave.echo = false
     session.slave.winsize = [37, 111]
-    session.spawn(RbConfig.ruby, "--disable-gems", "-rio/console", "-e",
+    # 子进程需要 io-console gem，保留 RubyGems 以使用 Bundler 选定的版本。
+    session.spawn(RbConfig.ruby, "-rio/console", "-e",
                   'STDOUT.sync = true; puts STDIN.winsize.join(":"); puts STDIN.gets')
-    assert_equal 1, session.expect("37:111", timeout: 2)
+    assert_equal 1, session.expect("37:111", timeout: 2), session.before.inspect
     assert_equal [37, 111], session.winsize
     session.winsize = [24, 80]
     assert_equal [24, 80], session.winsize
