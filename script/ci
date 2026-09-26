@@ -28,7 +28,6 @@ spec = Gem.loaded_specs.fetch("expect-pty")
 # 临时目录可能经由符号链接访问，先统一为实际路径再检查。
 install_root = File.realpath(ENV.fetch("GEM_HOME"))
 abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
-
 child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'
 Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, log_stdout: false) do |session|
   abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5)
@@ -39,6 +38,6 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, log_stdout: false) do
   abort "installed gem child did not exit successfully" unless status&.success?
 end
 
-puts "Installed #{spec.full_name}: PTY dialogue and process cleanup passed"
+puts "Installed #{spec.full_name}: PTY and isolated installation passed"
 RUBY
 )

@@ -10,6 +10,7 @@ require_relative "../../lib/expect/pty"
 module ScriptProbe
   PROMPT = "EXPECT_SCRIPT_PROMPT> "
   FIXTURES = File.expand_path("../fixtures/ssh_scripts", __dir__)
+
   class Failure < StandardError; end
 
   def self.check(condition, message)

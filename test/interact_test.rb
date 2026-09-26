@@ -25,6 +25,71 @@ class InteractTest < ExpectTest
     [master, slave, source]
   end
 
+  def socket_session
+    local, peer = Socket.pair(:UNIX, :STREAM, 0)
+    @ios.push(local, peer)
+    session = Expect.open(local)
+    @sessions << session
+    [session, peer]
+  end
+
+  def test_changed_interact_regexp_does_not_match_previously_forwarded_input
+    session, peer = socket_session
+    input, keyboard = pipe_session
+    keyboard.write("old")
+    assert_nil session.interact(input: input.to_io, output: StringIO.new, escape: /STOP/, timeout: 0)
+    assert_equal "old", peer.read_nonblock(100)
+
+    assert_nil session.interact(input: input.to_io, output: StringIO.new, escape: /old/, timeout: 0)
+    keyboard.write("oldtail")
+    stopped = session.interact(input: input.to_io, output: StringIO.new, escape: /old/, timeout: 0.1)
+    assert_same input.to_io, stopped.to_io
+    assert_equal "tail", stopped.buffer
+  end
+
+  def test_same_interact_regexp_keeps_cross_call_history_and_unread_tail
+    session, peer = socket_session
+    input, keyboard = pipe_session
+    keyboard.write("ST")
+    assert_nil session.interact(input: input.to_io, output: StringIO.new, escape: /STOP/, timeout: 0)
+    assert_equal "ST", peer.read_nonblock(100)
+
+    keyboard.write("OPtail")
+    stopped = session.interact(input: input.to_io, output: StringIO.new, escape: /STOP/, timeout: 0.1)
+    assert_same input.to_io, stopped.to_io
+    assert_equal "tail", stopped.buffer
+    assert_nil session.interact(input: input.to_io, output: StringIO.new, escape: /STOP/, timeout: 0)
+    assert_equal "tail", peer.read_nonblock(100)
+  end
+
+  def test_repeated_interact_keeps_split_crlf_on_the_same_terminal
+    session, = socket_session
+    master, slave, source = local_terminal
+    session.buffer = "first\r"
+    assert_nil session.interact(input: source, output: slave, timeout: 0)
+    assert_equal "first\r", master.read_nonblock(100)
+
+    session.buffer = "\nsecond"
+    assert_nil session.interact(input: source, output: slave, timeout: 0)
+    assert_equal "\nsecond", master.read_nonblock(100)
+  end
+
+  def test_changed_interact_regexp_preserves_pending_output_and_tail
+    session, peer = socket_session
+    input, keyboard = pipe_session
+    loop { break if session.writer.write_nonblock("x" * 4096, exception: false) == :wait_writable }
+    keyboard.write("old")
+    assert_nil session.interact(input: input, output: StringIO.new, escape: /STOP/, timeout: 0)
+    assert input.pending_output?
+    input.buffer = "tail"
+    loop { break if peer.read_nonblock(65_536, exception: false) == :wait_readable }
+
+    assert_nil session.interact(input: input, output: StringIO.new, escape: /old/, timeout: 0.01)
+    refute input.pending_output?
+    assert_empty input.buffer
+    assert_equal "oldtail", peer.read_nonblock(100)
+  end
+
   def test_real_terminal_handoff_ctrl_c_escape_and_resume
     session = shell_session
     log = StringIO.new
@@ -96,6 +161,43 @@ class InteractTest < ExpectTest
     refute_includes log.string, "printf"
   ensure
     keyboard&.kill&.join if keyboard&.alive?
+  end
+
+  def test_interact_preserves_newline_processing_on_the_shared_local_terminal
+    session = child(<<~'RUBY', raw_pty: true)
+      STDOUT.sync = true
+      while STDIN.gets
+        STDOUT.write("first\nsecond\r")
+        STDIN.gets
+        STDOUT.write("\nFW# ")
+      end
+    RUBY
+    master, _, source = local_terminal
+    screen = Expect.open(master, write_timeout: 3)
+    @sessions << screen
+    driver = Thread.new do
+      screen.write("show\n")
+      ScriptProbe.check(screen.expect("first\r\nsecond\r", timeout: 3),
+                        "interact disabled output newline processing")
+      screen.write("continue\n")
+      ScriptProbe.check(screen.expect("\nFW# ", timeout: 3), "interact duplicated a split CRLF sequence")
+      screen.write(InteractProbe::ESCAPE)
+      true
+    rescue Exception # rubocop:disable Lint/RescueException -- Release interact when the assertion fails.
+      begin
+        screen.write(InteractProbe::ESCAPE)
+      rescue StandardError
+        nil
+      end
+      raise
+    end
+    driver.report_on_exception = false
+
+    assert_same source, session.interact(input: source, escape: InteractProbe::ESCAPE, output: source.to_io, timeout: 5)
+    assert driver.join(2), "terminal driver did not finish"
+    assert driver.value
+  ensure
+    driver&.kill&.join if driver&.alive?
   end
 
   def test_remote_eof_restores_input_terminal_and_keeps_borrowed_io_open

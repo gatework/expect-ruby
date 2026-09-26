@@ -2,8 +2,8 @@
 
 class Expect
   # 独立保存句柄、PID 和日志所有权，让终结器无需直接捕获会话即可清理遗弃资源。
-  class Resources
-    attr_accessor :pid, :status, :log, :own_log
+  class SessionResources
+    attr_accessor :pid, :status, :owned_log
     attr_reader :reader, :writer, :slave, :owner, :own
 
     # 记录创建资源的进程；fork 后的副本不能向父进程拥有的子进程发信号。
@@ -43,7 +43,7 @@ class Expect
       return unless owner == Process.pid
 
       close_handles
-      log.close if own_log && log && !log.closed?
+      owned_log.close if owned_log && !owned_log.closed?
       reap
       return unless pid
 

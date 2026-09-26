@@ -49,6 +49,26 @@ class IOTest < ExpectTest
     assert_equal "\ncba\n", chunks.join
   end
 
+  def test_new_log_files_are_private_without_changing_existing_permissions
+    session, = pipe_session
+    Dir.mktmpdir do |directory|
+      previous_umask = File.umask(0o022)
+      begin
+        %w[a w].each do |mode|
+          path = File.join(directory, "session-#{mode}.log")
+          session.log_to(path, mode: mode)
+          assert_equal 0o600, File.stat(path).mode & 0o777
+          session.log_output = nil
+          File.chmod(0o640, path)
+          session.log_to(path, mode: mode)
+          assert_equal 0o640, File.stat(path).mode & 0o777
+        end
+      ensure
+        File.umask(previous_umask)
+      end
+    end
+  end
+
   def test_group_and_stdout_logging_can_be_controlled_separately
     session, writer = pipe_session
     listener = StringIO.new
@@ -85,6 +105,25 @@ class IOTest < ExpectTest
     assert_match(/received "more"/, diagnostics)
   end
 
+  def test_quiet_mode_does_not_format_byte_content_for_diagnostics
+    session, peer = Socket.pair(:UNIX, :STREAM, 0)
+    @ios.push(session, peer)
+    connection = Expect.open(session, debug_level: 0)
+    @sessions << connection
+    inspected = 0
+    probe = TracePoint.new(:c_call) do |event|
+      inspected += 1 if event.defined_class == String && event.method_id == :inspect
+    end
+
+    probe.enable do
+      connection.write("hello")
+      peer.write("reply")
+      connection.expect("reply", timeout: 1)
+    end
+
+    assert_equal 0, inspected
+  end
+
   def test_send_slow_collects_replies_even_when_logging_disabled
     session = child("loop { char = STDIN.read(1); break unless char; print char.upcase }", raw_pty: true)
     session.log_listeners = false
@@ -119,6 +158,69 @@ class IOTest < ExpectTest
     assert_equal [second], Expect.readable_sessions(first, second)
     second.expect("data", timeout: 1)
     assert_empty Expect.readable_sessions(first, second)
+  end
+
+  def test_readiness_retries_an_interrupted_select
+    session, writer = pipe_session
+    writer.write("ready")
+    original = IO.method(:select)
+    interrupted = true
+    select = lambda do |*arguments|
+      if interrupted
+        interrupted = false
+        raise Errno::EINTR
+      end
+      original.call(*arguments)
+    end
+
+    IO.stub(:select, select) do
+      assert_equal [session], Expect.readable_sessions(session, timeout: 1)
+    end
+  end
+
+  def test_write_retries_an_interrupted_nonblocking_write
+    reader, writer = Socket.pair(:UNIX, :STREAM, 0)
+    @ios.push(reader, writer)
+    session = Expect.open(reader)
+    @sessions << session
+    original = reader.method(:write_nonblock)
+    interrupted = true
+    write = lambda do |*arguments, **options|
+      if interrupted
+        interrupted = false
+        raise Errno::EINTR
+      end
+      original.call(*arguments, **options)
+    end
+
+    reader.stub(:write_nonblock, write) do
+      assert_equal 5, session.write("hello")
+    end
+    assert_equal "hello", writer.read(5)
+  end
+
+  def test_write_retries_an_interrupted_writable_wait
+    reader, writer = Socket.pair(:UNIX, :STREAM, 0)
+    @ios.push(reader, writer)
+    session = Expect.open(reader, write_timeout: 1)
+    @sessions << session
+    original = reader.method(:write_nonblock)
+    waiting = true
+    write = lambda do |*arguments, **options|
+      if waiting
+        waiting = false
+        :wait_writable
+      else
+        original.call(*arguments, **options)
+      end
+    end
+
+    reader.stub(:write_nonblock, write) do
+      IO.stub(:select, ->(*) { raise Errno::EINTR }) do
+        assert_equal 5, session.write("hello")
+      end
+    end
+    assert_equal "hello", writer.read(5)
   end
 
   def test_readiness_waits_for_data_and_does_not_consume_data

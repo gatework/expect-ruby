@@ -126,12 +126,45 @@ class MatchingTest < ExpectTest
     assert_equal 1, session.expect("结束", timeout: 1)
   end
 
+  def test_utf8_regexp_waits_for_incomplete_trailing_character_before_matching
+    session, writer = pipe_session
+    session.buffer = "ready\xE4".b
+
+    assert_nil session.expect(/ready\z/u, timeout: 0)
+    assert_nil session.expect(/ready/u, timeout: 0)
+    assert_equal "ready\xE4".b, session.buffer
+
+    writer.write("\xB8\xAD".b)
+    assert_equal 1, session.expect(/ready中\z/u, timeout: 1)
+    assert_equal "ready中".b, session.match
+  end
+
   def test_binary_nul_and_invalid_utf8
     session, writer = pipe_session
     writer.write("\xff\x00abc\xfe".b)
     assert_equal 1, session.expect(/\x00(abc)/n, timeout: 1)
     assert_equal "\xff".b, session.before
     assert_equal ["abc"], session.captures
+  end
+
+  def test_utf8_regexp_rejects_impossible_partial_characters
+    session, = pipe_session
+    ["\xE0\x80", "\xED\xA0", "\xF0\x80", "\xF4\x90"].each do |bytes|
+      session.buffer = bytes.b
+      assert_raises(EncodingError) { session.expect(/ready/u, timeout: 0) }
+      assert_equal bytes.b, session.buffer
+    end
+  end
+
+  def test_utf8_regexp_accepts_valid_partial_characters
+    session, = pipe_session
+    ["¢", "中", "😀", "\u{10FFFF}"].each do |character|
+      1.upto(character.bytesize - 1) do |length|
+        session.buffer = character.b.byteslice(0, length)
+        assert_nil session.expect(/./u, timeout: 0)
+        assert_equal character.b.byteslice(0, length), session.buffer
+      end
+    end
   end
 
   def test_native_regexp_anchors_and_flags

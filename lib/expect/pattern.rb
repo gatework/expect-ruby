@@ -12,7 +12,7 @@ class Expect
     def eof? = value == :eof
 
     # 在缓冲中定位字符串或正则，返回 [字节偏移, 字节长度, 捕获组]；事件或未匹配返回 nil。
-    def locate(buffer)
+    def locate(buffer, final: false)
       case value
       when String
         offset = buffer.index(value)
@@ -21,8 +21,9 @@ class Expect
         text = buffer.dup
         text.force_encoding(value.encoding) if value.fixed_encoding?
         unless text.valid_encoding?
-          # 一次读取可能截断 UTF-8 字符。仅对完整前缀做本轮匹配，原缓冲保留残片等待后续字节。
-          text = complete_prefix(text)
+          # 不完整的尾字符可能改变锚点或前瞻结果，必须等字符收齐后再匹配。
+          validate_incomplete_suffix!(text, final: final)
+          return nil
         end
         found = value.match(text)
         return unless found
@@ -37,24 +38,15 @@ class Expect
     private
 
     # 仅容忍末尾尚未收全的 UTF-8 字符，其他非法编码直接报错，不静默替换接收字节。
-    def complete_prefix(text)
-      if text.encoding == Encoding::UTF_8
-        # UTF-8 字符最多四字节，不完整后缀最多三字节。逐一验证头字节、续字节及剩余前缀。
-        1.upto([3, text.bytesize].min) do |length|
-          prefix = text.byteslice(0, text.bytesize - length)
-          suffix = text.byteslice(text.bytesize - length, length).b
-          lead = suffix.getbyte(0)
-          expected = case lead
-                     when 0xC2..0xDF then 2
-                     when 0xE0..0xEF then 3
-                     when 0xF0..0xF4 then 4
-                     end
-          if expected && length < expected && suffix.bytes.drop(1).all? do |byte|
-            (0x80..0xBF).cover?(byte)
-          end && prefix.valid_encoding?
-            return prefix
-          end
+    def validate_incomplete_suffix!(text, final:)
+      if !final && text.encoding == Encoding::UTF_8
+        incomplete = begin
+          text.encode(Encoding::UTF_16LE)
+          false
+        rescue Encoding::InvalidByteSequenceError => error
+          error.incomplete_input?
         end
+        return if incomplete
       end
       raise EncodingError, "received invalid #{text.encoding} data; use a binary regexp (/.../n) for binary streams"
     end

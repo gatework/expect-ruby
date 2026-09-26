@@ -9,10 +9,10 @@ require "forwardable"
 require_relative "expect/version"
 require_relative "expect/configuration"
 require_relative "expect/result"
-require_relative "expect/resources"
+require_relative "expect/session_resources"
 require_relative "expect/pattern"
 require_relative "expect/pattern_list"
-require_relative "expect/engine"
+require_relative "expect/matcher"
 
 # 自动化交互会话：可以拥有一个 PTY 子进程，也可以适配已有可 select 的 IO。
 # 缓冲和匹配统一保留原始字节，配置、匹配结果与资源生命周期分别管理。
@@ -23,7 +23,16 @@ class Expect
   READ_SIZE = 16_384
 
   class SpawnError < StandardError; end
-  class WriteTimeout < IOError; end
+
+  # 已被底层接受的字节不可撤回；调用方可据此只处理尚未写出的后缀。
+  class WriteTimeout < IOError
+    attr_reader :bytes_written
+
+    def initialize(message = "write timed out", bytes_written: 0)
+      @bytes_written = bytes_written
+      super(message)
+    end
+  end
 
   class << self
     # 读取冻结的默认配置；子类未单独配置时继承父类快照。
@@ -78,6 +87,7 @@ class Expect
 
     # 返回继续等待的控制符，reset_timeout 决定是否重新计算匹配期限。
     def continue(reset_timeout: true) = reset_timeout ? CONTINUE : CONTINUE_WITHOUT_RESET
+
     # 读取不受系统时间调整影响的单调时钟，所有相对超时共用此计时基准。
     def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
@@ -99,7 +109,20 @@ class Expect
       active = sessions.uniq.reject(&:closed?)
       return [] if active.empty?
 
-      ready = IO.select(active.map(&:to_io), nil, nil, timeout)
+      deadline = timeout && (monotonic + timeout)
+      polled = false
+      ready = nil
+      loop do
+        remaining = deadline && [deadline - monotonic, 0].max
+        return [] if polled && remaining&.zero?
+
+        begin
+          ready = IO.select(active.map(&:to_io), nil, nil, remaining)
+          break
+        rescue Errno::EINTR
+          polled = true
+        end
+      end
       return [] unless ready
 
       active.select { |session| ready.first.include?(session.to_io) }
@@ -116,7 +139,7 @@ class Expect
       if block
         block.parameters.empty? ? pattern_list.instance_exec(&block) : block.call(pattern_list)
       end
-      Engine.new(pattern_list.validate!, timeout).run
+      Matcher.new(pattern_list.validate!, timeout).run
     end
   end
 
@@ -214,14 +237,21 @@ class Expect
 
   # 暴露底层读写 IO 与终端属性，供 select、终端设置及 IO 适配使用。
   def to_io = @resources.reader
+
   def writer = @resources.writer
+
   def fileno = closed? ? nil : to_io.fileno
+
   def tty? = !closed? && to_io.tty?
+
   # 诊断时仅显示进程和描述符状态，避免默认对象展开泄露缓冲或日志内容。
   def inspect = "#<#{self.class} pid=#{pid.inspect} fd=#{fileno.inspect} closed=#{closed?}>"
+
   def pid = @resources.pid
+
   # 非阻塞回收并缓存子进程状态；未退出或仅适配 IO 时返回 nil。
   def process_status = @resources.reap
+
   def exit_code = process_status&.exitstatus
 
   # 先刷新回收状态，再判断是否仍有未回收的子进程；不以 IO 是否关闭代替进程状态。
@@ -232,14 +262,22 @@ class Expect
 
   # 区分会话关闭和输入结束，已关闭会话也不能继续读取。
   def closed? = @closed || to_io.closed?
+
   def eof? = @eof || closed?
+
   # 以下访问器读取最近一次等待结果；未发生匹配时捕获组返回空数组。
   def before = @last_result&.before
+
   def after = @last_result&.after
+
   def match = @last_result&.match
+
   def match_number = @last_result&.number
+
   def captures = @last_result&.captures || []
+
   def error = @last_result&.error
+
   # 返回缓冲副本，防止调用方原地修改绕过裁剪规则。
   def buffer = @buffer.dup
 
@@ -263,21 +301,38 @@ class Expect
     raise IOError, "closed Expect session" if closed? || writer.closed?
 
     data = objects.map { |object| object.to_s.b }.join
-    trace("sending #{data.inspect}", level: 2)
+    trace("sending #{data.inspect}", level: 2) if debug_level >= 2
     deadline = write_timeout && (Expect.monotonic + write_timeout)
     offset = 0
     while offset < data.bytesize
-      count = writer.write_nonblock(data.byteslice(offset, READ_SIZE), exception: false)
+      begin
+        count = writer.write_nonblock(data.byteslice(offset, READ_SIZE), exception: false)
+      rescue Errno::EINTR
+        raise WriteTimeout.new(bytes_written: offset) if deadline && Expect.monotonic >= deadline
+
+        next
+      end
       if count == :wait_writable
-        raise WriteTimeout, "write timed out after #{write_timeout} seconds" if deadline && Expect.monotonic >= deadline
+        raise WriteTimeout.new(bytes_written: offset) if deadline && Expect.monotonic >= deadline
 
         remaining = deadline && [deadline - Expect.monotonic, 0].max
         # 子进程也可能因输出管道填满而停止读取；等可写时同时排空它的输出，避免双向死锁。
         readers = eof? ? [] : [to_io]
-        ready = IO.select(readers, [writer], nil, remaining)
-        raise WriteTimeout, "write timed out after #{write_timeout} seconds" unless ready
+        begin
+          ready = IO.select(readers, [writer], nil, remaining)
+          raise WriteTimeout.new(bytes_written: offset) unless ready
 
-        read_available if ready[0].include?(to_io)
+          if ready[0].include?(to_io)
+            begin
+              read_available
+            rescue WriteTimeout
+              # 日志或监听器可嵌套写入；对外报告本次写入进度，原异常通过 cause 保留。
+              raise WriteTimeout.new("write interrupted by an output timeout", bytes_written: offset)
+            end
+          end
+        rescue Errno::EINTR
+          next
+        end
       else
         offset += count
       end
@@ -316,7 +371,7 @@ class Expect
   end
 
   # 读取当前日志目标，可能为库打开的文件、借用的 IO、回调或 nil。
-  def log_output = @resources.log
+  attr_reader :log_output
 
   # 替换借用的日志目标或停止日志；先校验新目标，失败时保留旧目标。
   def log_output=(target)
@@ -335,8 +390,8 @@ class Expect
     if target.respond_to?(:to_path) || target.is_a?(String)
       raise ArgumentError, "log mode must be a or w" unless %w[a w].include?(mode)
 
-      # 库打开的文件由 Resources 持有，替换日志或关闭会话时释放；外部 IO 只借用。
-      replace_log(File.open(target, "#{mode}b"), owned: true)
+      # 库打开的文件由 SessionResources 持有，替换日志或关闭会话时释放；外部 IO 只借用。
+      replace_log(File.open(target, "#{mode}b", 0o600), owned: true)
     else
       raise ArgumentError, "provide a log target or a block" unless target
 
@@ -445,6 +500,12 @@ class Expect
     # IO 关闭与进程退出独立记录：软关闭可能已经 closed?，但仍保留活跃 PID。
     @resources.close_handles
     @closed = true
+    @interact_inputs&.each_value { |input| input.close(graceful: false) }
+    @interact_inputs&.clear
+    @interact_output = nil
+    @relay_outputs&.clear
+    @relay_history&.clear
+    @relay_callback = nil
     return process_status unless @resources.owner == Process.pid && pid
     return process_status if wait(timeout: timeout)
 
@@ -464,15 +525,16 @@ class Expect
     raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
     raise ArgumentError, "writer must be a real IO" unless writer.is_a?(IO) && !writer.closed?
 
-    @resources = Resources.new(reader, writer: writer, slave: slave, own: own)
+    @resources = SessionResources.new(reader, writer: writer, slave: slave, own: own)
     @pty = reader.tty?
     @slave = slave
     @configuration = Configuration.new(**self.class.configuration.to_h, **)
     @buffer = "".b
     @listeners = []
     @sequences = {}
+    @relay_outputs = []
     @closed = @eof = false
-    ObjectSpace.define_finalizer(self, Resources.finalizer(@resources))
+    ObjectSpace.define_finalizer(self, SessionResources.finalizer(@resources))
   end
 
   # 开始新一轮等待时清除旧结果并应用缓冲上限，尚未消费的输入继续保留。
@@ -505,9 +567,15 @@ class Expect
     @last_result
   end
 
-  # 进行一次非阻塞读取并记录日志；accumulate/propagate 决定是否交给匹配缓冲和监听器。
-  def read_available(propagate: true, accumulate: true)
+  # 先将读取字节交给匹配或转接缓冲，再记录日志；日志失败也能恢复输入。
+  def read_available(propagate: true, buffer: @buffer)
     return nil if eof?
+
+    # 写入背压也会读取；转接期间统一交给转义处理器，不能直接转发或另存匹配缓冲。
+    if @interaction_buffer
+      buffer = @interaction_buffer
+      propagate = false
+    end
 
     begin
       data = to_io.read_nonblock(READ_SIZE, exception: false)
@@ -528,12 +596,10 @@ class Expect
       return nil
     end
     data = data.b
-    if accumulate
-      @buffer << data
-      trim_buffer
-    end
-    trace("received #{data.inspect}", level: 2)
-    trace("buffer #{@buffer.inspect}", level: 3)
+    buffer << data
+    trim_buffer if buffer.equal?(@buffer)
+    trace("received #{data.inspect}", level: 2) if debug_level >= 2
+    trace("buffer #{@buffer.inspect}", level: 3) if debug_level >= 3
     # 仅在真实读取时记录日志，后续匹配或人工转接重用缓冲时不会重复记录。
     write_log(data)
     propagate(data) if propagate
@@ -554,7 +620,15 @@ class Expect
 
   # 向目标写入并在支持时立即 flush，使日志和终端输出及时可见。
   def emit(target, data)
-    target.write(data)
+    offset = 0
+    while offset < data.bytesize
+      count = target.write(data.byteslice(offset..))
+      unless count.is_a?(Integer) && count.positive? && count <= data.bytesize - offset
+        raise IOError, "write must return the number of accepted bytes"
+      end
+
+      offset += count
+    end
     target.flush if target.respond_to?(:flush)
   end
 
@@ -569,9 +643,10 @@ class Expect
     # 重复赋值同一目标时保留原所有权，防止将库打开的文件误变成借用资源。
     return target if previous.equal?(target)
 
-    previous.close if @resources.own_log && previous && !previous.closed?
-    @resources.log = target
-    @resources.own_log = owned
+    previous.close if @resources.owned_log && previous && !previous.closed?
+    # 终结器只持有所属文件；借用回调可能捕获会话，不能让它经资源对象成为 GC 根。
+    @resources.owned_log = owned ? target : nil
+    @log_output = target
     target
   rescue Exception # rubocop:disable Lint/RescueException -- 替换失败时仍释放刚打开的文件。
     target.close if owned && target && !target.closed?
@@ -588,4 +663,4 @@ class Expect
   end
 end
 
-require_relative "expect/interconnect"
+require_relative "expect/interaction"

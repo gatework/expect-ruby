@@ -78,7 +78,7 @@ end
 | `preserve_buffer` | `false` | 匹配后保留完整缓冲 |
 | `log_stdout` | `false` | 将接收内容输出到 `$stdout` |
 | `log_listeners` | `true` | 将接收内容转发给 `listeners` |
-| `raw_terminal` | `true` | 转接期间自动设置并恢复终端 raw 模式 |
+| `raw_terminal` | `true` | `interact` 期间自动设置并恢复输入终端模式，同时保留输出换行处理 |
 | `reset_timeout_on_read` | `false` | 每次收到数据时重置匹配期限 |
 | `graceful_close` | `false` | `close` 先尝试软关闭，再完成强制清理 |
 
@@ -114,9 +114,11 @@ number, error, match, before, after, session, captures = result.to_a
 
 成功匹配后删除匹配内容及其之前的内容，尾部留给下次匹配；超时保留缓冲，EOF 将未匹配内容放入 `before` 并清空缓冲。EOF 与子进程退出是不同事件，使用 `wait` / `process_status` 判断进程结果。底层 IO 错误保留原始异常，回调中的普通异常直接抛出。
 
-接收缓冲、匹配和捕获值为 `ASCII-8BIT` 字节串，保留控制字符、NUL 和无效 UTF-8。UTF-8 正则支持跨读取拆开的字符；显示捕获内容时可 `.force_encoding("UTF-8")`。任意二进制流请用字面字符串或二进制正则 `/.../n`。固定 UTF-8 正则遇到无效数据抛出 `EncodingError`。缓冲上限按字节截断，应为文本设置足够的上限。
+接收缓冲、匹配和捕获值为 `ASCII-8BIT` 字节串，保留控制字符、NUL 和无效 UTF-8。固定 UTF-8 正则会等待读取末尾拆开的字符收齐后再匹配，以免尾部锚点提前命中；显示捕获内容时可 `.force_encoding("UTF-8")`。任意二进制流请用字面字符串或二进制正则 `/.../n`。固定 UTF-8 正则遇到无效数据抛出 `EncodingError`；EOF 时仍未收齐的字符也属于无效编码，匹配缓冲保留原字节供诊断或二进制匹配。缓冲上限按字节截断，应为文本设置足够的上限。
 
 正则完全遵循 Ruby：`^` / `$` 是行锚点，`\A` / `\z` 是整个缓冲的锚点，`/m` 让点号匹配换行；不再提供全局正则模式开关。
+
+IO 等待的 `timeout` 不会中断单次正则计算。处理用户提供的正则或不可信长输出时，应使用有限时的正则实例，例如 `Regexp.new('prompt>\\s*', timeout: 0.05)`；该限制同样适用于 `on_sequence`。正则超时原样抛出 `Regexp::TimeoutError`，匹配缓冲保留，库不会修改进程全局 `Regexp.timeout`。`timeout: 0` 仍会匹配已有缓冲，不代表禁止正则计算。长输出可用日志保存全文，按业务需要设置 `buffer_limit` 限制匹配窗口；缩小窗口会改变 `before` 和跨窗口匹配范围。
 
 ## 回调、事件与多会话
 
@@ -153,7 +155,7 @@ Expect.expect("ready", from: [first, second], timeout: 5)
 
 `from:` 指定一个或多个会话；实例块默认当前会话，类方法需提供来源。相邻且来源列表相同的模式组成一组，按组、会话、模式顺序匹配。类方法省略超时使用 `Expect.configuration.timeout`。
 
-`preserve_buffer = true` 时，继续回调应自行消费匹配，例如 `connection.buffer = connection.after`，避免重复匹配同一内容。无限超时与不消费缓冲的继续回调可以无限循环。被信号中断的匹配 select/read 会自动重试，保留原期限。
+`preserve_buffer = true` 时，继续回调通常应自行消费匹配，例如 `connection.buffer = connection.after`。如果回调没有改变缓冲，当前模式会等待缓冲变化后才重新匹配，避免反复处理同一内容。被信号中断的匹配 select/read 会自动重试，保留原期限。
 
 ## 已有 IO、写入和终端
 
@@ -167,6 +169,8 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 ```
 
 `Expect.open` 支持可 `select` 的 File、管道、Socket 和 PTY，`writer:` 可指定独立写端。默认借用 IO，关闭会话不关闭原始 IO；`own: true` 转移关闭责任，初始化失败也会释放接管的 IO。`StringIO` 可以用作日志和监听器，不能用作读取会话。
+
+用于写入或转接的真实 IO 应在首次写入前设置 `io.sync = true`，并由调用方保证没有未刷新的 Ruby 写缓冲；`write_nonblock` 可能先阻塞刷新已有缓冲，这一步不受本库的 IO 等待期限控制。已有缓冲应在交付给本库前由调用方排空，库不会绕过缓冲或改变字节顺序。
 
 `readable_sessions` 返回可读的会话对象数组，不消费数据、不包含已关闭会话、同一会话只返回一次。默认 `timeout: 0`；`nil` 无限等待。同一会话应由一个读取者驱动，多会话共同监听使用 `Expect.expect`。
 
@@ -182,7 +186,7 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 | `winsize` / `winsize=` | 读取/修改 `[rows, cols]`，由内核通知前台进程 |
 | `slave` / `tty_name` / `to_io` / `writer` / `fileno` / `tty?` | 底层 IO 和终端信息 |
 
-大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，已写入字节不回滚。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、`__send__` 保留 Ruby 反射语义。
+大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，`error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的 `EINTR` 均保留原期限重试。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、`__send__` 保留 Ruby 反射语义。
 
 ## 日志与人工交互
 
@@ -197,7 +201,7 @@ session.listeners = [output_io, another_session]
 session.log_listeners = false
 ```
 
-日志读取用 `log_output`，设置用 `log_output=`，打开路径或注册日志块用 `log_to`。不能同时提供日志目标与块。`listeners` 返回列表副本，`listeners = []` 清空；替换无效目标不会丢失原目标。
+日志读取用 `log_output`，设置用 `log_output=`，打开路径或注册日志块用 `log_to`。新建日志权限为 `0600`（仍受 umask 限制），已有文件保留原权限。不能同时提供日志目标与块。`listeners` 返回列表副本，`listeners = []` 清空；替换无效目标不会丢失原目标。
 
 所有会话默认不输出到 stdout。日志仅记录实际读取的接收字节；写入不重复记录，终端回显可能作为接收内容返回。密码交互应关闭日志、调试，并确保被控程序不回显密码。
 
@@ -214,9 +218,17 @@ end
 
 `on_sequence(sequence) { ... }` 注册字符串、原生正则或 `:eof`，通过闭包传递参数。无回调、返回 `nil` / `false` 停止，其他 Ruby 真值（包括 `0`）继续；字符串 `"EOF"` 按字面匹配。转接返回导致停止的会话，超时或所有 EOF 回调均继续时返回 `nil`。
 
-字面转义可以跨读取完整过滤，尾部留给下次调用。正则转义使用受 `buffer_limit` 限制的历史记录，已实时转发的前缀无法撤回；零长度正则匹配抛出 `ArgumentError`。日志始终记录原始接收字节，包括被过滤的转义，在 `expect` / `interconnect` 之间切换也不会重复记录。
+`interconnect` 统一调度真实 IO 的非阻塞读写；慢目标不会阻止其他源前进，等待同时受总 `timeout` 和目标会话的 `write_timeout` 约束。总期限到达返回 `nil`，目标写期限先到则抛出 `WriteTimeout`。超时后的字面转义前缀只尝试非阻塞发送，不再等待下游。作为写入目标但未显式列出的 Expect 会话，背压期间读取的回复保留在其匹配缓冲；需要同时转发这些回复时，把它也传给 `interconnect`。
 
-转接会自动设置并恢复终端 raw 模式；`raw_terminal = false` 将设置交给调用方。`interact` 还会恢复临时监听组、日志开关和转义设置，包括超时和异常路径。
+每个源独立保存待发送数据以及各目标的发送位置，`source.pending_output?` 表示仍有未交付内容。超时或异常后再次对同一源调用 `interconnect`，会接着发送未完成的后缀，已完成的目标不会重复接收；转义回调在前缀交付后执行。待发送数据与 `buffer` 中尚未处理的输入分开保存，修改 `listeners` 仅影响后续数据，旧数据仍发往原目标。恢复时不要把原始数据再次赋给 `buffer`，也不要在排空旧输出前插入新的直接写入；关闭源会话会放弃其待发送数据。转接保留的输入暂不按 `buffer_limit` 裁剪，下次匹配时重新应用该上限。
+
+自定义写入对象必须及时返回实际接受的字节数，短写入会继续发送后缀，零、负数或非法返回值抛出 `IOError`。对象若先写入再抛错而不报告进度，库无法推断其副作用。日志、用户回调及自定义 `write` / `flush` 同步运行，应由调用方保证它们不会无限阻塞；上述 IO 期限不会强行中断这些代码。普通 `expect` 的同步日志和监听器输出也不受匹配等待期限限制。
+
+字面转义可以跨读取完整过滤，尾部留给下次调用。正则转义使用历史记录，默认最多保留最近 65,536 字节；设置 `buffer_limit` 后改用该值。正则及其锚点作用于当前历史窗口，超过窗口的跨读取正则无法匹配，已实时转发的前缀也无法撤回；零长度正则匹配抛出 `ArgumentError`。日志始终记录原始接收字节，包括被过滤的转义，在 `expect` / `interconnect` 之间切换也不会重复记录。
+
+`interact` 会自动设置并恢复本地输入终端模式，同时保留输出换行处理；输入会话的 `raw_terminal = false` 将设置交给调用方。通用的 `interconnect` 只负责字节转发，由调用方管理终端模式。`interact` 还会恢复临时监听组、日志开关和转义设置，包括超时和异常路径。
+
+对同一连接重复传入同一个原始输入 IO 时，`interact` 会复用输入包装器，接续上次预读的尾部。包装器由该连接持有，关闭连接时释放，但不关闭借用的原始 IO；已关闭的输入或包装器不再复用。需要跨连接共享或自行管理输入生命周期时，显式传入 `Expect.open(input)` 创建的会话。
 
 ## 软关闭、硬关闭与进程状态
 
@@ -262,3 +274,4 @@ SSH 示例用 `SSH_USER`、`SSH_HOST`、`SSH_KNOWN_HOSTS` 配置，密码隐藏�
 多脚本验证入口为 `test/integration/ssh_scripts.rb`，人工/自动接管入口为 `examples/ssh_interact.rb`，详细配置及日志检查见 [SSH 测试说明](test/integration/README.md)。
 
 当前接口迁移表见 [接口说明](docs/COMPATIBILITY.md)，本次与历史验证分列在 [验证记录](docs/VERIFICATION.md)。此次重构直接移除了旧入口，不提供兼容别名。
+防火墙连接器已迁移到相邻的 `algosec` 项目；本库只保留 `Expect` 与 `expect-pty` 通用传输能力。

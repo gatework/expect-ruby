@@ -13,6 +13,74 @@ class EdgeCaseTest < ExpectTest
     assert result.timeout?
   end
 
+  def test_zero_width_continuation_waits_for_new_input_before_matching_again
+    session, = pipe_session
+    session.buffer = "ready"
+    calls = 0
+
+    result = bounded(1) do
+      session.expect_result(timeout: 0.01) do
+        on(/(?=ready)/) do
+          calls += 1
+          Expect.continue
+        end
+      end
+    end
+
+    assert result.timeout?
+    assert_equal 1, calls
+  end
+
+  def test_stalled_pattern_can_match_again_after_new_input
+    session, writer = pipe_session
+    session.buffer = "ready"
+    first_match = Queue.new
+    background do
+      first_match.pop
+      writer.write("!")
+    end
+    calls = 0
+
+    result = bounded(1) do
+      session.expect_result(timeout: 0.5) do
+        on(/(?=ready)/) do
+          calls += 1
+          first_match << true if calls == 1
+          calls == 1 ? Expect.continue : nil
+        end
+      end
+    end
+
+    assert result.matched?
+    assert_equal 2, calls
+    assert_equal "ready!", session.buffer
+  end
+
+  def test_stalled_pattern_can_match_again_after_timeout_callback_changes_buffer
+    session, = pipe_session
+    session.buffer = "ready"
+    calls = 0
+    timeouts = 0
+
+    result = bounded(1) do
+      session.expect_result(timeout: 0.01) do
+        on(/(?=ready)/) do
+          calls += 1
+          calls == 1 ? Expect.continue : nil
+        end
+        timeout do
+          timeouts += 1
+          session.buffer = "ready!"
+          timeouts == 1 ? Expect.continue : nil
+        end
+      end
+    end
+
+    assert result.matched?
+    assert_equal 2, calls
+    assert_equal 1, timeouts
+  end
+
   def test_stdout_works_with_utf8_banner_and_ascii_regexp
     session, writer = pipe_session
     writer.write("欢迎登录\nprompt>")
@@ -130,33 +198,11 @@ class EdgeCaseTest < ExpectTest
   end
 
   def test_gc_reclaims_abandoned_child
-    script = <<~RUBY
-      require "expect"
-      require "rbconfig"
-      def abandoned
-        session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60", log_stdout: false)
-        session.pid
-      end
-      # Ruby 的保守 GC 可能扫描到创建线程栈上残留的引用；先结束该线程，确保会话确实不可达。
-      pid = Thread.new { abandoned }.value
-      20.times do
-        GC.start
-        sleep 0.02
-        begin
-          Process.kill(0, pid)
-        rescue Errno::ESRCH
-          puts "reaped"
-          exit 0
-        end
-      end
-      Process.kill("KILL", pid) rescue nil
-      Process.waitpid(pid) rescue nil
-      abort "abandoned child survived GC"
-    RUBY
-    output, status = Open3.capture2e(RbConfig.ruby, "--disable-gems", "-I", File.expand_path("../lib", __dir__), "-e",
-                                     script)
-    assert status.success?, output
-    assert_equal "reaped\n", output
+    assert_gc_reclaims_abandoned_child
+  end
+
+  def test_gc_reclaims_abandoned_child_with_log_callback_capturing_session
+    assert_gc_reclaims_abandoned_child(log_callback: true)
   end
 
   def test_invalid_options_raise_before_spawning
@@ -179,5 +225,38 @@ class EdgeCaseTest < ExpectTest
     output, status = Open3.capture2e(environment, RbConfig.ruby, "-e", script, entrypoint)
     assert status.success?, output
     assert_equal "true:constant:#{Expect::VERSION}\n", output
+  end
+
+  private
+
+  def assert_gc_reclaims_abandoned_child(log_callback: false)
+    script = <<~RUBY
+      require "expect"
+      require "rbconfig"
+      def abandoned
+        session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60", log_stdout: false)
+        session.log_to { |bytes| [session.pid, bytes] } if #{log_callback}
+        session.pid
+      end
+      # Ruby 的保守 GC 可能扫描到创建线程栈上残留的引用；先结束该线程，确保会话确实不可达。
+      pid = Thread.new { abandoned }.value
+      20.times do
+        GC.start
+        sleep 0.02
+        begin
+          Process.kill(0, pid)
+        rescue Errno::ESRCH
+          puts "reaped"
+          exit 0
+        end
+      end
+      Process.kill("KILL", pid) rescue nil
+      Process.waitpid(pid) rescue nil
+      abort "abandoned child survived GC"
+    RUBY
+    output, status = Open3.capture2e(RbConfig.ruby, "--disable-gems", "-I", File.expand_path("../lib", __dir__), "-e",
+                                     script)
+    assert status.success?, output
+    assert_equal "reaped\n", output
   end
 end

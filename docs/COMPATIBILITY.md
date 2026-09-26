@@ -1,4 +1,26 @@
-# Ruby 接口与 Expect.pm 行为对照
+# Ruby 接口与 Expect 行为对照
+
+## Tcl Expect 语义边界
+
+参考 Tcl Expect 的[官方手册](https://core.tcl-lang.org/expect/doc/trunk/expect.man)、
+[`expect.c`](https://core.tcl-lang.org/expect/raw/expect.c?ci=trunk) 的 `eval_cases` / `expMatchProcess` / 计时循环，
+以及 [`exp_inter.c`](https://core.tcl-lang.org/expect/raw/exp_inter.c?ci=trunk) 的 `intMatch` 与终端恢复流程。
+本库借鉴交互模型，保留以下明确差异，不承诺 Tcl 脚本或完整功能兼容。
+
+| Tcl Expect 能力 | 本库的 Ruby 表达与边界 |
+| --- | --- |
+| `spawn`、`send`、`expect`、`interact` | PTY 会话、`write` / `puts`、原生模式块和人工接管；`send` 保留 Ruby 反射语义 |
+| `exp_continue` / `-continue_timer` | `continue` / `continue(reset_timeout: false)`；使用单调时钟和秒数关键字参数 |
+| 匹配后消费输入、`-notransfer` | `before` / `match` / `after` 与会话级 `preserve_buffer`；无进展回调不会原地重复执行 |
+| glob、exact、regexp 模式 | 字符串只作字面匹配，正则采用 Ruby `Regexp`；锚点和多行行为遵守 Ruby |
+| `match_max`、`full_buffer` | `buffer_limit` 只保留尾部字节，默认无限；没有缓冲满事件或丢弃字节结果，不能作为完整输出存储 |
+| 前置/后置模式、后台匹配 | 没有全局隐式规则或后台读取器；调用方显式组合模式块，每个会话由一个读取者驱动 |
+| `interact` 的部分正则匹配 | Tcl 的 `CANMATCH` 可以暂存潜在匹配；Ruby 原生正则不提供该接口，本库使用有限历史窗口，已转发前缀不能撤回。需要完整过滤时使用字面转义 |
+| `close` 与 `wait` | IO 结束与进程退出仍分开判断；本库的块生命周期和 `close` 会额外回收直属子进程 |
+
+长输出任务应通过日志或监听器流式保存，并按提示长度设置 `buffer_limit`。需要无损截断通知时，后续应单独设计缓冲满事件，不能把现有尾部裁剪当成该功能。后台匹配与共享前置/后置模式也需要独立的取消、优先级和资源归属约定，尚未实现。
+
+## Expect.pm 接口迁移
 
 交互能力参考 [jacoby/expect.pm](https://github.com/jacoby/expect.pm)，源码基准为版本 1.38、提交 `2ea0e4ce20a896c95cb4c94e781f1b1f3145150d`。此项目独立实现，使用 MIT 许可，没有复制 Perl 实现代码；原项目作者及维护者为 Austin Schutz、Roland Giersig、Dave Jacoby，采用与 Perl 相同的许可。
 

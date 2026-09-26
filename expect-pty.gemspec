@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2"
   spec.files = Dir[
-    "lib/**/*.rb", "examples/**/*.rb", "examples/**/*.md", "docs/**/*.md",
+    "lib/**/*.rb", "examples/**/*.rb", "examples/**/*.md", "docs/**/*.md", "benchmark/**/*.rb",
     "test/**/*.rb", "test/**/*.sh", "test/**/*.md", "Gemfile", "Rakefile",
     ".rubocop.yml", "expect-pty.gemspec", "README.md", "LICENSE", "CHANGELOG.md", "script/ci", "script/release.rb"
   ]
