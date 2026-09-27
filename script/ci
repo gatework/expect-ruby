@@ -60,10 +60,11 @@ child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'
 Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_stdout: false) do |session|
   session.winsize = [30, 100]
   abort "io-console terminal size failed" unless session.winsize == [30, 100]
+  # BSD stty 设置模式会清空待读输出，先收取提示，使子进程停在等待输入的位置。
+  abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5)
   mode = session.stty
   abort "installed stty query failed" if mode.empty?
   session.stty(mode)
-  abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5)
 
   session.puts("expect-ruby")
   abort "installed gem PTY dialogue failed" unless session.expect("reply:expect-ruby", timeout: 5)
