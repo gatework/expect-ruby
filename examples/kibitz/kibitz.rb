@@ -135,6 +135,7 @@ module Kibitz
     File.unlink(socket_path) if socket_path && File.socket?(socket_path)
     Dir.rmdir(directory) if directory && Dir.exist?(directory)
   end
+
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 end
 

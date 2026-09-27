@@ -12,7 +12,8 @@ labels: bug
 
 ### Reproduction
 
-Provide the smallest runnable Ruby example and the command or IO behavior it drives. Remove credentials and sensitive session output.
+Provide the smallest runnable Ruby example and the command or IO behavior it drives. Remove credentials and sensitive
+session output.
 
 ### Expected and actual behavior
 
