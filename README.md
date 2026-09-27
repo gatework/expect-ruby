@@ -241,10 +241,14 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 `send_slow` 在每次写入后只检查已经可读的回复，不附加固定等待；返回时不保证收齐最后一个字符引发的回复，完整对话请继续使用
 `expect`。
 
-大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，
+大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。背压等待超过 `write_timeout` 抛出 `Expect::WriteTimeout`，
 `error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的
 `EINTR` 均保留原期限重试。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、
 `__send__` 保留 Ruby 反射语义。
+
+`write_timeout` 是背压相关期限：持续成功的正数短写不会因为总耗时超过它而失败，也不会强行打断同步用户代码。
+它与匹配的 `timeout/deadline`、整次 `interconnect` 的总 `timeout` 分别计算。非空写入要求底层返回实际接受的正整数字节数，
+且不能超过本次片段长度；非法计数立即抛出 `IOError`，空写入仍返回 0。
 
 `stty` 需要系统命令位于 `PATH`；缺失时抛出带安装提示的 `IOError`，原始 `Errno::ENOENT` 保留在 `cause`。窗口尺寸和人工接管的终端恢复使用
 Ruby `io/console`。
@@ -337,6 +341,11 @@ IO 期限不会强行中断这些代码。普通 `expect` 的同步日志和监�
 字面转义可以跨读取完整过滤，尾部留给下次调用。正则转义使用历史记录，默认最多保留最近 65,536 字节；设置 `buffer_limit`
 后改用该值。正则及其锚点作用于当前历史窗口，超过窗口的跨读取正则无法匹配，已实时转发的前缀也无法撤回；零长度正则匹配抛出
 `ArgumentError`。日志包括被转接过滤的转义，显式启用 `redact` 时遮盖注册秘密；在 `expect` / `interconnect` 之间切换不会重复记录。
+
+一次转接尚未返回时，递归 `interconnect` 的来源若与活跃来源重叠，会在移动缓冲和修改发送游标前抛出
+`Expect::ReentrancyError`。完全独立的来源仍可嵌套转接；`on_sequence` 中的嵌套 `expect/expect_result` 及返回后再次转接仍受支持。
+自定义 `write` 若已产生副作用却抛错、未返回计数，库无法推断已接受的字节数，此时不能保证恢复交付恰好一次。
+这一保护不代表所有会话 API 都可以跨线程并发调用。
 
 `interact` 会自动设置并恢复本地输入终端模式，同时保留输出换行处理；输入会话的 `raw_terminal = false` 将设置交给调用方。通用的
 `interconnect` 只负责字节转发，由调用方管理终端模式。`interact` 还会恢复临时监听组、日志开关和转义设置，包括超时和异常路径。

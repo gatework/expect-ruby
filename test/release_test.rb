@@ -10,6 +10,40 @@ class ReleaseTest < Minitest::Test
     assert_equal "- New API.", Release.release_notes(changelog, "0.2.0")
   end
 
+  def test_dry_run_writes_identical_utf8_notes_in_c_and_utf8_locales
+    notes = "- 修复初始化中断，保留原异常。\n"
+    with_package do |_release, artifact|
+      script = locale_script
+      File.write("CHANGELOG.md", "## #{Expect::VERSION}\n\n#{notes}", encoding: "UTF-8")
+      rebuild_package
+      %w[US-ASCII UTF-8].each do |encoding|
+        env = release_environment.merge("LC_ALL" => (encoding == "US-ASCII" ? "C" : "en_US.UTF-8"), "LANG" => "C")
+        output, error, status = Open3.capture3(env, RbConfig.ruby, "-E#{encoding}", script,
+                                               "--dry-run", "--artifact", artifact, binmode: true)
+        assert status.success?, "#{encoding}: #{output} #{error}"
+        assert_includes output, "Dry run complete"
+        files = Dir.glob("tmp/release/#{Expect::VERSION}/candidate-*/release-notes.md")
+        refute_empty files
+        files.each { |file| assert_equal notes.b, File.binread(file) }
+      end
+    end
+  end
+
+  def test_dry_run_rejects_invalid_utf8_without_rewriting_the_changelog
+    with_package do |_release, artifact|
+      script = locale_script
+      bytes = "## #{Expect::VERSION}\n- invalid \xff\n".b
+      File.binwrite("CHANGELOG.md", bytes)
+      rebuild_package
+      _output, error, status = Open3.capture3(release_environment.merge("LC_ALL" => "C", "LANG" => "C"),
+                                              RbConfig.ruby, "-EUS-ASCII", script, "--dry-run", "--artifact", artifact)
+      refute status.success?
+      assert_includes error, "Invalid UTF-8 in CHANGELOG.md"
+      assert_equal bytes, File.binread("CHANGELOG.md")
+      assert_empty Dir.glob("tmp/release/#{Expect::VERSION}/candidate-*")
+    end
+  end
+
   def test_rejects_unreleased_missing_empty_or_invalid_versions
     ["## Unreleased\n- Pending.\n## 0.2.0\n- Ready.", "## 0.1.1\n- Old.", "## 0.2.0\n"].each do |changelog|
       assert_raises(RuntimeError) { Release.release_notes(changelog, "0.2.0") }
@@ -260,6 +294,19 @@ class ReleaseTest < Minitest::Test
   end
 
   private
+
+  # CLI 按自身路径定位项目根目录；复制入口和版本文件，避免误读开发仓库的 CHANGELOG。
+  def locale_script
+    FileUtils.mkdir_p(["script", "lib/expect"])
+    FileUtils.cp(File.expand_path("../script/release.rb", __dir__), "script/release.rb")
+    FileUtils.cp(File.expand_path("../lib/expect/version.rb", __dir__), "lib/expect/version.rb")
+    File.expand_path("script/release.rb")
+  end
+
+  def release_environment
+    names = ENV.keys.grep(/\ABUNDLE/) + %w[RUBYOPT RUBYLIB RUBYGEMS_GEMDEPS]
+    names.to_h { |name| [name, nil] }
+  end
 
   def git(*)
     output, error, status = Open3.capture3("git", *)

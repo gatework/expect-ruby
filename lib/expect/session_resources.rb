@@ -20,11 +20,14 @@ class Expect
     # 只关闭由本库拥有的 IO；借用的 reader、writer 由调用方管理。
     # 常规关闭错误延后到所有句柄尝试完再抛出，失败句柄仍留在账本内供下一次关闭重试。
     def close_handles
-      return unless own
+      self.class.close_handles(reader, writer, slave) if own
+    end
 
+    # 账本尚未建立时也能释放局部 IO；不依赖完整会话，也不调用无效参数上的用户方法。
+    def self.close_handles(*handles)
       # 初始化校验失败时可能含无效参数，只关闭真实 IO；PTY 读写端也需要去重。
       failure = nil
-      [reader, writer, slave].grep(IO).uniq.each do |io|
+      handles.grep(IO).uniq(&:object_id).each do |io|
         io.close unless io.closed?
       rescue IOError, SystemCallError => error
         failure ||= error
@@ -59,18 +62,7 @@ class Expect
           owned_log.close if owned_log && !owned_log.closed?
         ensure
           # 每个阶段独立收尾；句柄或日志关闭失败不能跳过进程回收。
-          reap
-          if pid
-            begin
-              Process.kill("KILL", pid)
-            rescue Errno::ESRCH
-              # 子进程可能刚好退出，仍需尝试 wait，不能留下僵尸进程。
-              nil
-            end
-            # 将最终 wait 交给后台回收线程，避免在 GC 终结器中阻塞等待。
-            Process.detach(pid)
-            @pid = nil
-          end
+          finalize_child
         end
       end
     rescue IOError, SystemCallError
@@ -80,6 +72,39 @@ class Expect
     # 构造只持有资源对象的终结回调，避免闭包中的 self 绑定到会话而妨碍回收。
     def self.finalizer(resources)
       proc { resources.finalize }
+    end
+
+    private
+
+    # GC 只做一次非阻塞回收和最多两次信号尝试；失败也把等待交给 detach，不运行用户回调。
+    def finalize_child
+      begin
+        reap
+      rescue Errno::EINTR
+        # GC 不等待下轮轮询，仍对本进程拥有的子进程执行后续有限清理。
+        nil
+      end
+      return unless pid && owner == Process.pid
+
+      begin
+        2.times do
+          break unless pid && owner == Process.pid
+
+          Process.kill("KILL", pid)
+          break
+        rescue Errno::EINTR
+          next
+        rescue Errno::ESRCH
+          break
+        end
+      ensure
+        if pid && owner == Process.pid
+          Process.detach(pid)
+          @pid = nil
+        end
+      end
+    rescue Errno::ECHILD
+      @pid = nil
     end
   end
 end

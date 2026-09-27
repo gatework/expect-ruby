@@ -1,5 +1,103 @@
 # 验证记录
 
+## v0.5.2 改进计划 T00–T07（2026-09-27，本地实施阶段）
+
+以下是版本归档前的本地验证记录，对应改动随后归入 0.5.3。发布状态以 GitHub Release、对应 CI 和 RubyGems 为准。
+
+基线为 `ac583532b5f4c946856e79ecd7350eb298019081`，开始时主工作区干净且 HEAD 等于本地 v0.5.2 标签。
+本轮保留同步 IO、匹配优先级、默认 nil 期限、二进制缓冲及现有运行时依赖。版本仍为 0.5.2，变更记入 Unreleased；
+没有提交、推送、创建标签、调用发布接口或登录真实 SSH。
+
+T00 在 macOS 26.6.2 arm64、Ruby 4.0.6、Bundler 4.0.17、Minitest 5.27.0 上执行原始 `bundle exec rake`：
+61 个文件 lint 通过，346 项 / 6,604 断言，退出码 0，无失败、错误或跳过。
+系统默认 Ruby 为 2.6.10，因此下列本机命令统一使用 Homebrew Ruby，不改全局配置：
+
+```sh
+export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
+export BUNDLER_VERSION=4.0.17
+bundle exec rake
+bundle exec rake test TESTOPTS='--seed=20260927'
+bundle exec rake test TESTOPTS='--seed=1'
+bundle exec rake test TESTOPTS='--seed=42'
+script/ci
+```
+
+计划中的 `TESTOPTS='--seed 20260927'` 在锁定的 Rake 13.4.2 上实际失败：加载器把独立的数字参数当作文件。
+同一 `rake test` 入口改用 `--seed=...` 后，输出确认采用指定 seed；未修改加载器、依赖或测试门槛。
+
+### 按任务核对红灯与绿灯
+
+从基线建立独立 detached worktree `tmp/improvement-052/baseline`，只复制对应的新回归测试，逐文件重放旧行为。
+下表红灯为该基线的真实失败，绿灯为修复后同一测试文件的独立运行；全部使用 seed 20260927。
+
+| 任务 | 修改与回归文件 | 旧版失败证据 | 修复后结果（测试 / 断言） |
+| --- | --- | --- | --- |
+| T01 / F01 | `lib/expect.rb`、`session_resources.rb`、`test/initialization_failure_test.rb` | 6 项失败：PTY 未关闭、open 用 NoMethodError 覆盖原中断 | 6 / 39，通过 |
+| T02 / F02 | 上述生命周期文件、`test/process_interruption_test.rb` | 3 项失败、4 项错误：EINTR 提前终止 wait/close，finalizer 未 detach，归属变化后仍 detach | 12 / 56，通过 |
+| T03 / F03 | `lib/expect.rb`、`interaction.rb`、`relay.rb`、`test/relay_reentrancy_test.rb` | 5 项失败：`abc` 变为 `abcabc`、重叠来源未拒绝、准备异常丢失缓冲 | 8 / 47，通过 |
+| T04 / F04 | `script/release.rb`、发布 workflow、`test/release_test.rb` | 2 项失败：中文说明在 US-ASCII 下无法解析，非法 UTF-8 缺少明确诊断 | 21 / 124，通过（含原有发布拒绝条件） |
+| T05 / C01–C02 | `lib/expect.rb`、`test/write_contract_test.rb` | 2 项失败：零计数依赖 watchdog 才退出，超出当前 chunk 的计数未拒绝 | 6 / 39，通过 |
+| T06 | `test/ownership_sequence_test.rb` | 组合回归，非新增独立缺陷 | 6 / 161，通过 |
+| T07 | README、内部契约、CHANGELOG、本记录 | 保留所有原测试及原有 CI 门禁 | 见下方完整验证 |
+
+F01 使用真实 IO/PTY 并注入构造与 close 故障；F02 包含真实孩子的 waitpid 中断、真实 fork 非创建者检查，
+连续中断和 GC 路径另外使用受控时钟与全部系统调用替身。假 PID 不进入真实信号或回收调用。
+F03 使用公开 API、真实管道和自定义 writer 自然复现；F04 使用真实 CLI 子进程和中文文件。
+C02 是非法 IO 适配返回值注入，不能推断正常 Ruby IO 会返回这些值。C01 的持续成功短写特征在旧版及新版均通过。
+
+T06 的字节与多目标序列使用固定 seeds 20260927、1、42，核对各目标的完整内容、已确认计数、未处理缓冲、
+转义消费、日志唯一性及原目标续发。真实 pipe EOF 与仍活跃孩子组合验证 IO/PID 相互独立，soft_close 只发 TERM，
+hard_close 后读取真实状态并确认 ECHILD。测试时钟与系统调用替身在 ensure 中恢复，watchdog 仅用于测试防挂起。
+
+### 完整验证与发布预演
+
+新增 40 项测试，最终本机 `bundle exec rake`：66 个文件 lint 通过，**386 项 / 6,965 断言**，退出码 0。
+三个固定 seed 的默认套件也各为 386 / 6,965，退出码均为 0，无失败、错误或跳过。
+原有 cleanup/process/terminal_cleanup、relay/interact/diagnostics、io/timeout/deadline 定向组合也全部通过。
+
+| 环境 | 完整 `script/ci` |
+| --- | --- |
+| macOS 26.6.2 arm64，Ruby 4.0.6 | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 3.2.11，`ruby:3.2` | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 3.3.12，`ruby:3.3` | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 3.4.10，`ruby:3.4-slim` | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 4.0.6，`ruby:4.0` | 退出 0；386 / 6,965；66 文件 lint 通过 |
+
+Linux 验证以只读源目录挂载到临时容器，复制到独立 `/work` 后，使用同一 Gemfile.lock、Bundler 4.0.17 与
+`BUNDLE_FROZEN=true` 执行原始 `script/ci`。3.4 slim 的 git 和构建工具仅安装在该临时容器。
+完整脚本包含 dialogue 示例、matching/relay/send_slow/scaling/redactor 五组 smoke、Gem 构建、
+普通 RubyGems 与最小 Bundler 消费方的隔离 PTY/核心契约/运行时依赖检查；所有这些步骤保留并执行。
+
+在添加本轮 Unreleased 条目前，用本地完整源码构建的同一个 Gem 实际执行：
+
+```sh
+LC_ALL=C LANG=C ruby -EUS-ASCII script/release.rb --dry-run --artifact tmp/improvement-052/expect-pty-0.5.2.gem
+LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ruby -EUTF-8 script/release.rb --dry-run --artifact tmp/improvement-052/expect-pty-0.5.2.gem
+```
+
+两次退出 0、验证相同 Gem 字节，生成的中文 release-notes 逐字节相同。该候选只是中途本地验证物，不是可发布版本。
+新增 CLI 测试另覆盖独立 fixture 项目的非法 UTF-8 拒绝，以及 C/UTF-8 两种外部编码；不会访问发布服务。
+当前 Unreleased 保留本轮变更，正式发布前仍需维护者自行归档并选择版本，原有拒绝条件不绕过。
+最后对当前工作区再次执行 C locale dry-run，按预期退出 1 并提示 `Move Unreleased changes into the versioned changelog before releasing`。
+
+### 同类检查、兼容性与剩余范围
+
+- 构造所有权：核对 new/open/spawn/stty 四条入口。new/open 补账本之前的兜底；spawn 继续委托 new，stty 保留已有独立兜底。
+- 进程回收：核对主会话、finalizer、stty 正常等待与异常回收。主会话/GC 修复 EINTR；stty 继续使用自身阶段策略，不合并账本。
+- 写入进度：核对直接 write、RelayWriter、logging.emit 三处。后两者已有计数验证，仅补直接 write。
+- 发布文本：本地入口与 workflow 共用 UTF-8 读取，notes 显式 UTF-8 写出；ASCII 校验和与 Git/Gem 二进制比较保持原状。
+- 内部命名：统一为 `cleanup(failed:)`、`close_resources`、`close_child`、`mark_eof`；库、测试和文档无旧私有入口调用或别名。
+- 兼容性：同源活跃 Relay 现在明确报 `ReentrancyError`，异常适配计数报 IOError；普通顺序恢复、嵌套 Matcher、匹配顺序和期限默认值不变。
+
+G1–G6 由上述红绿回归与实际 locale dry-run 覆盖；G7–G8 由默认套件及原始 CI 脚本覆盖；G9–G10 由契约回归、
+聚焦 diff 和本记录覆盖。日志位于被忽略的 `tmp/improvement-052/`，含基线、逐项红绿、固定 seed、容器和 dry-run 输出。
+测试迭代中修正了测试 helper 与 Minitest 同名方法/嵌套 stub 的冲突，以及 CLI fixture 必须随脚本根目录复制的问题；
+这些测试支架错误不计入产品红灯证据，表中证据来自修正后的独立基线重放。
+
+未执行 macOS Ruby 3.2/3.3/3.4、远端 GitHub Actions 的 ubuntu-24.04/macos-15 矩阵、真实 SSH 或发布。
+本地 Linux arm64 容器不能替代该远端矩阵。T08 的长期压力、高水位及性能对照按计划留作后续测量；
+本轮 smoke 不证明吞吐提升、峰值内存下降或任意系统故障下保证回收成功。
+
 ## 0.5.0 公共字节过滤器发布前复核（2026-09-27）
 
 基线为已发布的 `5a219f7`（0.4.0）。本轮公开 `Expect::Redactor`，新增 11 项回归，覆盖独立加载不引入 PTY、完整文本与流尾部策略、跨分片与重叠秘密、自定义替换标记、空规则、输入复制、无效更新原子性及安全摘要；现有会话日志与诊断继续复用该过滤器。

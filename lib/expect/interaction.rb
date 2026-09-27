@@ -248,6 +248,8 @@ class Expect
   attr_accessor :sequences
   # 让同步写入的背压读取遵守当前转接的数据所有权，退出后恢复普通匹配缓冲。
   attr_accessor :interaction_buffer
+  # 活跃 Relay 的所有权 token；只限制同源递归转接，不限制转义回调中的 Matcher。
+  attr_accessor :relay_owner
   # 只有裁剪、替换和消费才改变代次；同一代次只会追加，供字面扫描复用已排除的前缀。
   attr_reader :buffer_generation
   # 待交付游标随源会话保存，Relay 的超时或异常退出不会丢失各目标已经写出的进度。

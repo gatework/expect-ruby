@@ -4,21 +4,25 @@ class Expect
   # 一次转接的共同读写循环；发送游标留在源会话中，调用结束后仍可继续。
   # 本对象只暂借未处理输入；读缓冲、发送进度与转义回调分开保存，避免重入时重复交付。
   class Relay
-    # 将普通匹配缓冲移入本轮转接，并记住上层交互缓冲；不关闭或接管任何外部 IO。
+    OWNERSHIP_MUTEX = Mutex.new
+    private_constant :OWNERSHIP_MUTEX
+
+    # 这里只校验参数；run 取得所有来源后才转移缓冲，不关闭或接管任何外部 IO。
     def initialize(sessions, timeout)
       @sessions = sessions.uniq
       @active = @sessions.dup
       period = Expect.duration(timeout)
       @deadline = period && (Expect.monotonic + period)
-      @buffers = @sessions.to_h { |session| [session, session.clear_buffer] }
-      @previous = @sessions.to_h { |session| [session, session.__send__(:interaction_buffer)] }
+      @token = Object.new
+      @buffers = {}
+      @previous = {}
     end
 
     # 每轮先处理转义和已排队输出，再共同选择读写；停止返回来源会话，总期限到达返回 nil。
     # 真实 IO 的写入由非阻塞游标推进，用户日志和回调仍同步执行，须由调用方保证及时返回。
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 共享读写循环统一维护来源和目标期限。
     def run
-      @sessions.each { |session| session.__send__(:interaction_buffer=, @buffers.fetch(session)) }
+      prepare_sources
       outputs.each(&:restart_timeout)
       polled = false
       loop do
@@ -89,14 +93,40 @@ class Expect
         end
       end
     ensure
-      # 未处理输入还给会话，已排队字节仍归发送游标；两者不能合并，否则恢复会重放前缀。
-      @previous.each { |session, buffer| session.__send__(:interaction_buffer=, buffer) }
-      @buffers.each { |session, buffer| session.__send__(:restore_relay_buffer, buffer) }
+      restore_sources
     end
 
     # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     private
+
+    # 锁仅保护标记检查/登记，不跨 IO 或用户回调；任一来源被占用时整组拒绝，不动缓冲和期限。
+    def prepare_sources
+      OWNERSHIP_MUTEX.synchronize do
+        if @sessions.any? { |session| session.__send__(:relay_owner) }
+          raise ReentrancyError, "source session already has an active relay"
+        end
+
+        @sessions.each { |session| session.__send__(:relay_owner=, @token) }
+      end
+      @sessions.each do |session|
+        @previous[session] = session.__send__(:interaction_buffer)
+        @buffers[session] = session.clear_buffer
+        session.__send__(:interaction_buffer=, @buffers.fetch(session))
+      end
+    end
+
+    # 未处理输入还给会话，已排队字节仍归游标；构造中断也只恢复已转移的缓冲及自己的标记。
+    def restore_sources
+      @previous.each { |session, buffer| session.__send__(:interaction_buffer=, buffer) }
+      @buffers.each { |session, buffer| session.__send__(:restore_relay_buffer, buffer) }
+    ensure
+      OWNERSHIP_MUTEX.synchronize do
+        @sessions.each do |session|
+          session.__send__(:relay_owner=, nil) if session.__send__(:relay_owner).equal?(@token)
+        end
+      end
+    end
 
     # 只收集尚未完成的目标，供共同 select 以及最早写入期限计算使用。
     def outputs = @sessions.flat_map { |session| session.__send__(:relay_outputs) }.reject(&:done?)

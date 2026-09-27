@@ -28,7 +28,7 @@ class Expect
     failed = true
     raise
   ensure
-    cleanup_preserving_failure(failed) { cleanup_stty(resources, reader, sink) }
+    cleanup(failed:) { cleanup_stty(resources, reader, sink) }
   end
 
   # 读取终端的 [行数, 列数]；底层并非终端或句柄已关闭时保留原生 IO 异常。

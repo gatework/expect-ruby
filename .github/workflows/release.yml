@@ -28,7 +28,7 @@ jobs:
         run: |
           version="$(ruby -Ilib -rexpect/version -e 'print Expect::VERSION')"
           test "$GITHUB_REF" = "refs/tags/v${version}"
-          ruby -r ./script/release -e 'Release.release_notes(File.read("CHANGELOG.md"), Expect::VERSION)'
+          ruby -r ./script/release -e 'Release.read_notes("CHANGELOG.md", Expect::VERSION)'
 
   verify:
     name: Verify release artifact

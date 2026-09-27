@@ -26,7 +26,7 @@ class Release
   end
 
   def run
-    notes = self.class.release_notes(File.read("CHANGELOG.md"), @version)
+    notes = self.class.read_notes("CHANGELOG.md", @version)
     unless @dry_run || capture("git", "status", "--porcelain").empty?
       raise "Commit all source changes before publishing"
     end
@@ -46,7 +46,7 @@ class Release
     @checksum_file = File.join(directory, "SHA256SUMS")
     @notes_file = File.join(directory, "release-notes.md")
     File.write(@checksum_file, "#{@sha256}  #{File.basename(@artifact)}\n")
-    File.write(@notes_file, "#{notes}\n")
+    File.write(@notes_file, "#{notes}\n", encoding: "UTF-8")
     puts "Verified #{@tag}: #{@sha256}\nArtifact: #{@artifact}"
     return puts "Dry run complete: #{@artifact}" if @dry_run
 
@@ -61,6 +61,14 @@ class Release
   end
 
   # 有未归档的变更时拒绝发布，避免把新接口放进旧版本或遗漏发布说明。
+  def self.read_notes(path, version)
+    changelog = File.read(path, encoding: "UTF-8")
+    raise "Invalid UTF-8 in #{path}" unless changelog.valid_encoding?
+
+    release_notes(changelog, version)
+  end
+
+  # 纯章节解析与文件编码边界分离，本地入口和工作流共用 read_notes。
   def self.release_notes(changelog, version)
     raise "Use a stable X.Y.Z version" unless /\A\d+\.\d+\.\d+\z/.match?(version)
 

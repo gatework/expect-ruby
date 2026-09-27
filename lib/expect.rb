@@ -24,6 +24,7 @@ class Expect
   private_constant :CONFIGURATION_MUTEX
 
   class SpawnError < StandardError; end
+  class ReentrancyError < StandardError; end
 
   # 已被底层接受的字节不可撤回；调用方可据此只处理尚未写出的后缀。
   class WriteTimeout < IOError
@@ -70,7 +71,7 @@ class Expect
       raise
     ensure
       if session && (block_given? || !spawned)
-        session.__send__(:cleanup_preserving_failure, failed) do
+        session.__send__(:cleanup, failed: failed) do
           session.close(graceful: spawned && session.graceful_close?)
         end
       end
@@ -89,8 +90,9 @@ class Expect
       raise
     ensure
       if session && (block_given? || !initialized)
-        session.__send__(:cleanup_preserving_failure, failed) do
-          session.close(graceful: initialized && session.graceful_close?)
+        session.__send__(:cleanup, failed: failed) do
+          session.__send__(:cleanup_session, io, writer: writer, own: own,
+                                                 graceful: initialized && session.graceful_close?)
         end
       end
     end
@@ -189,7 +191,7 @@ class Expect
     failed = true
     raise
   ensure
-    cleanup_preserving_failure(failed) { close(graceful: false) } if @resources && !initialized
+    cleanup(failed:) { cleanup_session(master, writer: master, slave: slave, own: true) } unless initialized
   end
 
   # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
@@ -273,7 +275,12 @@ class Expect
   def pid = @resources.pid
 
   # 非阻塞回收并缓存子进程状态；未退出或仅适配 IO 时返回 nil。
-  def process_status = @resources.reap
+  def process_status
+    @resources.reap
+  rescue Errno::EINTR
+    # 单次轮询被中断时状态仍未知；wait/close 会在原期限内继续，不在这里无限重试。
+    @resources.status
+  end
 
   def exit_code = process_status&.exitstatus
 
@@ -332,7 +339,8 @@ class Expect
     offset = 0
     while offset < data.bytesize
       begin
-        count = writer.write_nonblock(data.byteslice(offset, READ_SIZE), exception: false)
+        chunk = data.byteslice(offset, READ_SIZE)
+        count = writer.write_nonblock(chunk, exception: false)
       rescue Errno::EINTR
         raise WriteTimeout.new(bytes_written: offset) if deadline && Expect.monotonic >= deadline
 
@@ -360,6 +368,10 @@ class Expect
           next
         end
       else
+        unless count.is_a?(Integer) && count.positive? && count <= chunk.bytesize
+          raise IOError, "write must return the number of accepted bytes"
+        end
+
         offset += count
       end
     end
@@ -400,15 +412,7 @@ class Expect
 
   # 轮询回收状态直到进程退出或期限到达；返回 Process::Status 或 nil，超时不丢弃 PID。
   def wait(timeout: nil)
-    period = Expect.duration(timeout)
-    deadline = period && (Expect.monotonic + period)
-    loop do
-      status = process_status
-      return status if status || !pid
-      return nil if deadline && Expect.monotonic >= deadline
-
-      sleep(deadline ? [0.01, deadline - Expect.monotonic].min.clamp(0, 0.01) : 0.01)
-    end
+    wait_for_child(Expect.duration(timeout))
   end
 
   # 先在自然退出期限内收集尾部输出，再关闭句柄并最多发送 TERM；不会发送 KILL。
@@ -425,8 +429,8 @@ class Expect
 
       read_available
     end
-    finish_close(timeout: deadline ? [deadline - Expect.monotonic, 0].max : nil,
-                 term_timeout: term_timeout, force: false)
+    close_resources(timeout: deadline ? [deadline - Expect.monotonic, 0].max : nil,
+                    term_timeout: term_timeout, force: false)
   end
 
   # 立即关闭句柄，再分阶段等待、TERM、KILL；不收集剩余输出，返回已回收状态或 nil。
@@ -434,7 +438,7 @@ class Expect
     period = Expect.duration(timeout)
     raise ArgumentError, "hard_close timeout must be finite" unless period
 
-    finish_close(timeout: period, term_timeout: period, force: true)
+    close_resources(timeout: period, term_timeout: period, force: true)
   end
 
   # 通用生命周期清理：可先软关闭，ensure 中硬关闭兜底；正常完成返回 nil。
@@ -445,20 +449,29 @@ class Expect
     failed = true
     raise
   ensure
-    cleanup_preserving_failure(failed) { hard_close }
+    cleanup(failed:) { hard_close }
   end
 
   private
 
+  # 账本发布前只按局部所有权清理；发布后沿用完整关闭流程，避免两套生命周期状态。
+  def cleanup_session(reader, writer:, own:, slave: nil, graceful: false)
+    if @resources
+      close(graceful: graceful)
+    elsif own
+      SessionResources.close_handles(reader, writer, slave)
+    end
+  end
+
   # 仅在本次生命周期已有异常时抑制常规清理错误；调用者 rescue 中的旧异常不算本次失败。
-  def cleanup_preserving_failure(failed)
+  def cleanup(failed:)
     yield
   rescue IOError, SystemCallError
     raise unless failed
   end
 
   # 共用的进程关闭流程；force 控制是否允许 KILL，只有资源创建者能够操作直属子进程。
-  def finish_close(timeout:, term_timeout:, force:)
+  def close_resources(timeout:, term_timeout:, force:)
     failure = nil
     # 预期的清理错误延后传播，保证其余所属资源和直属子进程仍能完成清理。
     cleanup = lambda do |&step|
@@ -480,7 +493,7 @@ class Expect
     @relay_outputs&.clear
     @relay_history&.clear
     @relay_callback = nil
-    status = finish_child_close(timeout: timeout, term_timeout: term_timeout, force: force)
+    status = close_child(timeout: timeout, term_timeout: term_timeout, force: force)
     completed = true
     status
   ensure
@@ -494,17 +507,41 @@ class Expect
   end
 
   # 句柄清理失败不改变进程策略；未回收 PID 保留给重复关闭或终结器继续处理。
-  def finish_child_close(timeout:, term_timeout:, force:)
+  def close_child(timeout:, term_timeout:, force:)
     return process_status unless @resources.owner == Process.pid && pid
-    return process_status if wait(timeout: timeout)
 
-    signal_child("TERM")
-    return process_status if wait(timeout: term_timeout)
+    status = wait(timeout: timeout)
+    return status if status || !pid
 
+    status = wait_for_child(term_timeout, signal: "TERM")
+    return status if status || !pid
     return unless force
 
-    signal_child("KILL")
-    wait(timeout: 1)
+    wait_for_child(1, signal: "KILL")
+  end
+
+  # 每阶段只计算一次期限；回收或信号被中断后仍沿用剩余预算，零预算也先做一次尝试。
+  def wait_for_child(period, signal: nil)
+    deadline = period && (Expect.monotonic + period)
+    loop do
+      status = process_status
+      return status if status || !pid || @resources.owner != Process.pid
+
+      begin
+        signal_child(signal) if signal
+        signal = nil
+      rescue Errno::EINTR
+        # 下轮先回收再重试信号，避免在无限等待或持续中断时忙等。
+        nil
+      end
+      # ESRCH 后可能已完成回收；即使预算耗尽，也要返回刚获得的状态。
+      return process_status unless pid
+
+      remaining = deadline && (deadline - Expect.monotonic)
+      return nil if remaining && remaining <= 0
+
+      sleep(remaining ? [0.01, remaining].min : 0.01)
+    end
   end
 
   # 统一初始化 PTY 与已有 IO 会话，复制配置并注册不直接捕获会话的资源终结器。
@@ -580,13 +617,13 @@ class Expect
       # 某些系统用 PTY 的 EIO 表示对端关闭；普通 IO 的同类错误仍按异常处理。
       raise unless @pty
 
-      return finish_read
+      return mark_eof
     rescue EOFError
-      return finish_read
+      return mark_eof
     end
     return nil if data == :wait_readable
 
-    return finish_read if data.nil?
+    return mark_eof if data.nil?
 
     data = data.b
     buffer << data
@@ -599,7 +636,7 @@ class Expect
     data
   end
 
-  def finish_read
+  def mark_eof
     @eof = true
     flush_log
     flush_diagnostics(:received)
@@ -619,7 +656,7 @@ class Expect
 
   # 仅由资源创建者向仍未回收的子进程发送信号；若进程刚好退出，则尝试回收。
   def signal_child(signal)
-    return unless alive? && @resources.owner == Process.pid
+    return unless pid && @resources.owner == Process.pid
 
     Process.kill(signal, pid)
   rescue Errno::ESRCH
