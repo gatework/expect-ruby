@@ -68,7 +68,11 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_st
   abort "installed gem child did not exit successfully" unless status&.success?
 end
 
-# 使用已安装包验证内部过滤器随包分发，且结构化诊断无需加载可选的 Logger。
+# 使用已安装包验证公共过滤器随包分发，且结构化诊断无需加载可选的 Logger。
+filter = Expect::Redactor.new(["secret"], replacement: "[REDACTED]")
+filtered = filter.append("sec") + filter.append("ret!") + filter.finish
+abort "installed public redactor failed" unless filtered == "[REDACTED]!"
+abort "installed complete-text redactor failed" unless Expect::Redactor.redact("sec", ["secret"]) == "sec"
 reader, producer = IO.pipe
 events = []
 transcript = StringIO.new

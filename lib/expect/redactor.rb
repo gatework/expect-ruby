@@ -3,10 +3,21 @@
 class Expect
   # 单个日志字节流的过滤器。保留最长秘密长度减一的尾部，跨 write/read 分片仍可识别。
   # 掩码与原字节一起留存；重叠命中的区间取并集，已经输出的掩码不重复生成。
-  # 上层负责传入已复制的非空二进制秘密，每个日志目标或诊断方向使用独立实例。
+  # 不依赖会话或 IO；每个日志目标或诊断方向使用独立实例。
   class Redactor
+    # 完整诊断文本只匹配完整秘密；流边界的疑似秘密前缀由 finish 的默认策略保护。
+    def self.redact(data, patterns, replacement: "[FILTERED]")
+      filter = new(patterns, replacement: replacement)
+      filter.append(data) + filter.finish(partial: false)
+    end
+
     # pending 保存尚不能安全输出的原字节，hidden 的对应字节用 0/1 表示是否需要遮盖。
-    def initialize(patterns)
+    def initialize(patterns, replacement: "[FILTERED]")
+      unless replacement.is_a?(String) && !replacement.empty?
+        raise ArgumentError, "replacement must be a nonempty String"
+      end
+
+      @replacement = replacement.b.freeze
       self.patterns = patterns
       @pending = "".b
       @hidden = "".b
@@ -15,21 +26,42 @@ class Expect
 
     # 更新后续匹配规则并保留已有尾部与掩码；不能追溯修改已经交付给日志目标的内容。
     def patterns=(patterns)
-      @patterns = patterns
-      @lookbehind = patterns.map(&:bytesize).max - 1
+      unless patterns.is_a?(Array) && patterns.all? { |pattern| pattern.is_a?(String) && !pattern.empty? }
+        raise ArgumentError, "patterns must be an Array of nonempty Strings"
+      end
+
+      @patterns = patterns.map { |pattern| pattern.b.freeze }.uniq.freeze
+      @lookbehind = [(@patterns.map(&:bytesize).max || 0) - 1, 0].max
     end
 
     # 追加一个原始字节块，返回已经可以确定的安全前缀；新秘密可能跨越此前保留的尾部。
     def append(data)
-      @pending << data
+      raise ArgumentError, "data must be a String" unless data.is_a?(String)
+
+      @pending << data.b
       @hidden << ("\0" * data.bytesize)
       mark_secrets
       release([@pending.bytesize - @lookbehind, 0].max)
     end
 
     # EOF、日志目标替换及关闭是流边界；尾部疑似秘密前缀也遮盖，不能因 flush 泄露片段。
-    def finish
+    def finish(partial: true)
+      raise ArgumentError, "partial must be true or false" unless [true, false].include?(partial)
+
       mark_secrets
+      mark_partial_secrets if partial
+      output = release(@pending.bytesize)
+      @masking = false
+      output
+    end
+
+    # 过滤器公开后仍不在诊断摘要中展开注册秘密或尚未交付的原始字节。
+    def inspect = "#<#{self.class}>"
+
+    private
+
+    # 流关闭时无法再等待后续字节，默认隐藏与秘密开头一致的未完成尾部。
+    def mark_partial_secrets
       @patterns.each do |pattern|
         [pattern.bytesize - 1, @pending.bytesize].min.downto(1) do |length|
           next unless @pending.end_with?(pattern.byteslice(0, length))
@@ -38,12 +70,7 @@ class Expect
           break
         end
       end
-      output = release(@pending.bytesize)
-      @masking = false
-      output
     end
-
-    private
 
     # 每次只将命中区域标为隐藏，不清除旧掩码；偏移逐字节推进以识别相互重叠的秘密。
     def mark_secrets
@@ -56,7 +83,7 @@ class Expect
     end
 
     # 按连续区间输出，避免逐字节构造字符串；只保存尚可能与下一块组成秘密的后缀。
-    # masking 跨 append 保留，使被分成多个块的同一隐藏区间只输出一次 [FILTERED]。
+    # masking 跨 append 保留，使被分成多个块的同一隐藏区间只输出一次替换标记。
     def release(length)
       output = "".b
       cursor = 0
@@ -64,7 +91,7 @@ class Expect
         hidden = @hidden.getbyte(cursor) == 1
         ending = [@hidden.index(hidden ? "\0" : "\1", cursor) || length, length].min
         if hidden
-          output << "[FILTERED]" unless @masking
+          output << @replacement unless @masking
         else
           output << @pending.byteslice(cursor, ending - cursor)
         end
@@ -76,6 +103,4 @@ class Expect
       output
     end
   end
-
-  private_constant :Redactor
 end

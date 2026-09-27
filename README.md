@@ -16,7 +16,7 @@ RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.4.0", require: "expect/pty"
+gem "expect-pty", "~> 0.5.0", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -29,8 +29,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.4.0.gem
-gem install ./tmp/expect-pty-0.4.0.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.5.0.gem
+gem install ./tmp/expect-pty-0.5.0.gem
 ```
 
 ```ruby
@@ -289,6 +289,23 @@ session.log_to("session.log")
 过滤器最多延迟最长秘密长度减一的尾部字节，EOF、目标替换和显式关闭时交付剩余内容；流边界处疑似秘密前缀也会被遮盖。发送与接收诊断各自保留过滤状态；启用脱敏时，level
 3 的缓冲快照只显示 `[FILTERED]`，避免部分消费或裁剪后剩下的秘密片段绕过过滤。日志回调的分块边界因此可能变化。GC
 兜底不会调用用户日志回调，需显式关闭会话以交付过滤器尾部。
+
+应用需要过滤自己的日志或错误文本时，可以直接使用独立的字节过滤器，无需打开 PTY 或创建会话：
+
+```ruby
+require "expect/redactor"
+
+safe_message = Expect::Redactor.redact(message, [password], replacement: "[REDACTED]")
+filter = Expect::Redactor.new([password], replacement: "[REDACTED]")
+output.write(filter.append(chunk)) # 每个输出流使用独立实例
+output.write(filter.finish)
+```
+
+`patterns=` 用由非空字符串组成的数组替换后续规则，空数组表示不注册秘密；输入数组、字符串和替换标记都会复制，
+无效更新不改变已有规则或暂存数据。已输出的内容不能撤回，更新后也会保留先前标记为隐藏的尾部区间。
+`redact` 处理完整文本，只匹配完整秘密；`finish` 默认还隐藏未完成的秘密前缀。已确定输入完整的调用方可用
+`finish(partial: false)`。连续或重叠的隐藏区间合并成一个替换标记。过滤不自动识别终端控制符或编码，过滤器本身不持有 IO，
+也不负责会话作用域或异常对象的安全字段选择。该公共接口从 0.5.0 开始提供。
 
 ```ruby
 session.interact(input: $stdin, escape: "\x1d", output: $stdout) # Ctrl-]
