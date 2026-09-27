@@ -16,8 +16,10 @@ class PatternOffsetTest < ExpectTest
     ]
     session, = pipe_session
     cases.each do |text, regexp, offset, length, captures|
-      bytes = text.b
+      # 扫描只读调用者输入；省去正则副本后也不能改变编码标记或冻结字符串。
+      bytes = text.b.freeze
       assert_equal [offset, length, captures], Expect::Pattern.new(value: regexp).locate(bytes)
+      assert_equal Encoding::BINARY, bytes.encoding
       session.buffer = bytes
       result = session.expect_result(regexp, timeout: 0)
       assert_equal bytes.byteslice(0, offset), result.before

@@ -8,7 +8,7 @@ class Expect
   REGEXP_ESCAPE_HISTORY_LIMIT = 65_536
   private_constant :REGEXP_ESCAPE_HISTORY_LIMIT
 
-  # Presents remote text on a raw local terminal without changing existing CRLF sequences.
+  # 在 raw 本地终端显示远端文本，补齐 LF 所需的 CR，同时保留已有 CRLF。
   class InteractOutput
     def initialize(target)
       @target = target
@@ -196,7 +196,7 @@ class Expect
 
   private :interact_source, :queue_output
 
-  # Only interact knows which stream is the local keyboard. Generic interconnect leaves terminals alone.
+  # 只有 interact 知道哪个流是本地键盘；通用 interconnect 不修改终端模式。
   def prepare_interact_terminal(source)
     return unless source.raw_terminal? && source.tty?
 
@@ -204,7 +204,7 @@ class Expect
     state = [io, io.console_mode]
     io.raw!
     state
-  rescue Exception # rubocop:disable Lint/RescueException -- Restore a partially changed terminal on interrupts.
+  rescue Exception # rubocop:disable Lint/RescueException -- 中断时也恢复可能已部分修改的终端。
     restore_interact_terminal(state)
     raise
   end

@@ -18,8 +18,12 @@ class Expect
         offset = buffer.index(value)
         return [offset, value.bytesize, []] if offset
       when Regexp
-        text = buffer.dup
-        text.force_encoding(value.encoding) if value.fixed_encoding?
+        # 正则只读取输入；只有编码标记不同才复制，避免每个模式额外分配缓冲对象。
+        text = if value.fixed_encoding? && value.encoding != buffer.encoding
+                 buffer.dup.force_encoding(value.encoding)
+               else
+                 buffer
+               end
         unless text.valid_encoding?
           # 不完整的尾字符可能改变锚点或前瞻结果，必须等字符收齐后再匹配。
           validate_incomplete_suffix!(text, final: final)

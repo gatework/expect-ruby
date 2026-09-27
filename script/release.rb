@@ -83,11 +83,16 @@ class Release
 
   private
 
-  def capture(*arguments)
-    output, error, status = Open3.capture3(*arguments)
+  def capture(*)
+    capture_bytes(*).strip
+  end
+
+  # Git blob 是任意字节，不能沿用命令文本的 strip，尾部换行和 NUL 也属于发布内容。
+  def capture_bytes(*arguments)
+    output, error, status = Open3.capture3(*arguments, binmode: true)
     raise "#{arguments.first} failed: #{error.strip}" unless status.success?
 
-    output.strip
+    output
   end
 
   def command(*arguments)
@@ -124,7 +129,7 @@ class Release
   def verify_package
     package = Gem::Package.new(@artifact)
     expected = Gem::Specification.load(File.expand_path("expect-pty.gemspec"))
-    fields = %i[name version platform summary description authors licenses required_ruby_version
+    fields = %i[name version platform summary description authors licenses homepage required_ruby_version
                 required_rubygems_version require_paths metadata dependencies extensions executables bindir
                 post_install_message]
     unless fields.all? { |field| package.spec.public_send(field) == expected.public_send(field) }
@@ -132,6 +137,7 @@ class Release
     end
     raise "Artifact file list differs from the source" unless package.contents.sort == expected.files.sort
 
+    committed = committed_files if @commit
     # 直接检查归档中的权限，避免解包时本机 umask 改写执行位。
     File.open(@artifact, "rb") do |io|
       Gem::Package::TarReader.new(io) do |archive|
@@ -139,7 +145,10 @@ class Release
         package.open_tar_gz(data) do |tar|
           tar.each do |entry|
             file = entry.full_name
-            raise "Artifact differs from source: #{file}" unless entry.file? && entry.read == File.binread(file)
+            bytes = entry.read
+            raise "Artifact differs from source: #{file}" unless entry.file? && bytes == File.binread(file)
+
+            verify_committed_file(file, bytes, entry.header.mode, committed) if committed
             next if entry.header.mode & 0o111 == File.stat(file).mode & 0o111
 
             raise "Artifact executable permissions differ: #{file}"
@@ -147,6 +156,29 @@ class Release
         end
       end
     end
+  end
+
+  # 工作区干净不代表所有打包文件都来自提交：ignore、assume-unchanged 和 filemode 均可隐藏差异。
+  # 只在正式发布时核对提交树；dry-run 仍允许检验尚未提交的开发源码。
+  def committed_files
+    capture_bytes("git", "ls-tree", "-rz", "--full-tree", @commit).split("\0").to_h do |record|
+      metadata, file = record.split("\t", 2)
+      mode, type, object = metadata.split
+      [file, [mode.to_i(8), type, object]]
+    end
+  end
+
+  def verify_committed_file(file, bytes, mode, committed)
+    committed_mode, type, object = committed[file.b]
+    unless type == "blob" && committed_mode & 0o170000 == 0o100000
+      raise "Artifact file is not in release commit: #{file}"
+    end
+    unless bytes == capture_bytes("git", "cat-file", "blob", object)
+      raise "Artifact differs from release commit: #{file}"
+    end
+    return if mode & 0o111 == committed_mode & 0o111
+
+    raise "Artifact executable permissions differ from release commit: #{file}"
   end
 
   def get(path)

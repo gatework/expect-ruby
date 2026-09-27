@@ -4,8 +4,8 @@
 
 ## 准备版本
 
-1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.3.2`。
-2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.3.2 - 2026-09-26`；可以保留空的 `Unreleased` 标题。
+1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.3.3`。
+2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.3.3 - 2026-09-27`；可以保留空的 `Unreleased` 标题。
 3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
 发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
@@ -21,6 +21,8 @@ ruby script/release.rb --rubygems-only
 ```
 
 默认执行 `script/ci` 的检查、完整测试、构建和隔离安装验证，构建包保存在 `tmp/ci/expect-pty-版本号.gem`。随后复制到 `tmp/release/版本号/candidate-*/` 的独占目录，核对包内文件并生成发布说明和校验文件。该副本贯穿后续发布，目录会保留供失败重试。正式发布前再次确认源码未变，上传 RubyGems 后下载远端包核对 SHA256。
+
+正式发布逐个核对包内普通文件在目标 Git 提交中的存在性、原始字节和执行权限，同时核对 gemspec 的安装元数据及主页。`git status` 为空不能替代这一检查：忽略规则可能隐藏被 glob 收入包的本地文件，`assume-unchanged` 和 `core.filemode` 也可能隐藏差异。候选包必须与已提交源码一致。
 
 `--dry-run` 只做本地验证，可在提交前使用。它仍要求版本号和发布说明完整。
 
@@ -40,9 +42,9 @@ ruby script/release.rb
 GitHub Runner 不会继承本机的 Gem 登录状态。要在 Actions 发布 RubyGems，需在仓库的 Settings → Secrets and variables → Actions 中配置 `RUBYGEMS_API_KEY`，使用具有 `Push rubygem` 权限的发布 Key。
 
 ```sh
-git tag -a v0.3.2 -m 'Release v0.3.2'
-git push origin v0.3.2
-gh workflow run release.yml --ref v0.3.2 --repo gatework/expect-ruby
+git tag -a v0.3.3 -m 'Release v0.3.3'
+git push origin v0.3.3
+gh workflow run release.yml --ref v0.3.3 --repo gatework/expect-ruby
 ```
 
 也可以在 Actions → Release → Run workflow 选择对应版本标签。工作流仅支持手动触发，避免本地发布时出现第二次并发上传。
@@ -56,7 +58,7 @@ gh workflow run release.yml --ref v0.3.2 --repo gatework/expect-ruby
 保留脚本输出的 `Artifact` 路径，用该候选 Gem 重试发布；更换 RubyGems 工具版本或重新构建可能得到不同字节，同一个版本不得覆盖已有内容。也可以直接指定从 CI 或 Release 下载的原包：
 
 ```sh
-ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.3.2.gem
+ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.3.3.gem
 ```
 
 将示例路径替换为实际输出的 `Artifact` 路径。`--artifact` 会跳过构建和测试，但仍核对包与当前源码是否一致；需要同时恢复 GitHub Release 时去掉 `--rubygems-only`。

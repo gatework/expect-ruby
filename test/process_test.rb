@@ -77,6 +77,14 @@ class ProcessTest < ExpectTest
     assert_raises(Expect::SpawnError) { session.spawn("cat") }
   end
 
+  def test_spawn_cleans_child_when_post_exec_diagnostics_fail
+    assert_failed_construction_cleans_child(:spawn)
+  end
+
+  def test_new_cleans_child_when_post_exec_diagnostics_fail
+    assert_failed_construction_cleans_child(:new)
+  end
+
   def test_block_closes_child_on_exception
     pid = nil
     assert_raises(RuntimeError) do
@@ -228,6 +236,17 @@ class ProcessTest < ExpectTest
     assert_equal configuration, terminal_configuration(session)
   end
 
+  def test_stty_reports_a_missing_system_command_and_preserves_the_cause
+    previous_path = ENV.fetch("PATH", nil)
+    session = child("sleep 60")
+    ENV["PATH"] = ""
+    error = assert_raises(IOError) { session.stty }
+    assert_match "stty executable not found", error.message
+    assert_instance_of Errno::ENOENT, error.cause
+  ensure
+    ENV["PATH"] = previous_path
+  end
+
   def test_configuration_and_session_attributes
     Expect.configure(timeout: 0.01, log_stdout: false)
     session = Expect.new
@@ -241,5 +260,32 @@ class ProcessTest < ExpectTest
     session.buffer_limit = 30
     assert_equal 30, session.buffer_limit
     assert_match(/\A#<Expect .*closed=false>\z/, session.inspect)
+  end
+
+  private
+
+  def assert_failed_construction_cleans_child(factory)
+    connection = nil
+    session_class = Class.new(Expect)
+    session_class.define_method(:initialize) do |*command, **options|
+      connection = self
+      super(*command, **options)
+    end
+    reader, diagnostic_output = IO.pipe
+    @ios.push(reader, diagnostic_output)
+    reader.close
+    previous_stderr = $stderr
+    begin
+      $stderr = diagnostic_output
+      assert_raises(Errno::EPIPE) do
+        session_class.public_send(factory, RbConfig.ruby, "--disable-gems", "-e", "sleep 60", debug_level: 1)
+      end
+    ensure
+      $stderr = previous_stderr
+      @sessions << connection if connection
+    end
+    assert connection.closed?
+    assert_nil connection.pid
+    assert_instance_of Process::Status, connection.process_status
   end
 end

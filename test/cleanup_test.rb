@@ -3,6 +3,94 @@
 require_relative "test_helper"
 
 class CleanupTest < ExpectTest
+  def test_failed_open_initialization_attempts_all_owned_handles_and_preserves_validation_error
+    reader, writer = IO.pipe
+    @ios.push(reader, writer)
+    reader.stub(:close, -> { raise IOError, "reader close failed" }) do
+      error = assert_raises(ArgumentError) { Expect.open(reader, writer: writer, own: true, unknown: true) }
+      assert_match(/unknown/, error.message)
+      assert writer.closed?
+    end
+  end
+
+  def test_failed_new_initialization_attempts_all_pty_handles_and_preserves_validation_error
+    master, slave = PTY.open
+    @ios.push(master, slave)
+    PTY.stub(:open, [master, slave]) do
+      master.stub(:close, -> { raise IOError, "master close failed" }) do
+        error = assert_raises(ArgumentError) { Expect.new(unknown: true) }
+        assert_match(/unknown/, error.message)
+        assert slave.closed?
+      end
+    end
+  end
+
+  def test_failed_open_closes_real_owned_handles_when_an_argument_is_not_io
+    [true, false].each do |invalid_reader|
+      reader, writer = IO.pipe
+      @ios.push(reader, writer)
+      invalid = Object.new
+      invalid.define_singleton_method(:close) { raise "invalid IO must not be closed" }
+      incoming = invalid_reader ? invalid : reader
+      outgoing = invalid_reader ? writer : invalid
+      assert_raises(ArgumentError) { Expect.open(incoming, writer: outgoing, own: true) }
+      assert(invalid_reader ? writer.closed? : reader.closed?)
+    end
+  end
+
+  def test_open_block_error_is_preserved_when_owned_cleanup_also_fails
+    [ArgumentError.new("block failed"), Interrupt.new("interrupted"), SystemExit.new(17)].each do |failure|
+      reader, writer = IO.pipe
+      @ios.push(reader, writer)
+      reader.stub(:close, -> { raise IOError, "reader close failed" }) do
+        error = assert_raises(failure.class) do
+          Expect.open(reader, writer: writer, own: true) { raise failure }
+        end
+        assert_same failure, error
+        assert writer.closed?
+      end
+    end
+  end
+
+  def test_open_block_break_still_reports_cleanup_failure
+    reader, writer = IO.pipe
+    @ios.push(reader, writer)
+    failure = IOError.new("reader close failed")
+    reader.stub(:close, -> { raise failure }) do
+      error = assert_raises(IOError) { Expect.open(reader, writer: writer, own: true) { break :done } }
+      assert_same failure, error
+      assert writer.closed?
+    end
+  end
+
+  def test_spawn_block_error_is_preserved_and_child_reaped_when_cleanup_also_fails
+    session = stubborn_child
+    failure = ArgumentError.new("block failed")
+    Expect.stub(:new, session) do
+      session.stub(:spawn, session) do
+        session.to_io.stub(:close, -> { raise IOError, "reader close failed" }) do
+          error = assert_raises(ArgumentError) { Expect.spawn("already started") { raise failure } }
+          assert_same failure, error
+          assert_nil session.pid
+        end
+      end
+    end
+  end
+
+  def test_graceful_close_preserves_logging_error_when_handle_cleanup_also_fails
+    session = stubborn_child
+    failure = ArgumentError.new("log failed")
+    session.log_output = ->(_) { raise failure }
+    session.to_io.stub(:wait_readable, true) do
+      session.to_io.stub(:read_nonblock, "last output") do
+        session.to_io.stub(:close, -> { raise IOError, "reader close failed" }) do
+          assert_same failure, assert_raises(ArgumentError) { session.close(graceful: true) }
+          assert_nil session.pid
+        end
+      end
+    end
+  end
+
   def test_close_handles_attempts_every_owned_handle_and_preserves_first_error
     reader, writer = IO.pipe
     extra, peer = IO.pipe

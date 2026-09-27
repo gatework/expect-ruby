@@ -13,7 +13,7 @@
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.3.2", require: "expect/pty"
+gem "expect-pty", "~> 0.3.3", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -26,8 +26,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.3.2.gem
-gem install ./tmp/expect-pty-0.3.2.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.3.3.gem
+gem install ./tmp/expect-pty-0.3.3.gem
 ```
 
 ```ruby
@@ -45,7 +45,7 @@ Expect.spawn("/bin/sh", "-i") do |shell|
 end
 ```
 
-块返回其执行结果，退出时关闭会话并回收子进程，异常和 `break` 也执行清理。无块形式需用 `ensure` 显式调用 `close`。`Expect.new` 可以先创建 PTY、设置 `slave.echo` / `slave.winsize`，然后调用实例的 `spawn`。
+块返回其执行结果，退出时关闭会话并回收子进程，异常和 `break` 也执行清理。构造或启动失败时同样释放已创建的资源；清理中的 IO 错误不会替换正在传播的原始异常。无块形式需用 `ensure` 显式调用 `close`。`Expect.new` 可以先创建 PTY、设置 `slave.echo` / `slave.winsize`，然后调用实例的 `spawn`。
 
 多个命令参数原样传给 Ruby `exec`；单个命令字符串使用 Ruby 的 shell 语义。不可信参数应使用独立参数形式。支持 `env: { "NAME" => "value" }` 和 `chdir: "/path"`。同一会话只能启动一次，启动失败抛出 `Expect::SpawnError`。
 
@@ -70,6 +70,8 @@ end
 ```
 
 `configure` 校验后发布冻结的配置对象；块异常不会发布部分修改。并发调用按顺序完成读改写，不会互相覆盖不同属性。配置块在锁内执行，应保持简短，不要在块内再次调用 `configure`（会抛出 `ThreadError`）或等待其他配置线程。每个会话独立持有配置，优先使用构造参数；修改默认值不会改变已有会话，修改一个会话也不会影响其他会话。子类继承父类默认配置，可独立覆盖。
+
+全局默认配置通常在应用启动时设置；每次会话的动态差异使用构造参数或会话属性，避免在高频路径反复获取共享配置锁。
 
 | 属性 | 默认值 | 行为 |
 | --- | --- | --- |
@@ -143,7 +145,7 @@ end
 
 回调通过闭包访问局部变量。无参数声明块在模式构建器中执行；希望保留调用方 `self` 时使用 `do |patterns|`，调用 `patterns.on(...)`。所有模式注册完成后才读取 IO；注册异常或 `break` 不消费输入。块和位置模式不能混用。`expect_result` 支持同样的声明方式。
 
-`continue` 继续等待并重新计时；`continue(reset_timeout: false)` 保留原期限，类和实例均可调用。无回调或返回其他值时结束本次匹配。超时回调只有返回重置计时的 `continue` 才再次等待。EOF 回调继续时移除该源并等待其余会话，全部 EOF 时立即返回。
+`continue` 继续等待并重新计时；`continue(reset_timeout: false)` 保留原期限，类和实例均可调用。回调返回后若保留的期限已过，不再扫描新的文本匹配，未消费的输入留给下一次等待。无回调或返回其他值时结束本次匹配。超时回调只有返回重置计时的 `continue` 才再次等待。EOF 回调继续时移除该源并等待其余会话；已知的 EOF 仍依次派发，全部 EOF 时直接返回，期限已过时仅对剩余活跃源触发超时。
 
 `eof` / `timeout` 声明会占用模式序号，但事件返回的 `number` 为 `nil`。一个等待只能注册一个超时回调；它接收**所有仍在监听的会话**。不需要回调时，可将 `:eof` / `:timeout` 作为位置事件参数。
 
@@ -193,6 +195,8 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 
 大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，`error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的 `EINTR` 均保留原期限重试。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、`__send__` 保留 Ruby 反射语义。
 
+`stty` 需要系统命令位于 `PATH`；缺失时抛出带安装提示的 `IOError`，原始 `Errno::ENOENT` 保留在 `cause`。窗口尺寸和人工接管的终端恢复使用 Ruby `io/console`。
+
 ## 日志与人工交互
 
 ```ruby
@@ -209,6 +213,8 @@ session.log_listeners = false
 日志读取用 `log_output`，设置用 `log_output=`，打开路径或注册日志块用 `log_to`。新建日志权限为 `0600`（仍受 umask 限制），已有文件保留原权限。不能同时提供日志目标与块。`listeners` 返回列表副本，`listeners = []` 清空；替换无效目标不会丢失原目标。
 
 所有会话默认不输出到 stdout。日志仅记录实际读取的接收字节；写入不重复记录，终端回显可能作为接收内容返回。密码交互应关闭日志、调试，并确保被控程序不回显密码。
+
+普通 `expect` 按顺序同步写入日志、stdout 和 `listeners`，这些目标须及时消费数据；匹配的 `timeout` 不会中断阻塞中的输出。需要在慢目标背压时继续处理其他输入，应使用下面的 `interconnect` 非阻塞转接接口并设置期限。
 
 ```ruby
 session.interact(input: $stdin, escape: "\x1d", output: $stdout) # Ctrl-]

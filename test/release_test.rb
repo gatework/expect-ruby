@@ -36,11 +36,11 @@ class ReleaseTest < Minitest::Test
 
   def test_rubygems_only_publishes_the_verified_copy_without_github
     with_package do |_release, artifact|
+      commit_package_source
       release = Release.new(artifact: artifact, rubygems_only: true)
       bytes = File.binread(artifact)
       checksum = Digest::SHA256.hexdigest(bytes)
       published = false
-      capture = ->(*arguments) { arguments.include?("rev-parse") ? "verified" : "" }
       get = lambda do |path|
         if path.start_with?("/downloads/")
           Struct.new(:code, :body).new("200", bytes)
@@ -58,19 +58,17 @@ class ReleaseTest < Minitest::Test
         refute_equal File.expand_path(artifact), candidate
         published = true
       end
-      release.stub(:capture, capture) do
-        release.stub(:get, get) do
-          release.stub(:system, push) do
-            release.stub(:github, ->(*) { flunk "RubyGems-only release contacted GitHub" }) do
-              release.stub(:publish_github, -> { flunk "RubyGems-only release published to GitHub" }) do
-                [nil, "true"].each do |github_actions|
-                  with_environment("GITHUB_ACTIONS" => github_actions,
-                                   "GEM_HOST_API_KEY" => (github_actions ? "test-only-api-key" : nil)) do
-                    published = false
-                    output, = capture_io { release.run }
-                    assert_includes output, "SHA256 verified"
-                    assert published
-                  end
+      release.stub(:get, get) do
+        release.stub(:system, push) do
+          release.stub(:github, ->(*) { flunk "RubyGems-only release contacted GitHub" }) do
+            release.stub(:publish_github, -> { flunk "RubyGems-only release published to GitHub" }) do
+              [nil, "true"].each do |github_actions|
+                with_environment("GITHUB_ACTIONS" => github_actions,
+                                 "GEM_HOST_API_KEY" => (github_actions ? "test-only-api-key" : nil)) do
+                  published = false
+                  output, = capture_io { release.run }
+                  assert_includes output, "SHA256 verified"
+                  assert published
                 end
               end
             end
@@ -107,9 +105,11 @@ class ReleaseTest < Minitest::Test
 
   def test_rubygems_only_rechecks_source_after_verification
     with_package do |_release, artifact|
+      commit_package_source
       release = Release.new(artifact: artifact, rubygems_only: true)
       statuses = ["", " M payload.rb"]
-      capture = ->(*arguments) { arguments.include?("rev-parse") ? "verified" : statuses.shift }
+      original = release.method(:capture)
+      capture = ->(*arguments) { arguments.include?("rev-parse") ? original.call(*arguments) : statuses.shift }
       release.stub(:capture, capture) do
         release.stub(:get, ->(*) { flunk "changed source contacted RubyGems" }) do
           capture_io do
@@ -124,6 +124,53 @@ class ReleaseTest < Minitest::Test
     with_package do |release, _artifact|
       File.write("payload.rb", "puts :changed\n")
       assert_match "Artifact differs from source", assert_raises(RuntimeError) { release.send(:verify_package) }.message
+    end
+  end
+
+  def test_rejects_ignored_source_collected_by_the_package_glob
+    with_package do |_release, artifact|
+      commit_package_source
+      FileUtils.mkdir_p("lib")
+      File.write("lib/local_only.rb", "puts :local_only\n")
+      File.write(".git/info/exclude", "lib/local_only.rb\n", mode: "a")
+      rebuild_package
+      assert_empty git("status", "--porcelain")
+
+      error = publishing_source_error(artifact)
+      assert_match "not in release commit: lib/local_only.rb", error.message
+      # 提交前的 dry-run 仍可检验候选包，但不能以此证明发布来源。
+      capture_io { Release.new(artifact: artifact, dry_run: true).run }
+    end
+  end
+
+  def test_rejects_source_changes_hidden_from_git_status
+    with_package do |_release, artifact|
+      commit_package_source
+      git("update-index", "--assume-unchanged", "payload.rb")
+      File.binwrite("payload.rb", "puts :changed\n\n")
+      rebuild_package
+      assert_empty git("status", "--porcelain")
+      assert_match "differs from release commit: payload.rb", publishing_source_error(artifact).message
+    end
+  end
+
+  def test_rejects_executable_mode_changes_hidden_from_git_status
+    with_package do |_release, artifact|
+      commit_package_source
+      git("config", "core.filemode", "false")
+      File.chmod(0o755, "payload.rb")
+      rebuild_package
+      assert_empty git("status", "--porcelain")
+      assert_match "permissions differ from release commit: payload.rb", publishing_source_error(artifact).message
+    end
+  end
+
+  def test_rejects_altered_homepage_metadata
+    with_package do |release, _artifact|
+      spec = Gem::Specification.load(File.expand_path("expect-pty.gemspec")).dup
+      spec.homepage = "https://example.invalid/altered"
+      capture_io { Gem::Package.build(spec) }
+      assert_match "metadata", assert_raises(RuntimeError) { release.send(:verify_package) }.message
     end
   end
 
@@ -214,6 +261,37 @@ class ReleaseTest < Minitest::Test
 
   private
 
+  def git(*)
+    output, error, status = Open3.capture3("git", *)
+    assert status.success?, error
+    output
+  end
+
+  def commit_package_source
+    git("init", "--quiet")
+    git("config", "core.hooksPath", File::NULL)
+    File.write(".git/info/exclude", "*.gem\ntmp/\n")
+    git("add", "--", "payload.rb", "CHANGELOG.md", "expect-pty.gemspec")
+    git("-c", "user.name=Release Test", "-c", "user.email=release-test@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Release fixture")
+  end
+
+  def rebuild_package
+    # Gem::Specification.load 会缓存已加载的 gemspec；重新执行才能看到新的 glob 文件。
+    Gem::Specification.reset
+    spec = Gem::Specification.load(File.expand_path("expect-pty.gemspec"))
+    capture_io { Gem::Package.build(spec) }
+  end
+
+  def publishing_source_error(artifact)
+    release = Release.new(artifact: artifact, rubygems_only: true)
+    release.stub(:get, ->(*) { flunk "uncommitted package content reached RubyGems" }) do
+      error = nil
+      capture_io { error = assert_raises(RuntimeError) { release.run } }
+      error
+    end
+  end
+
   # 发布测试显式控制凭据环境，避免本机登录状态或 CI 标记影响用例结果。
   def with_environment(values)
     previous = values.to_h { |name, _value| [name, ENV.fetch(name, nil)] }
@@ -238,7 +316,7 @@ class ReleaseTest < Minitest::Test
             spec.authors = ["Test"]
             spec.license = "MIT"
             spec.homepage = "https://github.com/gatework/expect-ruby"
-            spec.files = ["payload.rb", "CHANGELOG.md", "expect-pty.gemspec"]
+            spec.files = ["payload.rb", "CHANGELOG.md", "expect-pty.gemspec"] + Dir["lib/**/*.rb"]
           end
         RUBY
         artifact = nil

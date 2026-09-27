@@ -12,6 +12,7 @@ class Expect
       @handled_eof = []
       @stalled_matches = {}
       @polled = false
+      @expired_eof_continuation = false
     end
 
     # 运行匹配状态机；内部 :retry 表示继续循环，最终返回一个 Result。
@@ -30,10 +31,12 @@ class Expect
       end
       loop do
         # 先消费已缓冲的匹配，再处理 EOF，最后读取；避免进程退出时丢失最后一个匹配。
-        result = if (matched = find_match)
+        result = if !@expired_eof_continuation && (matched = find_match)
                    handle_match(*matched)
                  elsif (session = unhandled_eof)
                    handle_eof(session)
+                 elsif @expired_eof_continuation
+                   handle_timeout
                  else
                    read_next
                  end
@@ -109,7 +112,12 @@ class Expect
       return result unless actions.any? { |action| continuing?(action) }
 
       @deadline = next_deadline if actions.include?(CONTINUE)
-      @sessions.all? { |candidate| @handled_eof.include?(candidate) } ? result : :retry
+      return result if @sessions.all? { |candidate| @handled_eof.include?(candidate) }
+
+      # 期限已过时不再扫描文本，但先派发已知 EOF；最后一个源结束不能被误报为超时。
+      @expired_eof_continuation = !actions.include?(CONTINUE) && expired?
+
+      :retry
     end
 
     # 在剩余期限内等待可读 IO；零超时仍允许首次非阻塞轮询，EINTR 重试不重新计时。
@@ -182,6 +190,7 @@ class Expect
 
       @deadline = next_deadline
       @polled = false
+      @expired_eof_continuation = false
       :retry
     end
   end

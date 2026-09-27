@@ -3,7 +3,6 @@
 require "pty"
 require "io/console"
 require "io/wait"
-require "shellwords"
 require "stringio"
 require "forwardable"
 require_relative "expect/version"
@@ -62,11 +61,19 @@ class Expect
     def spawn(*command, env: {}, chdir: nil, **)
       session = new(**)
       session.spawn(*command, env: env, chdir: chdir)
+      spawned = true
       return session unless block_given?
 
       yield session
+    rescue Exception # rubocop:disable Lint/RescueException -- 记录本次作用域的失败，清理后原样传播，包括非 StandardError 异常。
+      failed = true
+      raise
     ensure
-      session&.close if block_given? || (session && !session.pid)
+      if session && (block_given? || !spawned)
+        session.__send__(:cleanup_preserving_failure, failed) do
+          session.close(graceful: spawned && session.graceful_close?)
+        end
+      end
     end
 
     # 适配已有 IO；own: true 接管关闭责任，初始化失败也释放接管的读写端。
@@ -77,11 +84,14 @@ class Expect
       return session unless block_given?
 
       yield session
+    rescue Exception # rubocop:disable Lint/RescueException -- 初始化和块异常均须保留，清理失败不能替换原始原因。
+      failed = true
+      raise
     ensure
-      if initialized
-        session.close if block_given?
-      elsif own
-        [io, writer].uniq.each { |handle| handle.close if handle.is_a?(IO) && !handle.closed? }
+      if session && (block_given? || !initialized)
+        session.__send__(:cleanup_preserving_failure, failed) do
+          session.close(graceful: initialized && session.graceful_close?)
+        end
       end
     end
 
@@ -173,11 +183,11 @@ class Expect
     @tty_name = slave.path
     spawn(*command, env: env, chdir: chdir) unless command.empty?
     initialized = true
+  rescue Exception # rubocop:disable Lint/RescueException -- 构造异常时也要关闭已创建的资源并回收已启动的子进程。
+    failed = true
+    raise
   ensure
-    unless initialized
-      master&.close unless master&.closed?
-      slave&.close unless slave&.closed?
-    end
+    cleanup_preserving_failure(failed) { close(graceful: false) } if @resources && !initialized
   end
 
   # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
@@ -382,82 +392,6 @@ class Expect
     count
   end
 
-  # 读取当前日志目标，可能为库打开的文件、借用的 IO、回调或 nil。
-  attr_reader :log_output
-
-  # 替换借用的日志目标或停止日志；先校验新目标，失败时保留旧目标。
-  def log_output=(target)
-    unless target.nil? || target.respond_to?(:write) || target.respond_to?(:call)
-      raise ArgumentError, "log output must support write or call, or be nil"
-    end
-
-    replace_log(target)
-  end
-
-  # 打开追加/覆盖日志文件，或注册接收字节的日志块；同一次只能指定一种目标。
-  def log_to(target = nil, mode: "a", &block)
-    raise ArgumentError, "provide a log target or a block, not both" if block && target
-
-    target = block if block
-    if target.respond_to?(:to_path) || target.is_a?(String)
-      raise ArgumentError, "log mode must be a or w" unless %w[a w].include?(mode)
-
-      # 库打开的文件由 SessionResources 持有，替换日志或关闭会话时释放；外部 IO 只借用。
-      replace_log(File.open(target, "#{mode}b", 0o600), owned: true)
-    else
-      raise ArgumentError, "provide a log target or a block" unless target
-
-      self.log_output = target
-    end
-  end
-
-  # 向当前日志目标补写内容，支持 IO 和回调，不发送给子进程或监听器。
-  def write_log(*objects)
-    target = log_output
-    return unless target
-
-    data = objects.map { |object| object.to_s.b }.join
-    target.respond_to?(:call) ? target.call(data) : emit(target, data)
-  end
-
-  # 返回监听器列表副本，避免外部原地修改转发关系。
-  def listeners = @listeners.dup
-
-  # 校验所有监听器均可写后一次性替换列表，外部数组后续修改不会影响会话。
-  def listeners=(outputs)
-    outputs = Array(outputs)
-    raise ArgumentError, "listeners must support write" unless outputs.all? { |output| output.respond_to?(:write) }
-
-    @listeners = outputs.dup
-  end
-
-  # 查询可恢复的终端模式字符串，或通过系统 stty 设置模式；参数按数组传递，不经 shell。
-  def stty(*modes)
-    return "" unless tty?
-
-    modes = modes.flat_map { |mode| Shellwords.split(mode.to_s) }
-    modes = ["-g"] if modes.empty?
-    reader, sink = IO.pipe
-    child = Process.spawn("stty", *modes, in: to_io, out: sink, err: sink)
-    sink.close
-    output = reader.read
-    _, status = Process.waitpid2(child)
-    raise IOError, "stty failed: #{output.strip}" unless status.success?
-
-    output.strip
-  ensure
-    reader&.close unless reader&.closed?
-    sink&.close unless sink&.closed?
-  end
-
-  # 读取终端的 [行数, 列数]。
-  def winsize = to_io.winsize
-
-  # 更新终端尺寸，由内核通知前台进程。
-  def winsize=(size)
-    to_io.winsize = size
-  end
-
   # 轮询回收状态直到进程退出或期限到达；返回 Process::Status 或 nil，超时不丢弃 PID。
   def wait(timeout: nil)
     period = Expect.duration(timeout)
@@ -501,11 +435,21 @@ class Expect
   def close(graceful: graceful_close?)
     soft_close if graceful
     nil
+  rescue Exception # rubocop:disable Lint/RescueException -- 软关闭的原始异常在硬关闭兜底后继续传播。
+    failed = true
+    raise
   ensure
-    hard_close
+    cleanup_preserving_failure(failed) { hard_close }
   end
 
   private
+
+  # 仅在本次生命周期已有异常时抑制常规清理错误；调用者 rescue 中的旧异常不算本次失败。
+  def cleanup_preserving_failure(failed)
+    yield
+  rescue IOError, SystemCallError
+    raise unless failed
+  end
 
   # 共用的进程关闭流程；force 控制是否允许 KILL，只有资源创建者能够操作直属子进程。
   def finish_close(timeout:, term_timeout:, force:)
@@ -555,10 +499,11 @@ class Expect
 
   # 统一初始化 PTY 与已有 IO 会话，复制配置并注册不直接捕获会话的资源终结器。
   def initialize_session(reader, writer:, slave: nil, own: false, **)
+    # 先登记所有权，后续校验失败也使用同一个资源对象逐个清理所属 IO。
+    @resources = SessionResources.new(reader, writer: writer, slave: slave, own: own)
     raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
     raise ArgumentError, "writer must be a real IO" unless writer.is_a?(IO) && !writer.closed?
 
-    @resources = SessionResources.new(reader, writer: writer, slave: slave, own: own)
     @pty = reader.tty?
     @slave = slave
     @configuration = Configuration.new(**self.class.configuration.to_h, **)
@@ -646,47 +591,6 @@ class Expect
     @buffer = @buffer.byteslice(-limit, limit) if limit&.positive? && @buffer.bytesize > limit
   end
 
-  # 按各自开关将接收字节转发到 stdout 和监听器，不重复写日志。
-  def propagate(data)
-    emit($stdout, data) if log_stdout?
-    @listeners.each { |listener| emit(listener, data) } if log_listeners?
-  end
-
-  # 向目标写入并在支持时立即 flush，使日志和终端输出及时可见。
-  def emit(target, data)
-    offset = 0
-    while offset < data.bytesize
-      count = target.write(data.byteslice(offset..))
-      unless count.is_a?(Integer) && count.positive? && count <= data.bytesize - offset
-        raise IOError, "write must return the number of accepted bytes"
-      end
-
-      offset += count
-    end
-    target.flush if target.respond_to?(:flush)
-  end
-
-  # 按诊断级别向 stderr 输出会话标识和消息。
-  def trace(message, level: 1)
-    warn("#{inspect}: #{message}") if debug_level >= level
-  end
-
-  # 交接日志目标和所有权，只关闭库拥有的旧文件；失败时释放新打开的文件。
-  def replace_log(target, owned: false)
-    previous = log_output
-    # 重复赋值同一目标时保留原所有权，防止将库打开的文件误变成借用资源。
-    return target if previous.equal?(target)
-
-    previous.close if @resources.owned_log && previous && !previous.closed?
-    # 终结器只持有所属文件；借用回调可能捕获会话，不能让它经资源对象成为 GC 根。
-    @resources.owned_log = owned ? target : nil
-    @log_output = target
-    target
-  rescue Exception # rubocop:disable Lint/RescueException -- 替换失败时仍释放刚打开的文件。
-    target.close if owned && target && !target.closed?
-    raise
-  end
-
   # 仅由资源创建者向仍未回收的子进程发送信号；若进程刚好退出，则尝试回收。
   def signal_child(signal)
     return unless alive? && @resources.owner == Process.pid
@@ -697,4 +601,6 @@ class Expect
   end
 end
 
+require_relative "expect/logging"
+require_relative "expect/terminal"
 require_relative "expect/interaction"

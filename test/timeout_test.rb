@@ -48,6 +48,125 @@ class TimeoutTest < ExpectTest
     assert_equal :timeout, session.error
   end
 
+  def test_eof_continuation_without_reset_observes_the_deadline_before_matching_again
+    first, = pipe_session
+    second, = pipe_session
+    first.close
+    now = 0.0
+    result = Expect.stub(:monotonic, -> { now }) do
+      Expect.expect_result(timeout: 1) do
+        eof(from: first) do
+          now = 2.0
+          second.buffer = "ready"
+          Expect.continue(reset_timeout: false)
+        end
+        on("ready", from: second)
+      end
+    end
+
+    assert result.timeout?
+    assert_same second, result.session
+    assert_equal "ready", second.buffer
+    assert first.last_result.eof?
+  end
+
+  def test_eof_continuation_can_reset_an_expired_deadline
+    first, = pipe_session
+    second, = pipe_session
+    first.close
+    now = 0.0
+    result = Expect.stub(:monotonic, -> { now }) do
+      Expect.expect_result(timeout: 1) do
+        eof(from: first) do
+          now = 2.0
+          second.buffer = "ready"
+          Expect.continue
+        end
+        on("ready", from: second)
+      end
+    end
+
+    assert_equal "ready", result.match
+    assert_same second, result.session
+  end
+
+  def test_last_eof_returns_even_when_continuation_deadline_has_expired
+    session, = pipe_session
+    session.close
+    now = 0.0
+    result = Expect.stub(:monotonic, -> { now }) do
+      session.expect_result(timeout: 1) do
+        eof do
+          now = 2.0
+          Expect.continue(reset_timeout: false)
+        end
+      end
+    end
+
+    assert result.eof?
+    assert_same session, result.session
+  end
+
+  def test_expired_eof_continuation_delivers_all_known_eof_events
+    sessions = Array.new(3) { pipe_session.first }
+    sessions.each(&:close)
+    seen = []
+    result = Expect.expect_result(from: sessions, timeout: 0) do
+      eof do |session|
+        seen << session
+        Expect.continue(reset_timeout: false)
+      end
+    end
+
+    assert result.eof?
+    assert_equal sessions, seen
+    assert(sessions.all? { |session| session.last_result.eof? })
+  end
+
+  def test_expired_eof_continuation_handles_known_eof_before_timing_out_live_sources
+    first, = pipe_session
+    second, = pipe_session
+    live, = pipe_session
+    [first, second].each(&:close)
+    seen = []
+    timed_out = nil
+    result = Expect.expect_result(timeout: 0) do
+      eof(from: [first, second]) do |session|
+        seen << session
+        live.buffer = "ready"
+        Expect.continue(reset_timeout: false)
+      end
+      on("ready", from: live)
+      timeout { |sessions| timed_out = sessions }
+    end
+
+    assert result.timeout?
+    assert_equal [first, second], seen
+    assert_equal [live], timed_out
+    assert_equal "ready", live.buffer
+  end
+
+  def test_reset_after_expired_eof_continuation_resumes_text_matching
+    %i[eof timeout].each do |reset_event|
+      first, = pipe_session
+      second, = pipe_session
+      live, = pipe_session
+      [first, second].each(&:close)
+      result = Expect.expect_result(timeout: 0) do
+        eof(from: first) do
+          live.buffer = "ready"
+          Expect.continue(reset_timeout: false)
+        end
+        eof(from: second) { Expect.continue(reset_timeout: reset_event == :eof) }
+        on("ready", from: live)
+        timeout { Expect.continue }
+      end
+
+      assert_equal "ready", result.match
+      assert_same live, result.session
+    end
+  end
+
   def test_restart_timeout_on_receive
     session, writer = pipe_session
     session.reset_timeout_on_read = true

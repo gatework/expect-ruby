@@ -19,9 +19,9 @@ class Expect
     def close_handles
       return unless own
 
-      # PTY 的读写端可能是同一个对象，先去重，重复关闭也保持安全。
+      # 初始化校验失败时可能含无效参数，只关闭真实 IO；PTY 读写端也需要去重。
       failure = nil
-      [reader, writer, slave].compact.uniq.each do |io|
+      [reader, writer, slave].grep(IO).uniq.each do |io|
         io.close unless io.closed?
       rescue IOError, SystemCallError => error
         failure ||= error
