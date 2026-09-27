@@ -5,11 +5,13 @@ require_relative "relay"
 
 # 为会话补充人工接管和多路 IO 转接；核心会话定义位于 lib/expect.rb。
 class Expect
+  # 正则没有“潜在部分匹配”接口，只保留有限历史；已转发的历史字节不能撤回。
   REGEXP_ESCAPE_HISTORY_LIMIT = 65_536
   private_constant :REGEXP_ESCAPE_HISTORY_LIMIT
 
   # 在 raw 本地终端显示远端文本，补齐 LF 所需的 CR，同时保留已有 CRLF。
   class InteractOutput
+    # 包装器借用目标，不复制或关闭其描述符；换行状态属于这个目标的连续显示流。
     def initialize(target)
       @target = target
       @previous_carriage_return = false
@@ -17,6 +19,7 @@ class Expect
 
     attr_reader :target
 
+    # 只改变显示字节，不改写匹配输入；记住上一块的 CR，避免分块的 CRLF 被扩成 CRCRLF。
     def render(data)
       bytes = data.to_s.b
       rendered = bytes.gsub(/(?<!\r)\n/n, "\r\n")
@@ -25,6 +28,7 @@ class Expect
       rendered
     end
 
+    # 提供普通可写对象接口；Relay 会先 render，再按转换后字节数维护独立发送游标。
     def write(data)
       @target.write(render(data))
     end
@@ -169,10 +173,12 @@ class Expect
       return block_given? && count.positive? ? :pending : true
     end
   end
+
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   private_class_method :relay_buffer
 
+  # 同一输入 IO 重用一个借用会话，以保留上次接管预读的尾部并避免不断积累包装器。
   def interact_source(input)
     return input if input.is_a?(Expect)
 
@@ -181,6 +187,8 @@ class Expect
     @interact_inputs[input] ||= Expect.open(input)
   end
 
+  # 为当前数据块冻结目标选择并各建一个发送游标；此后修改 listeners 只影响后续数据。
+  # 调用方须先排空旧游标；显示转换也只做一次，短写重试时不能重复转换 CRLF。
   def queue_output(data)
     targets = []
     targets << $stdout if log_stdout?
@@ -209,6 +217,7 @@ class Expect
     raise
   end
 
+  # 还原 prepare 保存的完整终端模式；没有切换过或句柄已关闭时无需恢复。
   def restore_interact_terminal(state)
     return unless state
 
@@ -216,6 +225,7 @@ class Expect
     io.console_mode = mode unless io.closed?
   end
 
+  # 仅为已切为 raw 的同一个本地终端补齐换行，文件、管道和其他终端保留原字节。
   def interact_display(source, output, terminal_state)
     @interact_output = nil unless terminal_state && @interact_output&.target.equal?(output)
     return output unless terminal_state
@@ -238,7 +248,11 @@ class Expect
   attr_accessor :sequences
   # 让同步写入的背压读取遵守当前转接的数据所有权，退出后恢复普通匹配缓冲。
   attr_accessor :interaction_buffer
+  # 只有裁剪、替换和消费才改变代次；同一代次只会追加，供字面扫描复用已排除的前缀。
+  attr_reader :buffer_generation
+  # 待交付游标随源会话保存，Relay 的超时或异常退出不会丢失各目标已经写出的进度。
   attr_reader :relay_outputs
+  # 数组包装区分“没有待执行回调”与“已识别无处理器的停止转义”，前缀交付后只派发一次。
   attr_accessor :relay_callback
 
   # 历史属于产生它的转义规则；同规则重入继续匹配，换规则不能重放已转发输入。
@@ -252,5 +266,6 @@ class Expect
   # 转接尚未处理的输入不能被匹配窗口上限裁掉；下次 expect 会重新应用该上限。
   def restore_relay_buffer(buffer)
     @buffer = buffer + @buffer
+    @buffer_generation += 1
   end
 end

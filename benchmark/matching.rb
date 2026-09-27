@@ -34,6 +34,32 @@ begin
     runner.measure("utf8/#{size}", bytes: session.buffer.bytesize, inputs: { prefix_bytes: prefix.bytesize },
                                    verify: verify) { matcher.__send__(:find_match) }
   end
+
+  # 同一次等待不断追加新字节，分别对照字面与正则；跨块命中仍按声明优先级选择。
+  (runner.smoke ? [4096] : [65_536, 1_048_576]).product(%i[literal regexp]).each do |size, kind|
+    chunks = runner.smoke ? 4 : 32
+    patterns = Array.new(32) { |index| "missing#{index}" }
+    patterns[-1] = "END"
+    patterns.map! { |value| Regexp.new(Regexp.escape(value)) } if kind == :regexp
+    verify = lambda do |result|
+      ExpectBenchmark.check(result && result[1].number == 32 && result[2] == [size + (chunks * 1024), 3, []])
+    end
+    runner.measure("stream/#{size}/#{kind}", bytes: size + (chunks * 1024) + 3,
+                                             inputs: { initial_bytes: size, chunks: chunks, patterns: 32, kind: kind },
+                                             iterations: 5, verify: verify) do
+      session.buffer = "x" * size
+      matcher = Expect::Matcher.new(Expect::PatternList.new([session], patterns), nil)
+      ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
+      chunks.times do
+        writer.write("x" * 1024)
+        session.__send__(:read_available)
+        ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
+      end
+      writer.write("END")
+      session.__send__(:read_available)
+      matcher.__send__(:find_match)
+    end
+  end
 ensure
   session.close
   reader.close

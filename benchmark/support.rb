@@ -29,6 +29,7 @@ module ExpectBenchmark
         options.on("--samples N", Integer) { |count| @samples = count }
         options.on("--iterations N", Integer) { |count| @iterations = count }
         options.on("--output PATH") { |path| @output = path }
+        yield options if block_given?
       end.parse!
       unless @samples.positive? && (!@iterations || @iterations.positive?)
         raise ArgumentError, "counts must be positive"
@@ -44,6 +45,7 @@ module ExpectBenchmark
       verify.call(operation.call) # 同时预热；错误输出永远不能成为更快的样本。
       measurements = Array.new(samples) do
         GC.start
+        resources_before = resources
         before = GC.stat
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         result = nil
@@ -53,7 +55,8 @@ module ExpectBenchmark
         verify.call(result)
         {
           seconds: elapsed, allocated_objects: after[:total_allocated_objects] - before[:total_allocated_objects],
-          gc_count: after[:count] - before[:count], processed_bytes: bytes * iterations
+          gc_count: after[:count] - before[:count], processed_bytes: bytes * iterations,
+          resources_before: resources_before, resources_after: resources
         }
       end
       @results << { name: name, inputs: inputs, iterations: iterations, samples: measurements }
@@ -62,14 +65,18 @@ module ExpectBenchmark
 
     def finish
       root = File.dirname(library)
-      sha = git_output(root, "rev-parse", "HEAD")
-      dirty = git_output(root, "status", "--porcelain", "--untracked-files=all")
+      repository = git_output(root, "rev-parse", "--show-toplevel")&.strip
+      if repository && File.realpath(repository) == File.realpath(root)
+        sha = git_output(root, "rev-parse", "HEAD")
+        dirty = git_output(root, "status", "--porcelain", "--untracked-files=all")
+      end
       digest = Digest::SHA256.new
       Dir[File.join(library, "**/*.rb")].each do |path|
         digest << path.delete_prefix(library) << File.binread(path)
       end
       report = {
         ruby: RUBY_DESCRIPTION, platform: RUBY_PLATFORM, revision: sha&.strip,
+        fd_limit: Process.getrlimit(:NOFILE).first,
         dirty: dirty.nil? ? nil : !dirty.empty?, library_sha256: digest.hexdigest, smoke: smoke, results: @results
       }
       FileUtils.mkdir_p(File.dirname(@output))
@@ -78,6 +85,19 @@ module ExpectBenchmark
     end
 
     private
+
+    # 资源采样在计时区间之外；RSS 是端点值，不冒充峰值。目录不可用时显式记录 nil。
+    def resources
+      directory = File.directory?("/proc/self/fd") ? "/proc/self/fd" : "/dev/fd"
+      descriptors = Dir.children(directory).size if File.directory?(directory)
+      rss = if File.file?("/proc/self/status")
+              File.read("/proc/self/status")[/^VmRSS:\s+(\d+)/, 1]&.to_i
+            else
+              output, _, status = Open3.capture3("ps", "-o", "rss=", "-p", Process.pid.to_s)
+              output.to_i if status.success?
+            end
+      { rss_bytes: rss && (rss * 1024), descriptors: descriptors }
+    end
 
     # 安装包和源码归档可能没有 Git；未知状态记录为 nil，不误报为干净提交。
     def git_output(root, *)

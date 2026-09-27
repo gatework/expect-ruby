@@ -2,6 +2,7 @@
 
 class Expect
   # 将 Ruby 模式和块回调整理为有序会话组；注册阶段不读取 IO、不执行匹配回调。
+  # 分组结构直接决定 Matcher 的“声明组 → 会话 → 模式”优先级，不能按匹配位置重排。
   class PatternList
     attr_reader :groups, :timeout_pattern
 
@@ -34,6 +35,7 @@ class Expect
     end
 
     # 注册一次等待的唯一超时回调，重复定义直接报错，避免悄悄覆盖业务处理。
+    # 超时是整次等待的事件，回调收到全部活跃会话，不归属于某一个来源组。
     def timeout(&block)
       raise ArgumentError, "timeout callback already registered" if @timeout_pattern
 
@@ -42,6 +44,7 @@ class Expect
     end
 
     # 汇总并去重读取源，同一会话出现在多个模式组时仍只读取一次。
+    # 这里只去重会话对象；不同会话包装同一 IO 时的读取归属由 Matcher 决定。
     def sessions = groups.flat_map(&:first).uniq
 
     # 收集指定会话的所有 EOF 处理器，保留原注册顺序。

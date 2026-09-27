@@ -16,6 +16,7 @@ group :development, :test do
   gem "etc", require: false
   gem "fileutils", require: false
   gem "json", require: false
+  gem "logger", require: false
   gem "net-http", require: false
   gem "open3", require: false
   gem "optparse", require: false

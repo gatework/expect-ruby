@@ -2,6 +2,7 @@
 
 class Expect
   # 集中校验会话配置。类级默认值以冻结快照发布，每个会话再构造独立副本。
+  # 这里只保存策略值，不持有 IO、缓冲或日志对象；修改默认配置不会追溯影响已创建的会话。
   class Configuration
     # 会话通过 Forwardable 委托这些属性；to_h 使用同一清单生成配置副本。
     ATTRIBUTES = %i[
@@ -91,7 +92,7 @@ class Expect
 
     alias log_listeners? log_listeners
 
-    # 控制人工转接期间是否自动设置并恢复终端模式。
+    # 控制 interact 是否临时设置并恢复本地输入终端；通用 interconnect 不修改终端模式。
     def raw_terminal=(value)
       @raw_terminal = !!value
     end
@@ -99,6 +100,7 @@ class Expect
     alias raw_terminal? raw_terminal
 
     # 控制收到任何新数据时是否刷新匹配期限，适用于按静默时长判断超时。
+    # 只刷新相对 timeout；单次等待显式指定的绝对 deadline 仍是不可延长的上限。
     def reset_timeout_on_read=(value)
       @reset_timeout_on_read = !!value
     end

@@ -99,8 +99,8 @@ class Expect
     def expect(...) = expect_result(...).number
 
     # 多会话等待的完整结果入口；from: 提供默认来源，块内可分别指定每个模式的来源。
-    def expect_result(*patterns, from: [], timeout: configuration.timeout, &)
-      run_expect(from, patterns, timeout, &)
+    def expect_result(*patterns, from: [], timeout: configuration.timeout, deadline: nil, &)
+      run_expect(from, patterns, timeout, deadline: deadline, &)
     end
 
     # 返回继续等待的控制符，reset_timeout 决定是否重新计算匹配期限。
@@ -149,15 +149,17 @@ class Expect
     private
 
     # 先完成模式声明再启动引擎；无参数块支持简洁 DSL，有参数块保留调用方 self。
-    def run_expect(sessions, patterns, timeout, &block)
+    def run_expect(sessions, patterns, timeout, deadline: nil, &block)
       timeout = duration(timeout)
+      deadline = Float(deadline) unless deadline.nil?
+      raise ArgumentError, "deadline must be finite" if deadline && !deadline.finite?
       raise ArgumentError, "provide patterns or a pattern block, not both" if block_given? && !patterns.empty?
 
       pattern_list = PatternList.new(sessions, patterns)
       if block
         block.parameters.empty? ? pattern_list.instance_exec(&block) : block.call(pattern_list)
       end
-      Matcher.new(pattern_list.validate!, timeout).run
+      Matcher.new(pattern_list.validate!, timeout, deadline: deadline).run
     end
   end
 
@@ -167,7 +169,7 @@ class Expect
   def_delegators :@configuration, *Configuration::ATTRIBUTES, *Configuration::PREDICATES
   def_delegators :@configuration, *(Configuration::ATTRIBUTES - [:buffer_limit]).map { |name| :"#{name}=" }
 
-  attr_reader :command, :last_result, :slave, :tty_name
+  attr_reader :command, :last_result, :slave, :tty_name, :buffer_discarded_bytes
 
   # 校验并更新缓冲上限后，立即裁剪已接收的内容；校验失败不改变旧缓冲。
   def buffer_limit=(value)
@@ -236,20 +238,21 @@ class Expect
       hard_close
       raise SpawnError, failure
     end
-    trace("spawned pid=#{child}")
+    trace("spawned pid=#{child}", event: :spawned)
     self
   ensure
     from_child&.close unless from_child&.closed?
     to_parent&.close unless to_parent&.closed?
   end
+
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   # 在当前会话等待文本或事件，返回模式序号或 nil。
   def expect(...) = expect_result(...).number
 
   # 使用会话默认超时构造一次等待，返回含匹配内容、来源和错误的 Result。
-  def expect_result(*patterns, timeout: self.timeout, &)
-    self.class.__send__(:run_expect, [self], patterns, timeout, &)
+  def expect_result(*patterns, timeout: self.timeout, deadline: nil, &)
+    self.class.__send__(:run_expect, [self], patterns, timeout, deadline: deadline, &)
   end
 
   # 供实例回调返回继续控制符，语义与 Expect.continue 相同。
@@ -306,6 +309,7 @@ class Expect
     raise ArgumentError, "buffer must be a String" unless value.is_a?(String)
 
     @buffer = value.b
+    @buffer_generation += 1
     trim_buffer
   end
 
@@ -313,6 +317,7 @@ class Expect
   def clear_buffer
     previous = @buffer
     @buffer = "".b
+    @buffer_generation += 1
     previous
   end
 
@@ -322,7 +327,7 @@ class Expect
     raise IOError, "closed Expect session" if closed? || writer.closed?
 
     data = objects.map { |object| object.to_s.b }.join
-    trace("sending #{data.inspect}", level: 2) if debug_level >= 2
+    trace_data(:sending, data, level: 2) if debug_level >= 2
     deadline = write_timeout && (Expect.monotonic + write_timeout)
     offset = 0
     while offset < data.bytesize
@@ -360,6 +365,7 @@ class Expect
     end
     data.bytesize
   end
+
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   # 链式写入单个对象，返回当前会话。
@@ -478,7 +484,11 @@ class Expect
     completed = true
     status
   ensure
-    cleanup.call { self.log_output = nil }
+    begin
+      cleanup.call { flush_diagnostics }
+    ensure
+      cleanup.call { self.log_output = nil }
+    end
     # 用本次流程的完成状态判断异常传播，不能误把调用者 rescue 中的异常当成当前错误。
     raise failure if failure && completed
   end
@@ -498,7 +508,7 @@ class Expect
   end
 
   # 统一初始化 PTY 与已有 IO 会话，复制配置并注册不直接捕获会话的资源终结器。
-  def initialize_session(reader, writer:, slave: nil, own: false, **)
+  def initialize_session(reader, writer:, slave: nil, own: false, diagnostic_output: nil, **)
     # 先登记所有权，后续校验失败也使用同一个资源对象逐个清理所属 IO。
     @resources = SessionResources.new(reader, writer: writer, slave: slave, own: own)
     raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
@@ -508,10 +518,13 @@ class Expect
     @slave = slave
     @configuration = Configuration.new(**self.class.configuration.to_h, **)
     @buffer = "".b
+    @buffer_generation = 0
+    @buffer_discarded_bytes = 0
     @listeners = []
     @sequences = {}
     @relay_outputs = []
     @closed = @eof = false
+    self.diagnostic_output = diagnostic_output
     ObjectSpace.define_finalizer(self, SessionResources.finalizer(@resources))
   end
 
@@ -527,9 +540,14 @@ class Expect
     @last_result = Result.new(number: pattern.number, before: @buffer.byteslice(0, offset),
                               match: @buffer.byteslice(offset, length), after: @buffer.byteslice((offset + length)..),
                               session: self, captures: captures)
-    @buffer = @last_result.after.dup unless preserve_buffer?
+    unless preserve_buffer?
+      @buffer = @last_result.after.dup
+      @buffer_generation += 1
+    end
+    # 诊断回调可能嵌套等待；恢复本次结果后再交给正式模式回调，不能返回内层等待的结果。
+    result = @last_result
     trace("matched pattern #{pattern.number}")
-    @last_result
+    @last_result = result
   end
 
   # 记录超时、EOF 或原始 IO 异常，保留当前缓冲快照并清除旧匹配及捕获组。
@@ -562,33 +580,41 @@ class Expect
       # 某些系统用 PTY 的 EIO 表示对端关闭；普通 IO 的同类错误仍按异常处理。
       raise unless @pty
 
-      @eof = true
-      return nil
+      return finish_read
     rescue EOFError
-      @eof = true
-      return nil
+      return finish_read
     end
     return nil if data == :wait_readable
 
-    if data.nil?
-      @eof = true
-      return nil
-    end
+    return finish_read if data.nil?
+
     data = data.b
     buffer << data
     trim_buffer if trim
-    trace("received #{data.inspect}", level: 2) if debug_level >= 2
-    trace("buffer #{@buffer.inspect}", level: 3) if debug_level >= 3
+    trace_data(:received, data, level: 2) if debug_level >= 2
+    trace_data(:buffer, @buffer, level: 3) if debug_level >= 3
     # 仅在真实读取时记录日志，后续匹配或人工转接重用缓冲时不会重复记录。
     write_log(data)
     propagate(data) if propagate
     data
   end
 
+  def finish_read
+    @eof = true
+    flush_log
+    flush_diagnostics(:received)
+    nil
+  end
+
   # 缓冲超过上限时只保留最新尾部字节，不对编码做隐式修改。
   def trim_buffer
     limit = buffer_limit
-    @buffer = @buffer.byteslice(-limit, limit) if limit&.positive? && @buffer.bytesize > limit
+    return unless limit && @buffer.bytesize > limit
+
+    # 只累计匹配窗口裁剪，消费、清空及转接交接不算丢弃；关闭后仍可读取累计值。
+    @buffer_discarded_bytes += @buffer.bytesize - limit
+    @buffer = @buffer.byteslice(-limit, limit)
+    @buffer_generation += 1
   end
 
   # 仅由资源创建者向仍未回收的子进程发送信号；若进程刚好退出，则尝试回收。

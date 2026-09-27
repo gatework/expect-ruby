@@ -2,12 +2,15 @@
 
 class Expect
   # 驱动一次单会话或多会话匹配，管理模式优先级、EOF 和共享期限，不接管 IO 所有权。
+  # 调度只在扫描、回调和 IO 操作之间检查期限，不强行中断用户代码或单次正则计算。
   class Matcher
     # 固定本次参与的会话及初始期限；已处理 EOF 的会话仅从本次等待中移除。
-    def initialize(patterns, timeout)
+    def initialize(patterns, timeout, deadline: nil)
       @patterns = patterns
       @sessions = patterns.sessions
       @timeout = Expect.duration(timeout)
+      # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
+      @hard_deadline = deadline
       @deadline = next_deadline
       @handled_eof = []
       @stalled_matches = {}
@@ -31,11 +34,11 @@ class Expect
       end
       loop do
         # 先消费已缓冲的匹配，再处理 EOF，最后读取；避免进程退出时丢失最后一个匹配。
-        result = if !@expired_eof_continuation && (matched = find_match)
+        result = if !@expired_eof_continuation && !hard_expired? && (matched = find_match)
                    handle_match(*matched)
                  elsif (session = unhandled_eof)
                    handle_eof(session)
-                 elsif @expired_eof_continuation
+                 elsif @expired_eof_continuation || hard_expired?
                    handle_timeout
                  else
                    read_next
@@ -43,6 +46,7 @@ class Expect
         return result unless result == :retry
       end
     ensure
+      # 嵌套 expect 即使异常退出，也要把未消费尾部还给原 Relay 的同一个缓冲对象。
       @relay_buffers.each do |session, buffer|
         buffer.replace(session.clear_buffer)
         session.__send__(:interaction_buffer=, buffer)
@@ -70,16 +74,51 @@ class Expect
             stalled = nil
           end
           patterns.each do |pattern|
+            return nil if hard_expired?
             next if stalled && stalled[:patterns].include?(pattern)
 
-            position = pattern.locate(buffer, final: session.eof?)
+            position = if pattern.value.is_a?(String)
+                         locate_literal(session, pattern, buffer)
+                       else
+                         pattern.locate(buffer, final: session.eof?)
+                       end
+            # 正则本身不可由 IO 期限中断；恢复控制后也不能消费已过总期限的匹配。
+            return nil if hard_expired?
             return [session, pattern, position] if position
           end
         end
       end
       nil
     end
+
     # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+
+    # 仅复用同一缓冲代次中的字面未命中。保留模式长度减一的重叠区，覆盖跨读取命中。
+    # 不保存整个文本，也不对正则推断扫描窗口；回调替换、消费或转接恢复会改变代次。
+    def locate_literal(session, pattern, buffer)
+      @literal_misses ||= {}.compare_by_identity
+      misses = (@literal_misses[session] ||= {}.compare_by_identity)
+      previous = misses[pattern]
+      generation = session.__send__(:buffer_generation)
+      # 缓冲代次未变意味着只有尾部追加；模式对象的 value 被替换时也不能沿用旧扫描位置。
+      offset = if previous && previous[0] == generation && previous[2].equal?(pattern.value)
+                 return nil if previous[1] == buffer.bytesize
+
+                 [previous[1] - pattern.value.bytesize + 1, 0].max
+               else
+                 0
+               end
+      position = pattern.locate(buffer, offset: offset)
+      if position
+        misses.delete(pattern)
+      else
+        entry = (misses[pattern] ||= [])
+        entry[0] = generation
+        entry[1] = buffer.bytesize
+        entry[2] = pattern.value
+      end
+      position
+    end
 
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。
     def handle_match(session, pattern, position)
@@ -94,7 +133,8 @@ class Expect
         stalled[:patterns] << pattern
       end
       @deadline = next_deadline if action == CONTINUE
-      return handle_timeout if action == CONTINUE_WITHOUT_RESET && expired?
+      # 总期限到达时回主循环先派发已知 EOF；仅相对期限延续原有立即超时语义。
+      return handle_timeout if action == CONTINUE_WITHOUT_RESET && expired? && !hard_expired?
 
       :retry
     end
@@ -122,7 +162,7 @@ class Expect
 
     # 在剩余期限内等待可读 IO；零超时仍允许首次非阻塞轮询，EINTR 重试不重新计时。
     def read_next
-      return handle_timeout if @polled && expired?
+      return handle_timeout if hard_expired? || (@polled && expired?)
 
       readers = active_sessions
       begin
@@ -147,6 +187,8 @@ class Expect
         sessions.each { |session| by_io[session.to_io] ||= session }
       end
       readable.each do |io|
+        break if hard_expired?
+
         session = by_io ? by_io.fetch(io) : sessions.find { |candidate| candidate.to_io.equal?(io) }
         begin
           # 转接回调消费匹配内容，余下字节交回 Relay，不能在这里提前转发两次。
@@ -169,7 +211,14 @@ class Expect
     def continuing?(action) = [CONTINUE, CONTINUE_WITHOUT_RESET].include?(action)
 
     # 使用单调时钟计算期限；nil 一直表示无限等待，不受系统时间调整影响。
-    def next_deadline = @timeout && (Expect.monotonic + @timeout)
+    # 每次重置都重新与总期限取较早者，避免连续输入或继续回调无限推迟结束。
+    def next_deadline
+      relative = @timeout && (Expect.monotonic + @timeout)
+      return @hard_deadline unless relative
+      return relative unless @hard_deadline
+
+      [relative, @hard_deadline].min
+    end
 
     # 计算传给 select 的非负等待秒数，避免计时跨过边界时产生负数。
     def remaining = @deadline && [@deadline - Expect.monotonic, 0].max
@@ -177,16 +226,20 @@ class Expect
     # 判断有限期限是否已到达；无限等待不会触发超时。
     def expired? = @deadline && Expect.monotonic >= @deadline
 
+    # 绝对总期限不受接收数据和 continue 重置；已知 EOF 仍按原顺序派发。
+    def hard_expired? = @hard_deadline && Expect.monotonic >= @hard_deadline
+
     # select 失败时无法归属单个源，为本次会话记录同一原始异常并返回首个结果。
     def record_error(error)
       @sessions.map { |session| session.__send__(:record_error, error) }.first
     end
 
     # 为活跃会话记录超时，回调接收全部活跃源；只有重置计时的继续符号能重新等待。
+    # 已到总期限仍通知超时回调，但不接受继续请求，且不消费尚未匹配的字节。
     def handle_timeout
       results = active_sessions.map { |session| session.__send__(:record_error, :timeout) }
       action = @patterns.timeout_pattern&.call(active_sessions)
-      return results.first unless action == CONTINUE
+      return results.first unless action == CONTINUE && !hard_expired?
 
       @deadline = next_deadline
       @polled = false

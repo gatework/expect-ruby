@@ -12,10 +12,12 @@ class Expect
     def eof? = value == :eof
 
     # 在缓冲中定位字符串或正则，返回 [字节偏移, 字节长度, 捕获组]；事件或未匹配返回 nil。
-    def locate(buffer, final: false)
+    # buffer 应为二进制字符串，offset 仅用于字面扫描；正则始终看到完整窗口以保留锚点语义。
+    # final 表示不会再有新输入，此时不完整的编码尾部也必须报错，不能永远当作等待分片。
+    def locate(buffer, final: false, offset: 0)
       case value
       when String
-        offset = buffer.index(value)
+        offset = buffer.index(value, offset)
         return [offset, value.bytesize, []] if offset
       when Regexp
         # 正则只读取输入；只有编码标记不同才复制，避免每个模式额外分配缓冲对象。
@@ -42,6 +44,7 @@ class Expect
     private
 
     # 仅容忍末尾尚未收全的 UTF-8 字符，其他非法编码直接报错，不静默替换接收字节。
+    # 转码仅用于区分“不完整尾部”和“非法字节”，结果不回写缓冲，也不做编码归一化。
     def validate_incomplete_suffix!(text, final:)
       if !final && text.encoding == Encoding::UTF_8
         incomplete = begin

@@ -7,7 +7,7 @@ bundle exec rake
 bundle exec ruby examples/dialogue.rb
 
 # 只检查小规模工作负载的正确性，不为共享 CI 机器设置性能阈值。
-for benchmark in matching relay send_slow; do
+for benchmark in matching relay send_slow scaling; do
   bundle exec ruby "benchmark/${benchmark}.rb" --smoke
 done
 
@@ -45,7 +45,7 @@ spec = Gem.loaded_specs.fetch("expect-pty")
 install_root = File.realpath(ENV.fetch("GEM_HOME"))
 abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
 abort "Bundler leaked into the plain gem smoke" if ARGV.first == "plain" && defined?(Bundler)
-unexpected = %w[minitest rake rubocop parallel].select { |name| Gem.loaded_specs.key?(name) }
+unexpected = %w[minitest rake rubocop parallel logger].select { |name| Gem.loaded_specs.key?(name) }
 abort "development dependencies leaked into the application: #{unexpected.join(', ')}" unless unexpected.empty?
 spec.runtime_dependencies.each do |dependency|
   loaded = Gem.loaded_specs.fetch(dependency.name)
@@ -68,7 +68,34 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_st
   abort "installed gem child did not exit successfully" unless status&.success?
 end
 
-puts "Installed #{spec.full_name}: #{ARGV.fetch(0)} PTY and runtime dependencies passed"
+# 使用已安装包验证内部过滤器随包分发，且结构化诊断无需加载可选的 Logger。
+reader, producer = IO.pipe
+events = []
+transcript = StringIO.new
+begin
+  Expect.open(reader, own: true, buffer_limit: 5, debug_level: 2,
+              diagnostic_output: ->(event) { events << event }) do |session|
+    session.redact("secret")
+    session.log_to(transcript)
+    session.buffer = "ready"
+    expired = session.expect_result("ready", deadline: Expect.monotonic)
+    abort "expired deadline consumed buffered text" unless expired.timeout? && session.buffer == "ready"
+    abort "zero timeout lost buffered text" unless session.expect("ready", timeout: 0) == 1
+    producer.write("secret!")
+    producer.close
+    result = session.expect_result(:eof, deadline: Expect.monotonic + 5)
+    abort "installed gem did not preserve capped input" unless result.eof? && result.before == "cret!"
+    abort "incorrect installed buffer accounting" unless session.buffer_discarded_bytes == 2
+    abort "installed redaction failed" unless transcript.string == "[FILTERED]!"
+    abort "diagnostics leaked secret" if events.any? { |event| event[:message].include?("secret") }
+    abort "filtered diagnostic missing" unless events.any? { |event| event[:message].include?("[FILTERED]") }
+  end
+ensure
+  reader.close unless reader.closed?
+  producer.close unless producer.closed?
+end
+
+puts "Installed #{spec.full_name}: #{ARGV.fetch(0)} PTY, core contracts and runtime dependencies passed"
 RUBY
   ruby smoke.rb plain
 

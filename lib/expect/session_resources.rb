@@ -2,7 +2,9 @@
 
 class Expect
   # 独立保存句柄、PID 和日志所有权，让终结器无需直接捕获会话即可清理遗弃资源。
+  # IO 是否关闭与子进程是否退出分别记录；不能仅凭句柄状态清空 PID 或伪造退出状态。
   class SessionResources
+    # owned_log 只保存库打开的文件；借用的 IO/日志回调留在会话中，不能成为终结器的引用根。
     attr_accessor :pid, :status, :owned_log
     attr_reader :reader, :writer, :slave, :owner, :own
 
@@ -16,6 +18,7 @@ class Expect
     end
 
     # 只关闭由本库拥有的 IO；借用的 reader、writer 由调用方管理。
+    # 常规关闭错误延后到所有句柄尝试完再抛出，失败句柄仍留在账本内供下一次关闭重试。
     def close_handles
       return unless own
 
@@ -40,6 +43,7 @@ class Expect
       status
     rescue Errno::ECHILD
       # 子进程可能已被调用方或其他线程回收，不再保留可能被系统复用的 PID。
+      # 无法获取别人已取走的 Process::Status，保留未知状态而不是推断成功或失败。
       @pid = nil
       status
     end

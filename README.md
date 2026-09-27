@@ -2,9 +2,12 @@
 
 [![CI](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml/badge.svg)](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml)
 
-用 Ruby 自动操作交互式程序：启动拥有控制终端的子进程，等待文本或正则，发送输入，处理超时、EOF 和回调，也能接管已有 IO、同时监听多个会话和转接人工交互。交互能力参考 [Expect.pm](https://github.com/jacoby/expect.pm)，接口采用 Ruby 的属性、关键字参数和代码块。
+用 Ruby 自动操作交互式程序：启动拥有控制终端的子进程，等待文本或正则，发送输入，处理超时、EOF 和回调，也能接管已有
+IO、同时监听多个会话和转接人工交互。交互能力参考 [Expect.pm](https://github.com/jacoby/expect.pm)，接口采用 Ruby
+的属性、关键字参数和代码块。
 
-要求 **Ruby 3.2+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由 RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 类，不修改标准库的 `IO#expect`。
+要求 **Ruby 3.2+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由
+RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 类，不修改标准库的 `IO#expect`。
 
 源码中的解释性注释主要使用中文；欢迎用中文或英文提交 issue 和 PR，参与方式见 [贡献指南](CONTRIBUTING.md)。
 
@@ -13,7 +16,7 @@
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.3.3", require: "expect/pty"
+gem "expect-pty", "~> 0.4.0", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -26,8 +29,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.3.3.gem
-gem install ./tmp/expect-pty-0.3.3.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.4.0.gem
+gem install ./tmp/expect-pty-0.4.0.gem
 ```
 
 ```ruby
@@ -45,9 +48,12 @@ Expect.spawn("/bin/sh", "-i") do |shell|
 end
 ```
 
-块返回其执行结果，退出时关闭会话并回收子进程，异常和 `break` 也执行清理。构造或启动失败时同样释放已创建的资源；清理中的 IO 错误不会替换正在传播的原始异常。无块形式需用 `ensure` 显式调用 `close`。`Expect.new` 可以先创建 PTY、设置 `slave.echo` / `slave.winsize`，然后调用实例的 `spawn`。
+块返回其执行结果，退出时关闭会话并回收子进程，异常和 `break` 也执行清理。构造或启动失败时同样释放已创建的资源；清理中的 IO
+错误不会替换正在传播的原始异常。无块形式需用 `ensure` 显式调用 `close`。`Expect.new` 可以先创建 PTY、设置 `slave.echo` /
+`slave.winsize`，然后调用实例的 `spawn`。
 
-多个命令参数原样传给 Ruby `exec`；单个命令字符串使用 Ruby 的 shell 语义。不可信参数应使用独立参数形式。支持 `env: { "NAME" => "value" }` 和 `chdir: "/path"`。同一会话只能启动一次，启动失败抛出 `Expect::SpawnError`。
+多个命令参数原样传给 Ruby `exec`；单个命令字符串使用 Ruby 的 shell 语义。不可信参数应使用独立参数形式。支持
+`env: { "NAME" => "value" }` 和 `chdir: "/path"`。同一会话只能启动一次，启动失败抛出 `Expect::SpawnError`。
 
 ## 配置与属性
 
@@ -69,25 +75,27 @@ Expect.spawn("/bin/sh", "-i", timeout: 3) do |session|
 end
 ```
 
-`configure` 校验后发布冻结的配置对象；块异常不会发布部分修改。并发调用按顺序完成读改写，不会互相覆盖不同属性。配置块在锁内执行，应保持简短，不要在块内再次调用 `configure`（会抛出 `ThreadError`）或等待其他配置线程。每个会话独立持有配置，优先使用构造参数；修改默认值不会改变已有会话，修改一个会话也不会影响其他会话。子类继承父类默认配置，可独立覆盖。
+`configure` 校验后发布冻结的配置对象；块异常不会发布部分修改。并发调用按顺序完成读改写，不会互相覆盖不同属性。配置块在锁内执行，应保持简短，不要在块内再次调用
+`configure`（会抛出 `ThreadError`）或等待其他配置线程。每个会话独立持有配置，优先使用构造参数；修改默认值不会改变已有会话，修改一个会话也不会影响其他会话。子类继承父类默认配置，可独立覆盖。
 
 全局默认配置通常在应用启动时设置；每次会话的动态差异使用构造参数或会话属性，避免在高频路径反复获取共享配置锁。
 
-| 属性 | 默认值 | 行为 |
-| --- | --- | --- |
-| `timeout` | `nil` | 等待匹配的默认超时，秒；`nil` 无限，`0` 非阻塞轮询 |
-| `write_timeout` | `nil` | 写入遇到背压时的超时，秒 |
-| `buffer_limit` | `nil` | 接收缓冲最多保留的字节数；正整数或 `nil`（无限） |
-| `debug_level` | `0` | `1` 生命周期和匹配，`2` 加收发内容，`3` 加缓冲内容 |
-| `raw_pty` | `false` | spawn 前将 slave 设为 raw，禁用回显和换行转换 |
-| `preserve_buffer` | `false` | 匹配后保留完整缓冲 |
-| `log_stdout` | `false` | 将接收内容输出到 `$stdout` |
-| `log_listeners` | `true` | 将接收内容转发给 `listeners` |
-| `raw_terminal` | `true` | `interact` 期间自动设置并恢复输入终端模式，同时保留输出换行处理 |
-| `reset_timeout_on_read` | `false` | 每次收到数据时重置匹配期限 |
-| `graceful_close` | `false` | `close` 先尝试软关闭，再完成强制清理 |
+| 属性                    | 默认值  | 行为                                                            |
+|-------------------------|---------|-----------------------------------------------------------------|
+| `timeout`               | `nil`   | 等待匹配的默认超时，秒；`nil` 无限，`0` 非阻塞轮询              |
+| `write_timeout`         | `nil`   | 写入遇到背压时的超时，秒                                        |
+| `buffer_limit`          | `nil`   | 接收缓冲最多保留的字节数；正整数或 `nil`（无限）                |
+| `debug_level`           | `0`     | `1` 生命周期和匹配，`2` 加收发内容，`3` 加缓冲内容              |
+| `raw_pty`               | `false` | spawn 前将 slave 设为 raw，禁用回显和换行转换                   |
+| `preserve_buffer`       | `false` | 匹配后保留完整缓冲                                              |
+| `log_stdout`            | `false` | 将接收内容输出到 `$stdout`                                      |
+| `log_listeners`         | `true`  | 将接收内容转发给 `listeners`                                    |
+| `raw_terminal`          | `true`  | `interact` 期间自动设置并恢复输入终端模式，同时保留输出换行处理 |
+| `reset_timeout_on_read` | `false` | 每次收到数据时重置匹配期限                                      |
+| `graceful_close`        | `false` | `close` 先尝试软关闭，再完成强制清理                            |
 
-布尔属性均提供 `name`、`name?` 和 `name=`，按 Ruby 真值规则转换：仅 `nil` / `false` 为假，`0` 为真。超时必须有限且非负，`nil` 表示无限；无效赋值不改变原值。`debug_level` 仅接受整数 `0..3`。
+布尔属性均提供 `name`、`name?` 和 `name=`，按 Ruby 真值规则转换：仅 `nil` / `false` 为假，`0` 为真。超时必须有限且非负，`nil`
+表示无限；无效赋值不改变原值。`debug_level` 仅接受整数 `0..3`。
 
 ## 等待和匹配
 
@@ -100,7 +108,9 @@ session.expect("ready", timeout: 0)    # 匹配现有缓冲，并最多轮询读
 session.expect(timeout: 1)             # 仅收集输出，直到超时或 EOF
 ```
 
-字符串始终按字面匹配，包括 `"-i"`、`"-re"`、`"timeout"` 和 `"eof"`；正则直接使用 Ruby `Regexp`。按声明顺序选择第一个能匹配的模式，不按它们在文本中的位置排序。返回模式的 **1 起始序号**，超时、EOF 或 IO 错误返回 `nil`。超时使用单调时钟。
+字符串始终按字面匹配，包括 `"-i"`、`"-re"`、`"timeout"` 和 `"eof"`；正则直接使用 Ruby `Regexp`
+。按声明顺序选择第一个能匹配的模式，不按它们在文本中的位置排序。返回模式的 **1 起始序号**，超时、EOF 或 IO 错误返回 `nil`
+。超时使用单调时钟。
 
 ```ruby
 result = session.expect_result(/value=(\d+)/, timeout: 3)
@@ -115,17 +125,30 @@ result.error # nil、:timeout、:eof 或原始 IOError / SystemCallError 对象
 number, error, match, before, after, session, captures = result.to_a
 ```
 
-`Result` 使用原生 Ruby `Struct`，支持 `to_a`、`to_h`、模式解构；没有隐式 `to_ary`。会话提供 `last_result`，以及 `match`、`before`、`after`、`match_number`、`captures`、`error` 快捷读取方法。
+`Result` 使用原生 Ruby `Struct`，支持 `to_a`、`to_h`、模式解构；没有隐式 `to_ary`。会话提供 `last_result`，以及 `match`、
+`before`、`after`、`match_number`、`captures`、`error` 快捷读取方法。
 
-成功匹配后删除匹配内容及其之前的内容，尾部留给下次匹配；超时保留缓冲，EOF 将未匹配内容放入 `before` 并清空缓冲。EOF 与子进程退出是不同事件，使用 `wait` / `process_status` 判断进程结果。底层 IO 错误保留原始异常，回调中的普通异常直接抛出。
+成功匹配后删除匹配内容及其之前的内容，尾部留给下次匹配；超时保留缓冲，EOF 将未匹配内容放入 `before` 并清空缓冲。EOF
+与子进程退出是不同事件，使用 `wait` / `process_status` 判断进程结果。底层 IO 错误保留原始异常，回调中的普通异常直接抛出。
 
-接收缓冲、匹配和捕获值为 `ASCII-8BIT` 字节串，保留控制字符、NUL 和无效 UTF-8。固定 UTF-8 正则会等待读取末尾拆开的字符收齐后再匹配，以免尾部锚点提前命中；显示捕获内容时可 `.force_encoding("UTF-8")`。任意二进制流请用字面字符串或二进制正则 `/.../n`。固定 UTF-8 正则遇到无效数据抛出 `EncodingError`；EOF 时仍未收齐的字符也属于无效编码，匹配缓冲保留原字节供诊断或二进制匹配。缓冲上限按字节截断，应为文本设置足够的上限。
+接收缓冲、匹配和捕获值为 `ASCII-8BIT` 字节串，保留控制字符、NUL 和无效 UTF-8。固定 UTF-8
+正则会等待读取末尾拆开的字符收齐后再匹配，以免尾部锚点提前命中；显示捕获内容时可 `.force_encoding("UTF-8")`
+。任意二进制流请用字面字符串或二进制正则 `/.../n`。固定 UTF-8 正则遇到无效数据抛出 `EncodingError`；EOF
+时仍未收齐的字符也属于无效编码，匹配缓冲保留原字节供诊断或二进制匹配。缓冲上限按字节截断，应为文本设置足够的上限。
 
 正则完全遵循 Ruby：`^` / `$` 是行锚点，`\A` / `\z` 是整个缓冲的锚点，`/m` 让点号匹配换行；不再提供全局正则模式开关。
 
-IO 等待的 `timeout` 不会中断单次正则计算。处理用户提供的正则或不可信长输出时，应使用有限时的正则实例，例如 `Regexp.new('prompt>\\s*', timeout: 0.05)`；该限制同样适用于 `on_sequence`。正则超时原样抛出 `Regexp::TimeoutError`，匹配缓冲保留，库不会修改进程全局 `Regexp.timeout`。`timeout: 0` 仍会匹配已有缓冲，不代表禁止正则计算。长输出可用日志保存全文，按业务需要设置 `buffer_limit` 限制匹配窗口；缩小窗口会改变 `before` 和跨窗口匹配范围。
+IO 等待的 `timeout` 不会中断单次正则计算。处理用户提供的正则或不可信长输出时，应使用有限时的正则实例，例如
+`Regexp.new('prompt>\\s*', timeout: 0.05)`；该限制同样适用于 `on_sequence`。正则超时原样抛出 `Regexp::TimeoutError`
+，匹配缓冲保留，库不会修改进程全局 `Regexp.timeout`。`timeout: 0` 仍会匹配已有缓冲，不代表禁止正则计算。长输出可用日志保存全文，按业务需要设置
+`buffer_limit` 限制匹配窗口；缩小窗口会改变 `before` 和跨窗口匹配范围。
+
+`session.buffer_discarded_bytes` 是只读的会话累计计数，只统计 `buffer_limit` 裁剪掉的字节。
+读取新数据、赋值 `buffer` 或调低上限触发裁剪时递增；成功匹配、`clear_buffer`、EOF 消费和转接交接均不计入。
+关闭会话不会清零。日志在实际读取时保存完整接收内容，不受匹配窗口裁剪影响；它可按显式注册的秘密脱敏。
 
 ## 回调、事件与多会话
+
 
 ```ruby
 session.expect(timeout: 10) do
@@ -143,11 +166,30 @@ session.expect(timeout: 10) do
 end
 ```
 
-回调通过闭包访问局部变量。无参数声明块在模式构建器中执行；希望保留调用方 `self` 时使用 `do |patterns|`，调用 `patterns.on(...)`。所有模式注册完成后才读取 IO；注册异常或 `break` 不消费输入。块和位置模式不能混用。`expect_result` 支持同样的声明方式。
+回调通过闭包访问局部变量。无参数声明块在模式构建器中执行；希望保留调用方 `self` 时使用 `do |patterns|`，调用
+`patterns.on(...)`。所有模式注册完成后才读取 IO；注册异常或 `break` 不消费输入。块和位置模式不能混用。`expect_result`
+支持同样的声明方式。
 
-`continue` 继续等待并重新计时；`continue(reset_timeout: false)` 保留原期限，类和实例均可调用。回调返回后若保留的期限已过，不再扫描新的文本匹配，未消费的输入留给下一次等待。无回调或返回其他值时结束本次匹配。超时回调只有返回重置计时的 `continue` 才再次等待。EOF 回调继续时移除该源并等待其余会话；已知的 EOF 仍依次派发，全部 EOF 时直接返回，期限已过时仅对剩余活跃源触发超时。
+`continue` 继续等待并重新计时；`continue(reset_timeout: false)`
+保留原期限，类和实例均可调用。回调返回后若保留的期限已过，不再扫描新的文本匹配，未消费的输入留给下一次等待。无回调或返回其他值时结束本次匹配。超时回调只有返回重置计时的
+`continue` 才再次等待。EOF 回调继续时移除该源并等待其余会话；已知的 EOF 仍依次派发，全部 EOF 时直接返回，期限已过时仅对剩余活跃源触发超时。
 
-`eof` / `timeout` 声明会占用模式序号，但事件返回的 `number` 为 `nil`。一个等待只能注册一个超时回调；它接收**所有仍在监听的会话**。不需要回调时，可将 `:eof` / `:timeout` 作为位置事件参数。
+`expect` / `expect_result` 另接受 `deadline:`，值为 `Expect.monotonic` 时钟上的绝对秒数，`nil` 表示不设总期限。总期限与普通
+`timeout` 取较早者，接收重置、文本/EOF 继续及超时回调均不能延长它。同一个 deadline 可用于连续多次等待：
+
+```ruby
+deadline = Expect.monotonic + 60
+session.reset_timeout_on_read = true
+session.expect("ready", timeout: 5, deadline: deadline)
+session.expect("done", timeout: 5, deadline: deadline)
+```
+
+上例每次等待允许最多 5 秒无新输入，两次等待共用 60 秒总预算。到达总期限后返回超时，不消费已缓冲的文本或读取新数据；已经确认的
+EOF 仍可派发，全部来源结束时返回 EOF。`timeout: 0`
+在总期限尚未到达时仍保留一次非阻塞轮询。总期限使用协作检查，不中断正在执行的回调、同步日志或单次正则；正则完成后若总期限已到，不消费其匹配结果。它不自动传给回调中的写入或其他操作。
+
+`eof` / `timeout` 声明会占用模式序号，但事件返回的 `number` 为 `nil`。一个等待只能注册一个超时回调；它接收
+**所有仍在监听的会话**。不需要回调时，可将 `:eof` / `:timeout` 作为位置事件参数。
 
 ```ruby
 Expect.expect(timeout: 5) do
@@ -158,9 +200,11 @@ end
 Expect.expect("ready", from: [first, second], timeout: 5)
 ```
 
-`from:` 指定一个或多个会话；实例块默认当前会话，类方法需提供来源。相邻且来源列表相同的模式组成一组，按组、会话、模式顺序匹配。类方法省略超时使用 `Expect.configuration.timeout`。
+`from:` 指定一个或多个会话；实例块默认当前会话，类方法需提供来源。相邻且来源列表相同的模式组成一组，按组、会话、模式顺序匹配。类方法省略超时使用
+`Expect.configuration.timeout`。
 
-`preserve_buffer = true` 时，继续回调通常应自行消费匹配，例如 `connection.buffer = connection.after`。如果回调没有改变缓冲，当前模式会等待缓冲变化后才重新匹配，避免反复处理同一内容。被信号中断的匹配 select/read 会自动重试，保留原期限。
+`preserve_buffer = true` 时，继续回调通常应自行消费匹配，例如 `connection.buffer = connection.after`
+。如果回调没有改变缓冲，当前模式会等待缓冲变化后才重新匹配，避免反复处理同一内容。被信号中断的匹配 select/read 会自动重试，保留原期限。
 
 ## 已有 IO、写入和终端
 
@@ -173,29 +217,37 @@ end
 ready = Expect.readable_sessions(first, second, timeout: 5)
 ```
 
-`Expect.open` 支持可 `select` 的 File、管道、Socket 和 PTY，`writer:` 可指定独立写端。默认借用 IO，关闭会话不关闭原始 IO；`own: true` 转移关闭责任，初始化失败也会释放接管的 IO。`StringIO` 可以用作日志和监听器，不能用作读取会话。
+`Expect.open` 支持可 `select` 的 File、管道、Socket 和 PTY，`writer:` 可指定独立写端。默认借用 IO，关闭会话不关闭原始 IO；
+`own: true` 转移关闭责任，初始化失败也会释放接管的 IO。`StringIO` 可以用作日志和监听器，不能用作读取会话。
 
-用于写入或转接的真实 IO 应在首次写入前设置 `io.sync = true`，并由调用方保证没有未刷新的 Ruby 写缓冲；`write_nonblock` 可能先阻塞刷新已有缓冲，这一步不受本库的 IO 等待期限控制。已有缓冲应在交付给本库前由调用方排空，库不会绕过缓冲或改变字节顺序。
+用于写入或转接的真实 IO 应在首次写入前设置 `io.sync = true`，并由调用方保证没有未刷新的 Ruby 写缓冲；`write_nonblock`
+可能先阻塞刷新已有缓冲，这一步不受本库的 IO 等待期限控制。已有缓冲应在交付给本库前由调用方排空，库不会绕过缓冲或改变字节顺序。
 
-`readable_sessions` 返回可读的会话对象数组，不消费数据、不包含已关闭会话、同一会话只返回一次。默认 `timeout: 0`；`nil` 无限等待。同一会话应由一个读取者驱动，多会话共同监听使用 `Expect.expect`。
+`readable_sessions` 返回可读的会话对象数组，不消费数据、不包含已关闭会话、同一会话只返回一次。默认 `timeout: 0`；`nil`
+无限等待。同一会话应由一个读取者驱动，多会话共同监听使用 `Expect.expect`。
 
-| API | 行为 |
-| --- | --- |
-| `write(*objects)` | 通过 `to_s` 转换并写入所有字节，返回字节数 |
-| `puts(*objects)` | 原生 IO 风格的换行、数组递归和 `nil` 返回值 |
-| `session << object` | 写入并返回会话，可链式追加 |
-| `send_slow(*objects, delay:)` | 每个字符之前等待指定秒数，同时收集返回数据 |
-| `buffer` / `buffer=` | 获取副本 / 复制字节并应用上限 |
-| `clear_buffer` | 清空缓冲并返回旧内容 |
-| `stty("raw -echo")` / `stty` | 修改终端模式 / 获取可恢复的模式字符串 |
-| `winsize` / `winsize=` | 读取/修改 `[rows, cols]`，由内核通知前台进程 |
-| `slave` / `tty_name` / `to_io` / `writer` / `fileno` / `tty?` | 底层 IO 和终端信息 |
+| API                                                           | 行为                                         |
+|---------------------------------------------------------------|----------------------------------------------|
+| `write(*objects)`                                             | 通过 `to_s` 转换并写入所有字节，返回字节数   |
+| `puts(*objects)`                                              | 原生 IO 风格的换行、数组递归和 `nil` 返回值  |
+| `session << object`                                           | 写入并返回会话，可链式追加                   |
+| `send_slow(*objects, delay:)`                                 | 每个字符之前等待指定秒数，同时收集返回数据   |
+| `buffer` / `buffer=`                                          | 获取副本 / 复制字节并应用上限                |
+| `clear_buffer`                                                | 清空缓冲并返回旧内容                         |
+| `stty("raw -echo")` / `stty`                                  | 修改终端模式 / 获取可恢复的模式字符串        |
+| `winsize` / `winsize=`                                        | 读取/修改 `[rows, cols]`，由内核通知前台进程 |
+| `slave` / `tty_name` / `to_io` / `writer` / `fileno` / `tty?` | 底层 IO 和终端信息                           |
 
-`send_slow` 在每次写入后只检查已经可读的回复，不附加固定等待；返回时不保证收齐最后一个字符引发的回复，完整对话请继续使用 `expect`。
+`send_slow` 在每次写入后只检查已经可读的回复，不附加固定等待；返回时不保证收齐最后一个字符引发的回复，完整对话请继续使用
+`expect`。
 
-大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，`error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的 `EINTR` 均保留原期限重试。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、`__send__` 保留 Ruby 反射语义。
+大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。超过 `write_timeout` 抛出 `Expect::WriteTimeout`，
+`error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的
+`EINTR` 均保留原期限重试。控制字符可直接发送，例如 `session.write("\x03")`，其信号作用取决于终端设置。`send`、`public_send`、
+`__send__` 保留 Ruby 反射语义。
 
-`stty` 需要系统命令位于 `PATH`；缺失时抛出带安装提示的 `IOError`，原始 `Errno::ENOENT` 保留在 `cause`。窗口尺寸和人工接管的终端恢复使用 Ruby `io/console`。
+`stty` 需要系统命令位于 `PATH`；缺失时抛出带安装提示的 `IOError`，原始 `Errno::ENOENT` 保留在 `cause`。窗口尺寸和人工接管的终端恢复使用
+Ruby `io/console`。
 
 ## 日志与人工交互
 
@@ -210,11 +262,33 @@ session.listeners = [output_io, another_session]
 session.log_listeners = false
 ```
 
-日志读取用 `log_output`，设置用 `log_output=`，打开路径或注册日志块用 `log_to`。新建日志权限为 `0600`（仍受 umask 限制），已有文件保留原权限。不能同时提供日志目标与块。`listeners` 返回列表副本，`listeners = []` 清空；替换无效目标不会丢失原目标。
+日志读取用 `log_output`，设置用 `log_output=`，打开路径或注册日志块用 `log_to`。新建日志权限为 `0600`（仍受 umask
+限制），已有文件保留原权限。不能同时提供日志目标与块。`listeners` 返回列表副本，`listeners = []` 清空；替换无效目标不会丢失原目标。
 
 所有会话默认不输出到 stdout。日志仅记录实际读取的接收字节；写入不重复记录，终端回显可能作为接收内容返回。密码交互应关闭日志、调试，并确保被控程序不回显密码。
 
-普通 `expect` 按顺序同步写入日志、stdout 和 `listeners`，这些目标须及时消费数据；匹配的 `timeout` 不会中断阻塞中的输出。需要在慢目标背压时继续处理其他输入，应使用下面的 `interconnect` 非阻塞转接接口并设置期限。
+普通 `expect` 按顺序同步写入日志、stdout 和 `listeners`，这些目标须及时消费数据；匹配的 `timeout`
+不会中断阻塞中的输出。需要在慢目标背压时继续处理其他输入，应使用下面的 `interconnect` 非阻塞转接接口并设置期限。
+
+诊断与接收字节日志分别设置。`diagnostic_output:` 可作为构造参数，也可通过同名属性修改；接受标准 Logger、可写目标或回调，`nil`
+使用 stderr。目标均为借用资源，关闭会话不会关闭它们。`debug_level` 仍控制内容：1 为生命周期和匹配，2 增加收发字节，3
+增加缓冲。Logger 的级别分别使用 `info` 和 `debug`；回调收到冻结的 Hash，包含 `event`、`level`、`pid`、`fd`、`message`，不包含会话对象。
+
+```ruby
+require "logger" # 使用 Logger 的应用需在自己的 Gemfile 声明 logger
+session.diagnostic_output = Logger.new($stderr)
+session.debug_level = 2
+session.redact(password, token) # 在首次通信前注册需要保护的原始字节
+session.log_to("session.log")
+```
+
+`redact` 复制并追加本会话的非空字符串秘密，以 `[FILTERED]` 遮盖 `log_to` / `write_log`
+及诊断中的对应字节，支持跨读取、跨写入和重叠秘密；匹配缓冲、结果、stdout 显示和 listeners 的转发仍是原始字节。应继续关闭敏感会话的
+`log_stdout`，并自行保护交互显示及协议转发目标。它不推断编码、终端转义、哈希或其他变换后的秘密，也不能删除已输出的日志。
+
+过滤器最多延迟最长秘密长度减一的尾部字节，EOF、目标替换和显式关闭时交付剩余内容；流边界处疑似秘密前缀也会被遮盖。发送与接收诊断各自保留过滤状态；启用脱敏时，level
+3 的缓冲快照只显示 `[FILTERED]`，避免部分消费或裁剪后剩下的秘密片段绕过过滤。日志回调的分块边界因此可能变化。GC
+兜底不会调用用户日志回调，需显式关闭会话以交付过滤器尾部。
 
 ```ruby
 session.interact(input: $stdin, escape: "\x1d", output: $stdout) # Ctrl-]
@@ -227,19 +301,31 @@ Expect.open($stdin) do |input|
 end
 ```
 
-`on_sequence(sequence) { ... }` 注册字符串、原生正则或 `:eof`，通过闭包传递参数。无回调、返回 `nil` / `false` 停止，其他 Ruby 真值（包括 `0`）继续；字符串 `"EOF"` 按字面匹配。转接返回导致停止的会话，超时或所有 EOF 回调均继续时返回 `nil`。
+`on_sequence(sequence) { ... }` 注册字符串、原生正则或 `:eof`，通过闭包传递参数。无回调、返回 `nil` / `false` 停止，其他 Ruby
+真值（包括 `0`）继续；字符串 `"EOF"` 按字面匹配。转接返回导致停止的会话，超时或所有 EOF 回调均继续时返回 `nil`。
 
-`interconnect` 统一调度真实 IO 的非阻塞读写；慢目标不会阻止其他源前进，等待同时受总 `timeout` 和目标会话的 `write_timeout` 约束。总期限到达返回 `nil`，目标写期限先到则抛出 `WriteTimeout`。超时后的字面转义前缀只尝试非阻塞发送，不再等待下游。作为写入目标但未显式列出的 Expect 会话，背压期间读取的回复保留在其匹配缓冲；需要同时转发这些回复时，把它也传给 `interconnect`。
+`interconnect` 统一调度真实 IO 的非阻塞读写；慢目标不会阻止其他源前进，等待同时受总 `timeout` 和目标会话的 `write_timeout`
+约束。总期限到达返回 `nil`，目标写期限先到则抛出 `WriteTimeout`。超时后的字面转义前缀只尝试非阻塞发送，不再等待下游。作为写入目标但未显式列出的
+Expect 会话，背压期间读取的回复保留在其匹配缓冲；需要同时转发这些回复时，把它也传给 `interconnect`。
 
-每个源独立保存待发送数据以及各目标的发送位置，`source.pending_output?` 表示仍有未交付内容。超时或异常后再次对同一源调用 `interconnect`，会接着发送未完成的后缀，已完成的目标不会重复接收；转义回调在前缀交付后执行。待发送数据与 `buffer` 中尚未处理的输入分开保存，修改 `listeners` 仅影响后续数据，旧数据仍发往原目标。恢复时不要把原始数据再次赋给 `buffer`，也不要在排空旧输出前插入新的直接写入；关闭源会话会放弃其待发送数据。转接保留的输入暂不按 `buffer_limit` 裁剪，下次匹配时重新应用该上限。
+每个源独立保存待发送数据以及各目标的发送位置，`source.pending_output?` 表示仍有未交付内容。超时或异常后再次对同一源调用
+`interconnect`，会接着发送未完成的后缀，已完成的目标不会重复接收；转义回调在前缀交付后执行。待发送数据与 `buffer`
+中尚未处理的输入分开保存，修改 `listeners` 仅影响后续数据，旧数据仍发往原目标。恢复时不要把原始数据再次赋给 `buffer`
+，也不要在排空旧输出前插入新的直接写入；关闭源会话会放弃其待发送数据。转接保留的输入暂不按 `buffer_limit` 裁剪，下次匹配时重新应用该上限。
 
-自定义写入对象必须及时返回实际接受的字节数，短写入会继续发送后缀，零、负数或非法返回值抛出 `IOError`。对象若先写入再抛错而不报告进度，库无法推断其副作用。日志、用户回调及自定义 `write` / `flush` 同步运行，应由调用方保证它们不会无限阻塞；上述 IO 期限不会强行中断这些代码。普通 `expect` 的同步日志和监听器输出也不受匹配等待期限限制。
+自定义写入对象必须及时返回实际接受的字节数，短写入会继续发送后缀，零、负数或非法返回值抛出 `IOError`
+。对象若先写入再抛错而不报告进度，库无法推断其副作用。日志、用户回调及自定义 `write` / `flush` 同步运行，应由调用方保证它们不会无限阻塞；上述
+IO 期限不会强行中断这些代码。普通 `expect` 的同步日志和监听器输出也不受匹配等待期限限制。
 
-字面转义可以跨读取完整过滤，尾部留给下次调用。正则转义使用历史记录，默认最多保留最近 65,536 字节；设置 `buffer_limit` 后改用该值。正则及其锚点作用于当前历史窗口，超过窗口的跨读取正则无法匹配，已实时转发的前缀也无法撤回；零长度正则匹配抛出 `ArgumentError`。日志始终记录原始接收字节，包括被过滤的转义，在 `expect` / `interconnect` 之间切换也不会重复记录。
+字面转义可以跨读取完整过滤，尾部留给下次调用。正则转义使用历史记录，默认最多保留最近 65,536 字节；设置 `buffer_limit`
+后改用该值。正则及其锚点作用于当前历史窗口，超过窗口的跨读取正则无法匹配，已实时转发的前缀也无法撤回；零长度正则匹配抛出
+`ArgumentError`。日志包括被转接过滤的转义，显式启用 `redact` 时遮盖注册秘密；在 `expect` / `interconnect` 之间切换不会重复记录。
 
-`interact` 会自动设置并恢复本地输入终端模式，同时保留输出换行处理；输入会话的 `raw_terminal = false` 将设置交给调用方。通用的 `interconnect` 只负责字节转发，由调用方管理终端模式。`interact` 还会恢复临时监听组、日志开关和转义设置，包括超时和异常路径。
+`interact` 会自动设置并恢复本地输入终端模式，同时保留输出换行处理；输入会话的 `raw_terminal = false` 将设置交给调用方。通用的
+`interconnect` 只负责字节转发，由调用方管理终端模式。`interact` 还会恢复临时监听组、日志开关和转义设置，包括超时和异常路径。
 
-对同一连接重复传入同一个原始输入 IO 时，`interact` 会复用输入包装器，接续上次预读的尾部。包装器由该连接持有，关闭连接时释放，但不关闭借用的原始 IO；已关闭的输入或包装器不再复用。需要跨连接共享或自行管理输入生命周期时，显式传入 `Expect.open(input)` 创建的会话。
+对同一连接重复传入同一个原始输入 IO 时，`interact` 会复用输入包装器，接续上次预读的尾部。包装器由该连接持有，关闭连接时释放，但不关闭借用的原始
+IO；已关闭的输入或包装器不再复用。需要跨连接共享或自行管理输入生命周期时，显式传入 `Expect.open(input)` 创建的会话。
 
 ## 软关闭、硬关闭与进程状态
 
@@ -250,21 +336,30 @@ status ||= session.hard_close(timeout: 0.2)
 session.close(graceful: true) # 先软关闭，必要时继续硬关闭
 ```
 
-- `soft_close`：等待自然 EOF 并收集尾部输出，然后关闭所属 IO、等待进程退出；超时后最多发送 TERM，**不发送 KILL**。`timeout:` 是自然退出阶段的期限（默认 15 秒），`term_timeout:` 是发 TERM 后的等待时间（默认 1 秒）。未退出返回 `nil`，保留 PID，可继续 `wait` 或 `hard_close`。
-- `hard_close`：立即关闭所属 IO，不收集尾部输出；等待 `timeout:`，必要时发送 TERM 再等待同样时长，仍未退出则 KILL 并最多等待 1 秒。默认 `timeout: 0.2`，必须有限。
+- `soft_close`：等待自然 EOF 并收集尾部输出，然后关闭所属 IO、等待进程退出；超时后最多发送 TERM， **不发送 KILL**。`timeout:`
+  是自然退出阶段的期限（默认 15 秒），`term_timeout:` 是发 TERM 后的等待时间（默认 1 秒）。未退出返回 `nil`，保留 PID，可继续
+  `wait` 或 `hard_close`。
+- `hard_close`：立即关闭所属 IO，不收集尾部输出；等待 `timeout:`，必要时发送 TERM 再等待同样时长，仍未退出则 KILL 并最多等待
+  1 秒。默认 `timeout: 0.2`，必须有限。
 - 两者返回已回收的 `Process::Status`，没有子进程或尚未回收时返回 `nil`；重复调用保留已获得的状态。借用 IO 不关闭。
 - `close(graceful: graceful_close?)`：可选先软关闭，`ensure` 中硬关闭，返回 `nil`。块生命周期使用它完成清理；软关闭发生日志异常时也会回收子进程。
-- `wait(timeout: nil)`：等待并回收，返回 `Process::Status`；超时返回 `nil`。`process_status` 非阻塞查询，`exit_code` 读取普通退出码，信号退出看 `process_status.termsig`。
-- `closed?` 表示会话 IO 已关闭；`alive?` / `pid` 表示子进程状态。软关闭后可能同时 `closed? == true`、`alive? == true`。成功回收后 PID 为 `nil`。
+- `wait(timeout: nil)`：等待并回收，返回 `Process::Status`；超时返回 `nil`。`process_status` 非阻塞查询，`exit_code`
+  读取普通退出码，信号退出看 `process_status.termsig`。
+- `closed?` 表示会话 IO 已关闭；`alive?` / `pid` 表示子进程状态。软关闭后可能同时 `closed? == true`、`alive? == true`。成功回收后
+  PID 为 `nil`。
 
 关闭只负责会话直接启动的子进程；垃圾回收提供非阻塞的强制清理兜底，不执行软关闭等待。优先使用块或 `ensure` 管理资源。
 
 ## 安全注意事项
 
-- 将不可信命令和参数分别传给 `spawn`，例如 `Expect.spawn("ssh", host)`；单个命令字符串会使用 Ruby 的 shell 语义。`stty` 参数经拆分后作为独立参数传给进程，不拼接 shell 命令。
-- 会话日志可能记录密码回显、令牌和其他敏感字节。新日志文件以 `0600` 创建，已有文件保留原权限；请按需关闭 `log_to`、`log_stdout` 和调试输出，并管理日志留存。
-- `spawn` 在子进程中使用 `fork` 后的 Ruby 操作与 `exec`。高度多线程的宿主进程，尤其使用第三方 C 扩展时，可能受到 fork 时其他线程持锁的影响；尽量在启动其他线程前创建会话，并在自己的运行环境中验证。
-- 不可信正则可能耗费较长时间；使用带 `timeout:` 的 `Regexp` 实例，并为匹配缓冲设置合适的 `buffer_limit`。普通 `expect` 的 IO 期限不打断单次正则或同步回调。
+- 将不可信命令和参数分别传给 `spawn`，例如 `Expect.spawn("ssh", host)`；单个命令字符串会使用 Ruby 的 shell 语义。`stty`
+  参数经拆分后作为独立参数传给进程，不拼接 shell 命令。
+- 会话日志可能记录密码回显、令牌和其他敏感字节。新日志文件以 `0600` 创建，已有文件保留原权限；请按需关闭 `log_to`、
+  `log_stdout` 和调试输出，并管理日志留存。
+- `spawn` 在子进程中使用 `fork` 后的 Ruby 操作与 `exec`。高度多线程的宿主进程，尤其使用第三方 C 扩展时，可能受到 fork
+  时其他线程持锁的影响；尽量在启动其他线程前创建会话，并在自己的运行环境中验证。
+- 不可信正则可能耗费较长时间；使用带 `timeout:` 的 `Regexp` 实例，并为匹配缓冲设置合适的 `buffer_limit`。普通 `expect` 的
+  IO 期限不打断单次正则或同步回调。
 
 ## 示例和验证
 
@@ -279,28 +374,41 @@ ruby examples/ssh_auto.rb --no-interact
 ruby examples/ssh_interact.rb --auto
 ```
 
-普通测试使用真实 PTY、管道和 socket，无需 SSH 服务或账户。Kibitz 的双终端示例与验证见 [examples/kibitz/](examples/kibitz/README.md)。
+普通测试使用真实 PTY、管道和 socket，无需 SSH 服务或账户。Kibitz
+的双终端示例与验证见 [examples/kibitz/](examples/kibitz/README.md)。
 
-[GitHub Actions](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml) 在推送 `main`、推送 `v*` 标签、提交到 `main` 的 Pull Request 或手动触发时运行。流水线覆盖 Ubuntu 24.04 / macOS 15 与 Ruby 3.2、3.3、3.4、4.0 的 8 种组合；每个环境执行 `script/ci`，包括真实 PTY 测试和构建包的隔离安装验证。Ubuntu / Ruby 4.0 作业保留已验证的 Gem 构建产物 14 天，可从该次工作流的 Artifacts 下载。
+[GitHub Actions](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml) 在推送 `main`、推送 `v*` 标签、提交到
+`main` 的 Pull Request 或手动触发时运行。流水线覆盖 Ubuntu 24.04 / macOS 15 与 Ruby 3.2、3.3、3.4、4.0 的 8 种组合；每个环境执行
+`script/ci`，包括真实 PTY 测试和构建包的隔离安装验证。Ubuntu / Ruby 4.0 作业保留已验证的 Gem 构建产物 14 天，可从该次工作流的
+Artifacts 下载。
 
-运行前先执行 `bundle install`。Gem 库的开发锁文件 `Gemfile.lock` 保留在本地，各 Ruby 环境按 `Gemfile` 解析兼容依赖。生成文件写入已忽略的 `tmp/`，Gem 构建产物位于 `tmp/ci/`，发布候选包位于 `tmp/release/`。安装验证会清除外部 Bundler 环境，分别运行普通 RubyGems 加载和只声明 `expect-pty` 的 Bundler 应用，检查运行时依赖、终端模式、窗口大小及真实 PTY 对话。更新工作流中的 Action 时，应同步更新固定的提交 SHA 和版本注释。
+运行前先执行 `bundle install`。Gem 库的开发锁文件 `Gemfile.lock` 保留在本地，各 Ruby 环境按 `Gemfile` 解析兼容依赖。生成文件写入已忽略的
+`tmp/`，Gem 构建产物位于 `tmp/ci/`，发布候选包位于 `tmp/release/`。安装验证会清除外部 Bundler 环境，分别运行普通 RubyGems
+加载和只声明 `expect-pty` 的 Bundler 应用，检查运行时依赖、终端模式、窗口大小及真实 PTY 对话。更新工作流中的 Action
+时，应同步更新固定的提交 SHA 和版本注释。
 
-运行时依赖只在 `expect-pty.gemspec` 声明，开发依赖放在 Gemfile 的 `development` / `test` 组；安装或使用本库不会引入 Minitest、Rake、RuboCop 及发布工具的依赖。
+运行时依赖只在 `expect-pty.gemspec` 声明，开发依赖放在 Gemfile 的 `development` / `test` 组；安装或使用本库不会引入
+Minitest、Rake、RuboCop 及发布工具的依赖。
 
-| 运行时模块 | Gem | 用途 |
-| --- | --- | --- |
-| `forwardable` | `forwardable` | 会话配置委托 |
-| `io/console` | `io-console` | 终端模式和窗口大小 |
-| `io/wait` | `io-wait` | IO 可读等待 |
-| `shellwords` | `shellwords` | `stty` 参数拆分 |
-| `stringio` | `stringio` | Ruby `puts` 语义 |
-| `pty` | Ruby 自带扩展 | POSIX 伪终端，无独立 gem |
+| 运行时模块    | Gem           | 用途                     |
+|---------------|---------------|--------------------------|
+| `forwardable` | `forwardable` | 会话配置委托             |
+| `io/console`  | `io-console`  | 终端模式和窗口大小       |
+| `io/wait`     | `io-wait`     | IO 可读等待              |
+| `shellwords`  | `shellwords`  | `stty` 参数拆分          |
+| `stringio`    | `stringio`    | Ruby `puts` 语义         |
+| `pty`         | Ruby 自带扩展 | POSIX 伪终端，无独立 gem |
 
-仅发布 RubyGems 使用 `ruby script/release.rb --rubygems-only`，直接复用本机已有的 Gem 登录状态；添加 `--dry-run` 可先完成本地检查、测试、构建和安装验证。需要同时创建 GitHub Release 时使用 `ruby script/release.rb`，也可以在 GitHub Actions 手动运行 Release 工作流。版本准备、Actions 凭据和失败重试见 [发布说明](docs/RELEASING.md)。
+仅发布 RubyGems 使用 `ruby script/release.rb --rubygems-only`，直接复用本机已有的 Gem 登录状态；添加 `--dry-run`
+可先完成本地检查、测试、构建和安装验证。需要同时创建 GitHub Release 时使用 `ruby script/release.rb`，也可以在 GitHub Actions
+手动运行 Release 工作流。版本准备、Actions 凭据和失败重试见 [发布说明](docs/RELEASING.md)。
 
-SSH 示例用 `SSH_USER`、`SSH_HOST`、`SSH_KNOWN_HOSTS` 配置，密码隐藏输入或从 `EXPECT_PASSWORD` 读取；非本地主机要求受信任的 known_hosts 文件。`ssh_auto.rb` 顶部 `COMMANDS` 可直接修改，日志写入 `tmp/ssh-auto/`，权限 0600。
+SSH 示例用 `SSH_USER`、`SSH_HOST`、`SSH_KNOWN_HOSTS` 配置，密码隐藏输入或从 `EXPECT_PASSWORD` 读取；非本地主机要求受信任的
+known_hosts 文件。`ssh_auto.rb` 顶部 `COMMANDS` 可直接修改，日志写入 `tmp/ssh-auto/`，权限 0600。
 
-多脚本验证入口为 `test/integration/ssh_scripts.rb`，人工/自动接管入口为 `examples/ssh_interact.rb`，详细配置及日志检查见 [SSH 测试说明](test/integration/README.md)。
+多脚本验证入口为 `test/integration/ssh_scripts.rb`，人工/自动接管入口为 `examples/ssh_interact.rb`
+，详细配置及日志检查见 [SSH 测试说明](test/integration/README.md)。
 
-当前接口迁移表见 [接口说明](docs/COMPATIBILITY.md)，本次与历史验证分列在 [验证记录](docs/VERIFICATION.md)。此次重构直接移除了旧入口，不提供兼容别名。
+当前接口迁移表见 [接口说明](docs/COMPATIBILITY.md)，本次与历史验证分列在 [验证记录](docs/VERIFICATION.md)
+。此次重构直接移除了旧入口，不提供兼容别名。
 防火墙连接器已迁移到相邻的 `algosec` 项目；本库只保留 `Expect` 与 `expect-pty` 通用传输能力。
