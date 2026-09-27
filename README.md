@@ -16,7 +16,7 @@ RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.5.0", require: "expect/pty"
+gem "expect-pty", "~> 0.5.1", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -29,8 +29,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.5.0.gem
-gem install ./tmp/expect-pty-0.5.0.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.5.1.gem
+gem install ./tmp/expect-pty-0.5.1.gem
 ```
 
 ```ruby

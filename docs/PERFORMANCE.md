@@ -7,9 +7,10 @@ bundle exec ruby benchmark/matching.rb
 bundle exec ruby benchmark/relay.rb
 bundle exec ruby benchmark/send_slow.rb
 bundle exec ruby benchmark/scaling.rb
+bundle exec ruby benchmark/redactor.rb
 ```
 
-默认预热一次、采样五次。结果分别写入 `tmp/benchmark/matching.json`、`relay.json`、`send_slow.json`
+默认预热一次、采样五次。结果分别写入 `tmp/benchmark/matching.json`、`relay.json`、`send_slow.json`、`scaling.json`、`redactor.json`
 ，该目录不提交。每个场景先核对非空输入的预期结果，再计时；每轮计时后再次核对最后一次执行的结果。输出包括
 Ruby、平台、源码提交、工作区是否修改、库源码 SHA-256、输入规模、迭代次数、处理字节数、墙钟耗时、分配对象数和 GC 次数。
 
@@ -20,6 +21,7 @@ Ruby、平台、源码提交、工作区是否修改、库源码 SHA-256、输�
 | matching  | 4 KiB、64 KiB、1 MiB；1、8、32 个正则；首个命中、末个命中、全未命中；UTF-8 前缀和可选捕获；1、8、32 个会话、多组重复来源和同时就绪的真实管道 |
 | relay     | 无转义、字面转义、16 个正则转义；正常目标与每次只接受 17 字节的目标共同接收相同数据                                                          |
 | send_slow | 真实本地 socket；无回显、持续回显；零延迟和每字符 1ms 延迟                                                                                   |
+| redactor | 空规则、无命中/稀疏/连续/高重叠；包含关系、多秘密、二进制、原文替换标记、1/7/4096 字节分块、partial finish、重复 finish 及 pending 中更新规则 |
 
 `matching` 的扫描用内部 `find_match` 单独度量缓冲扫描，排除 PTY 启动和回调开销；就绪场景包含管道写入、选择和读取。`relay`
 的前三项单独度量转义扫描，混合目标项运行完整转接循环。短写模拟目标吞吐受限，不等同于真实慢网络。`send_slow` 包含
@@ -33,6 +35,10 @@ socket、接收线程和完整回显校验的成本；无回显时计时止于�
 `scaling` 默认使用 1、16、64 个真实管道来源，等待并消费所有同时就绪的标记；另一场景把目标管道填满且不消费，验证其他来源仍可触发退出转义。`--sessions N` 可单独选择容量，运行前检查进程描述符上限。`--smoke` 仅使用 1、8 个来源。
 
 每个样本记录计时区间前后的 RSS 和打开描述符数，以及进程的描述符上限；采样自身不进入计时或分配计数。RSS 是端点快照，受 Ruby 堆和分配器保留影响，不代表峰值或存活对象大小。平台不支持某项采样时记录 `null`。描述符快照也不是长期泄漏证明，应同时检查重复样本和关闭流程。
+
+`redactor` 每次操作创建独立过滤器，分块数据在计时前准备，计时包含过滤器构造、append 和两次 finish。
+主要输入规模为 64 KiB，高重叠秘密长度为 1/32/1024/4096 字节；smoke 缩小为 512 字节及 1/32/128 字节秘密。
+公共 Runner 会加载完整 Expect（含 PTY）；基准本身不启动 PTY 会话，独立 `require "expect/redactor"` 的无 PTY 契约由测试验证。
 
 ## 同环境对照
 
@@ -72,6 +78,7 @@ bundle exec ruby benchmark/matching.rb --smoke
 bundle exec ruby benchmark/relay.rb --smoke
 bundle exec ruby benchmark/send_slow.rb --smoke
 bundle exec ruby benchmark/scaling.rb --smoke
+bundle exec ruby benchmark/redactor.rb --smoke
 ```
 
 `script/ci` 运行这些小规模正确性检查，不设置墙钟性能阈值。热点优化必须有实际收益证据；减少对象分配不代表所有输入都会变快，也不能替代完整测试和安装验证。
@@ -104,3 +111,55 @@ bundle exec ruby benchmark/scaling.rb --samples 3 --iterations 10
 同一工作树的三次容量样本中，1、16、64 来源各执行十轮的耗时中位数分别为 0.179、1.372、8.285 ms；1,000 来源执行三轮为 401.878 ms。1,000 来源样本的描述符数均为 2,007 → 2,007，RSS 端点从约 35.8 MB 增至 37.9 MB，不能解释为稳定内存上限。阻塞目标场景十轮共 0.186 ms，其他来源仍可推进，描述符数均为 13 → 13。
 
 原始记录为 `tmp/core-improvements/scaling-final.json` 和 `scaling-1000-final.json`，库源码摘要与上述工作树匹配记录一致。当前证据支持保留既有 select 调度，先量化真实负载，再决定是否需要替换后端。
+
+## Redactor 重叠区间合并验证（2026-09-27）
+
+基线为 `v0.5.0` / `b7cd25e736acbfcb43e412ec4d233f9b2602cb03` 的源码归档。使用同一份
+`benchmark/redactor.rb`、macOS arm64、Ruby 4.0.6、Bundler 4.0.17 和相同依赖，按“基线 → 候选”交替运行两轮，
+每轮 `--samples 5 --iterations 20`。下表是最后一轮五个样本的中位数，耗时和分配均为 **20 次操作总量**。
+每项输出在预热及各样本结束后校验，性能采样期间没有并行运行项目测试。
+
+| 工作负载 | 基线 ms | 候选 ms | 基线分配对象 | 候选分配对象 |
+| --- | ---: | ---: | ---: | ---: |
+| 空规则 | 0.438 | 0.416 | 541 | 541 |
+| 单秘密无命中 | 0.774 | 0.973 | 561 | 561 |
+| 多秘密无命中 | 2.305 | 1.447 | 641 | 641 |
+| 稀疏命中 | 1.145 | 1.175 | 581 | 581 |
+| 连续短秘密 | 26.159 | 9.345 | 262,661 | 541 |
+| 重叠 / 1 字节秘密 | 113.787 | 42.799 | 1,311,241 | 541 |
+| 重叠 / 32 字节秘密 | 189.706 | 97.756 | 1,310,661 | 581 |
+| 重叠 / 1024 字节秘密 | 642.376 | 429.316 | 1,290,821 | 581 |
+| 重叠 / 4096 字节秘密 | 1698.130 | 1361.663 | 1,229,381 | 581 |
+| 包含关系 | 2.881 | 2.915 | 26,201 | 26,201 |
+| 二进制跨块重叠 | 7.967 | 8.299 | 101,221 | 101,221 |
+| 原文包含替换标记 | 2.758 | 2.837 | 21,081 | 21,081 |
+| 1 字节分块 | 34.612 | 34.151 | 589,161 | 589,161 |
+| 7 字节分块 | 6.746 | 6.716 | 93,361 | 93,361 |
+| 4096 字节分块 | 1.434 | 1.456 | 10,781 | 10,781 |
+| partial finish | 0.128 | 0.129 | 2,141 | 2,141 |
+| exact finish | 0.117 | 0.113 | 2,021 | 2,021 |
+| pending 中更新规则 | 0.075 | 0.076 | 961 | 961 |
+
+两轮中连续短秘密耗时减少 63.6%–64.3%；重叠秘密按长度分别减少 62.4%–62.8%、48.5%–48.9%、
+33.1%–33.2%、19.7%–19.8%。重叠查找仍逐字节进行，只减少重复掩码分配/覆盖，没有跳过重叠命中或改变脱敏范围。
+
+短样本中的无命中结果波动明显，因此又通过本地 `tmp/guide-review/redactor-common.rb` 筛选同一驱动的常见负载，
+每轮改为 `--samples 5 --iterations 500`，再交替运行两轮。该包装器只跳过上述五项密集命中，不改变任何输入、过滤或校验逻辑。
+第二轮中单秘密无命中为 23.883 → 24.009 ms，多秘密为 56.148 → 56.081 ms，1 字节分块为 873.397 → 870.462 ms。
+存在小幅代价：稀疏命中两轮慢 2.3%/4.5%，4096 字节分块慢 2.2%/2.5%，规则更新慢 1.0%/6.0%；
+后者第二轮 500 次操作为 1.562 → 1.655 ms。其余常见负载约在 -2.8% 至 +3.6% 之间，分配量不变。
+保留此优化的取舍是以少量区间记录计算换取密集/重叠场景的显著分配下降，不声称所有负载都更快，也不设置 CI 墙钟阈值。
+
+复现全负载：
+
+```sh
+bundle exec ruby benchmark/redactor.rb --library /path/to/v0.5.0/lib --samples 5 --iterations 20 --output tmp/benchmark/redactor-before.json
+bundle exec ruby benchmark/redactor.rb --samples 5 --iterations 20 --output tmp/benchmark/redactor-after.json
+```
+
+原始样本：`tmp/guide-review/redactor-before-{4,5}.json`、`redactor-after-{4,5}.json`；
+延长采样：`redactor-common-before-{1,2}.json`、`redactor-common-after-{1,2}.json`。均在忽略目录，不随 Gem 分发。
+基线库 SHA-256 为 `d2a55eb1aa1d00658195f21f32adf37cf3ab8a24bb6a5bcf9564f6e9a6047b28`，
+性能采样时的候选库（版本号仍为 `0.5.0`）为 `753d403cf4801900cb53be5c34b04da0ffa313f25b4d2fb23a6d25ffce36e75a`，
+驱动文件为 `f99f6c8f1ec21d4d97c984dbfd51fd3e17b64fa7968095323e16d68d4a0d4cc0`。
+这些是合成字节过滤负载，不代表完整设备会话吞吐；RSS 端点不用于声称峰值内存降低。

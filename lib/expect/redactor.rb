@@ -72,13 +72,24 @@ class Expect
       end
     end
 
-    # 每次只将命中区域标为隐藏，不清除旧掩码；偏移逐字节推进以识别相互重叠的秘密。
+    # 仍逐字节推进重叠命中，但同一模式的相交/相邻区间只写一次掩码。
+    # 只向旧掩码取并集，不能清除其他模式或旧规则已经隐藏的 pending 字节。
     def mark_secrets
       @patterns.each do |pattern|
-        offset = -1
+        starting = @pending.index(pattern)
+        next unless starting
+
+        length = pattern.bytesize
+        ending = starting + length
+        offset = starting
         while (offset = @pending.index(pattern, offset + 1))
-          @hidden[offset, pattern.bytesize] = "\1" * pattern.bytesize
+          if offset > ending
+            @hidden[starting, ending - starting] = "\1" * (ending - starting)
+            starting = offset
+          end
+          ending = offset + length
         end
+        @hidden[starting, ending - starting] = "\1" * (ending - starting)
       end
     end
 

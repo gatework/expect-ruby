@@ -103,4 +103,81 @@ class RedactorTest < Minitest::Test
     filter.append("raw-pending")
     assert_equal "#<Expect::Redactor>", filter.inspect
   end
+
+  def test_seeded_binary_chunks_match_a_naive_union_of_full_and_partial_spans
+    random = Random.new(5000)
+    250.times do |index|
+      alphabet = index.even? ? [97, 98] : [0, 97, 98, 99, 128, 255]
+      input = Array.new(random.rand(0..120)) { alphabet.sample(random: random) }.pack("C*")
+      patterns = Array.new(random.rand(0..6)) do
+        Array.new(random.rand(1..8)) { alphabet.sample(random: random) }.pack("C*")
+      end
+      chunks = []
+      offset = 0
+      while offset < input.bytesize
+        chunks << input.byteslice(offset, random.rand(1..15))
+        offset += chunks.last.bytesize
+      end
+      [false, true].each do |partial|
+        expected = reference_redact(input, patterns, partial: partial)
+        [[input], input.bytes.map(&:chr), chunks].each_with_index do |partition, kind|
+          filter = Expect::Redactor.new(patterns)
+          actual = partition.map { |chunk| filter.append(chunk) }.join.b + filter.finish(partial: partial)
+          assert_equal expected, actual, "seed=5000 case=#{index} partition=#{kind} partial=#{partial}"
+          assert_empty filter.finish(partial: partial)
+        end
+      end
+    end
+  end
+
+  def test_long_overlaps_merge_across_chunks_without_repeating_markers
+    filter = Expect::Redactor.new(["a" * 1024, "a" * 32, "ab"])
+    output = +""
+    256.times { output << filter.append("a" * 17) }
+    output << filter.append("b!") << filter.finish
+    assert_equal "[FILTERED]!", output
+  end
+
+  def test_rule_removal_keeps_hidden_pending_bytes_and_partial_finish_is_separate
+    filter = Expect::Redactor.new(%w[aaaa long-pattern])
+    assert_empty filter.append("aaaaa")
+    filter.patterns = ["abc"]
+    assert_equal "[FILTERED]", filter.append("ab")
+    assert_empty filter.finish # 新的疑似前缀紧邻已隐藏区域，不能重复输出替换标记。
+
+    filter = Expect::Redactor.new(%w[aaaa long-pattern])
+    assert_empty filter.append("aaaaa")
+    filter.patterns = []
+    assert_equal "[FILTERED]!", filter.append("!") + filter.finish
+  end
+
+  private
+
+  # 独立参考模型：逐偏移比较完整秘密，再合并布尔掩码；不复用生产代码的扫描/输出实现。
+  def reference_redact(input, patterns, partial:)
+    hidden = Array.new(input.bytesize, false)
+    patterns.each do |pattern|
+      input.bytesize.times do |offset|
+        next unless input.byteslice(offset, pattern.bytesize) == pattern
+
+        pattern.bytesize.times { |length| hidden[offset + length] = true }
+      end
+      next unless partial
+
+      (1...pattern.bytesize).each do |length|
+        next unless input.end_with?(pattern.byteslice(0, length))
+
+        ((input.bytesize - length)...input.bytesize).each { |offset| hidden[offset] = true }
+      end
+    end
+    output = +"".b
+    input.bytes.each_with_index do |byte, offset|
+      if hidden[offset]
+        output << "[FILTERED]" if offset.zero? || !hidden[offset - 1]
+      else
+        output << byte
+      end
+    end
+    output
+  end
 end
