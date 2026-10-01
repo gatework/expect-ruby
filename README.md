@@ -7,7 +7,8 @@ IO、同时监听多个会话和转接人工交互。交互能力参考 [Expect.
 的属性、关键字参数和代码块。
 
 要求 **Ruby 3.4+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由
-RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 模块和 `Expect::Session` 会话，不修改标准库的 `IO#expect`。
+RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 模块和 `Expect::Session` 会话，不修改标准库的
+`IO#expect`。
 
 源码中的解释性注释主要使用中文；欢迎用中文或英文提交 issue 和 PR，参与方式见 [贡献指南](CONTRIBUTING.md)。
 
@@ -70,14 +71,14 @@ end
 所有设置显式传给会话，不提供全局默认配置或配置基类。需要应用默认值时，由调用方保存 Hash，再用关键字展开传入。
 各会话独立保存以下属性，修改不会影响其他会话；借用的 logger、transcript 和输出对象可以由调用方共享。
 
-| 会话属性 | 默认值 | 行为 |
-|---|---|---|
-| `timeout` | `nil` | `session.expect` 的默认相对期限；`nil` 无限、`0` 轮询 |
-| `write_timeout` | `nil` | 写入遇到背压或 EINTR 时的等待期限 |
-| `buffer_limit` | `nil` | 匹配缓冲保留的尾部字节数；正整数或 `nil` |
-| `logger` | `nil` | 借用支持 `add` / `debug?` 的诊断 logger |
-| `transcript` | `nil` | 借用支持 `write` 的接收字节记录目标 |
-| `outputs` | `[]` | 原始接收字节的转发目标数组，可包含 `$stdout` |
+| 会话属性        | 默认值 | 行为                                                  |
+|-----------------|--------|-------------------------------------------------------|
+| `timeout`       | `nil`  | `session.expect` 的默认相对期限；`nil` 无限、`0` 轮询 |
+| `write_timeout` | `nil`  | 写入遇到背压或 EINTR 时的等待期限                     |
+| `buffer_limit`  | `nil`  | 匹配缓冲保留的尾部字节数；正整数或 `nil`              |
+| `logger`        | `nil`  | 借用支持 `add` / `debug?` 的诊断 logger               |
+| `transcript`    | `nil`  | 借用支持 `write` 的接收字节记录目标                   |
+| `outputs`       | `[]`   | 原始接收字节的转发目标数组，可包含 `$stdout`          |
 
 这些属性都有同名 reader/writer；非法赋值不改变原设置。超时必须有限且非负。输出数组在设置时复制，读取时也返回副本。
 
@@ -98,7 +99,8 @@ session.expect(timeout: 1)             # 仅收集输出，直到超时或 EOF
 ```
 
 字符串始终按字面匹配，包括 `"-i"`、`"-re"`、`"timeout"` 和 `"eof"`；正则直接使用 Ruby `Regexp`
-。按声明顺序选择第一个能匹配的模式，不按它们在文本中的位置排序。返回不可变 `Expect::Result`，`number` 为模式的 **1 起始序号**；超时、EOF 或 IO 错误时 `number` 为 `nil`。
+。按声明顺序选择第一个能匹配的模式，不按它们在文本中的位置排序。返回不可变 `Expect::Result`，`number` 为模式的 **1
+起始序号**；超时、EOF 或 IO 错误时 `number` 为 `nil`。
 判断成功使用 `matched?`，不能直接判断 Result 对象的真值。超时使用单调时钟。
 
 ```ruby
@@ -204,7 +206,8 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 ```
 
 `Expect.open` 支持可 `select` 的 File、管道、Socket 和 PTY，`writer:` 可指定独立写端。默认借用 IO，关闭会话不关闭原始 IO；
-`own: true` 转移关闭责任，初始化中的属性校验失败也会释放接管的 IO。未知关键字在 Ruby 调用入口拒绝，此时不接管 IO。`StringIO` 可以用作 transcript 和 outputs，不能用作读取会话。
+`own: true` 转移关闭责任，初始化中的属性校验失败也会释放接管的 IO。未知关键字在 Ruby 调用入口拒绝，此时不接管 IO。`StringIO`
+可以用作 transcript 和 outputs，不能用作读取会话。
 
 用于写入或转接的真实 IO 应在首次写入前设置 `io.sync = true`，并由调用方保证没有未刷新的 Ruby 写缓冲；`write_nonblock`
 可能先阻塞刷新已有缓冲，这一步不受本库的 IO 等待期限控制。已有缓冲应在交付给本库前由调用方排空，库不会绕过缓冲或改变字节顺序。
@@ -212,17 +215,17 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 `readable_sessions` 返回可读的会话对象数组，不消费数据、不包含已关闭会话、同一会话只返回一次。默认 `timeout: 0`；`nil`
 无限等待。同一会话应由一个读取者驱动，多会话共同监听使用 `Expect.expect`。
 
-| API                                                           | 行为                                         |
-|---------------------------------------------------------------|----------------------------------------------|
-| `write(*objects)`                                             | 通过 `to_s` 转换并写入所有字节，返回字节数   |
-| `puts(*objects)`                                              | 原生 IO 风格的换行、数组递归和 `nil` 返回值  |
-| `session << object`                                           | 写入并返回会话，可链式追加                   |
-| `send_slow(*objects, delay:)`                                 | 每个字符之前等待指定秒数，同时收集返回数据   |
-| `buffer` / `buffer=`                                          | 获取副本 / 复制字节并应用上限                |
-| `clear_buffer`                                                | 清空缓冲并返回旧内容                         |
-| `to_io.console_mode` / `to_io.console_mode=`                   | 原生终端模式快照与恢复                       |
-| `to_io.winsize` / `to_io.winsize=`                             | 原生 `[rows, cols]` 窗口尺寸接口              |
-| `slave` / `tty_name` / `to_io` / `writer` / `fileno` / `tty?` | 底层 IO 和终端信息                           |
+| API                                                           | 行为                                        |
+|---------------------------------------------------------------|---------------------------------------------|
+| `write(*objects)`                                             | 通过 `to_s` 转换并写入所有字节，返回字节数  |
+| `puts(*objects)`                                              | 原生 IO 风格的换行、数组递归和 `nil` 返回值 |
+| `session << object`                                           | 写入并返回会话，可链式追加                  |
+| `send_slow(*objects, delay:)`                                 | 每个字符之前等待指定秒数，同时收集返回数据  |
+| `buffer` / `buffer=`                                          | 获取副本 / 复制字节并应用上限               |
+| `clear_buffer`                                                | 清空缓冲并返回旧内容                        |
+| `to_io.console_mode` / `to_io.console_mode=`                  | 原生终端模式快照与恢复                      |
+| `to_io.winsize` / `to_io.winsize=`                            | 原生 `[rows, cols]` 窗口尺寸接口            |
+| `slave` / `tty_name` / `to_io` / `writer` / `fileno` / `tty?` | 底层 IO 和终端信息                          |
 
 `send_slow` 在每次写入后只检查已经可读的回复，不附加固定等待；返回时不保证收齐最后一个字符引发的回复，完整对话请继续使用
 `expect`。
@@ -256,7 +259,8 @@ end
 ```
 
 三类目标职责独立：`logger` 接收结构化诊断；`transcript` 仅记录实际读取的接收字节；`outputs` 原样转发协议字节。
-所有目标均由调用方创建和关闭。`transcript = nil` 停止记录，替换前先交付旧流过滤尾部；`write_transcript` 补写记录，返回 `nil`，
+所有目标均由调用方创建和关闭。`transcript = nil` 停止记录，替换前先交付旧流过滤尾部；`write_transcript` 补写记录，返回
+`nil`，
 不发送到子进程。writer 必须返回实际接受的字节数，支持短写；路径与 callable 不会自动包装成 writer。
 
 `logger` 采用 Ruby Logger 的 `add` / `debug?` 协议，默认 `nil` 禁用。Logger 自己决定级别、格式及输出位置；可直接注入兼容该协议的
@@ -395,13 +399,13 @@ Artifacts 下载。
 运行时依赖只在 `expect-pty.gemspec` 声明，开发依赖放在 Gemfile 的 `development` / `test` 组；安装或使用本库不会引入
 Minitest、Rake、RuboCop 及发布工具的依赖。
 
-| 运行时模块    | Gem           | 用途                     |
-|---------------|---------------|--------------------------|
-| `io/console`  | `io-console`  | 终端模式和窗口大小       |
-| `IO#wait_readable` | Ruby 3.2 内置 | IO 可读等待，无独立 gem |
-| `logger`      | `logger`      | 标准诊断协议与级别       |
-| `stringio`    | `stringio`    | Ruby `puts` 语义         |
-| `pty`         | Ruby 自带扩展 | POSIX 伪终端，无独立 gem |
+| 运行时模块         | Gem           | 用途                     |
+|--------------------|---------------|--------------------------|
+| `io/console`       | `io-console`  | 终端模式和窗口大小       |
+| `IO#wait_readable` | Ruby 3.2 内置 | IO 可读等待，无独立 gem  |
+| `logger`           | `logger`      | 标准诊断协议与级别       |
+| `stringio`         | `stringio`    | Ruby `puts` 语义         |
+| `pty`              | Ruby 自带扩展 | POSIX 伪终端，无独立 gem |
 
 仅发布 RubyGems 使用 `ruby script/release.rb --rubygems-only`，直接复用本机已有的 Gem 登录状态；添加 `--dry-run`
 可先完成本地检查、测试、构建和安装验证。需要同时创建 GitHub Release 时使用 `ruby script/release.rb`，也可以在 GitHub Actions

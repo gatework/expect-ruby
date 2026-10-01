@@ -39,7 +39,8 @@ fixtures 位于 `test/fixtures/ssh_scripts/`，都不修改目标文件或设备
 测试关闭终端回显和 shell 行编辑，使用单引号传输完整脚本，保留中文 UTF-8 和引号，避免 C locale 的交互式 readline
 把高位字节当快捷键执行。末尾仍等待 shell 提示符，确认可以继续执行下一项。
 
-另外执行两条日志控制命令：关闭日志后输出 `UNLOGGED_OUTPUT`，再由调用者用 `File.open(path, "ab")` 追加日志并输出 `APPEND_OK`。最后发送延迟输出及退出命令，只调用
+另外执行两条日志控制命令：关闭日志后输出 `UNLOGGED_OUTPUT`，再由调用者用 `File.open(path, "ab")` 追加日志并输出
+`APPEND_OK`。最后发送延迟输出及退出命令，只调用
 `soft_close`，确认 `SESSION_FINAL_TAIL` 确实在关闭过程中写入日志。
 
 ## 检查和输出文件
@@ -50,10 +51,12 @@ fixtures 位于 `test/fixtures/ssh_scripts/`，都不修改目标文件或设备
 - `report.json`：主机、用户、远端 TTY、每项脚本输出和退出码、校验结果、SSH 退出码、日志字节数及 SHA-256。
 
 只有认证后的输出进入日志。Expect 自动记录接收字节，发送的脚本名称和摘要由 `write_transcript` 明确写入，便于审核执行了哪个
-fixture；fixture 文件中的原文可以用报告内的 SHA-256 核对。通过 `session.transcript = file` 接入标准 `write` 目标，`session.transcript = nil` 暂停记录；文件模式、权限及关闭由调用者管理。诊断则独立通过 `logger:` 接入标准 Ruby Logger，默认关闭。
+fixture；fixture 文件中的原文可以用报告内的 SHA-256 核对。通过 `session.transcript = file` 接入标准 `write` 目标，
+`session.transcript = nil` 暂停记录；文件模式、权限及关闭由调用者管理。诊断则独立通过 `logger:` 接入标准 Ruby Logger，默认关闭。
 
 共 11 项日志/流程检查：完整输出、执行顺序、即时
-flush、stdout/stderr、UTF-8、非零退出后恢复、覆盖模式、暂停记录、追加模式、关闭前尾部输出、密码不出现在日志中。另校验日志条目没有重复，停止记录和关闭会话不会关闭借用的文件，调用者的 `File.open` 块负责关闭。
+flush、stdout/stderr、UTF-8、非零退出后恢复、覆盖模式、暂停记录、追加模式、关闭前尾部输出、密码不出现在日志中。另校验日志条目没有重复，停止记录和关闭会话不会关闭借用的文件，调用者的
+`File.open` 块负责关闭。
 
 成功返回进程退出码 0。认证失败、超时、脚本输出错误、意外退出码或日志校验失败均返回非零，并在有报告目录时留下 `passed: false`
 的报告。不用仅看到终端输出就判断成功；请查看最终 PASS 和 `report.json` 的 `passed`。
@@ -102,7 +105,8 @@ bundle exec rake test:ssh_auto
 
 该示例自动登录 `SSH_HOST`（默认 `127.0.0.1`），用本库的 `write` / `expect` 顺序执行文件顶部的 `COMMANDS`，显示真实输出并检查退出码。默认命令为
 `id`、`uname -srm`、`sw_vers`、`df -h /` 和 `uptime`，不修改系统设置；可直接修改数组来下发其他 macOS/POSIX shell 命令。它不依赖
-`test/support`，`ScriptProbe.check` 只供测试脚本使用。四个 SSH 入口通过 `examples/support/ssh.rb` 共用环境参数验证、隐藏密码读取和 SSH 参数构造；该辅助模块不会自行连接。
+`test/support`，`ScriptProbe.check` 只供测试脚本使用。四个 SSH 入口通过 `examples/support/ssh.rb` 共用环境参数验证、隐藏密码读取和
+SSH 参数构造；该辅助模块不会自行连接。
 
 执行成功后默认进入 `interact`，输入有回显，Ctrl-C 发给远端前台任务；`exit` 或 Ctrl-] 结束连接。使用 `--no-interact` 则执行完退出。
 `EXPECT_LOG_DIR` 可指定日志目录，默认 `tmp/ssh-auto/`；每次创建独立 0600 日志，记录命令和远端输出，认证前关闭日志。此使用示例不生成

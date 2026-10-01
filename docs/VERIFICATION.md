@@ -20,18 +20,21 @@ ActiveSupport Logger 实际注入和本机 OpenSSH 离线配置解析再次通�
 ## 2026-10-01：0.7.0 标准库与会话接口重构
 
 以 `4ab73da` 为基线，按明确允许不兼容变更的要求审查全库逻辑、资源生命周期、命名、重复实现、测试与打包。
-删除外层会话门面、全局 Configuration、日志路径所有权和 stty 辅助进程；公开真实 Session，使用显式操作参数、标准 Logger、File.open 与 io-console。
+删除外层会话门面、全局 Configuration、日志路径所有权和 stty 辅助进程；公开真实 Session，使用显式操作参数、标准
+Logger、File.open 与 io-console。
 匹配、原始字节、流式秘密过滤、背压游标和有限进程回收仍由各自的业务合同约束；本轮不把代码减少直接宣称为吞吐提升。
 
 复审中用回归先观察到失败，再修复以下边界：
 
 - 公开 Session 定义值相等时，Matcher 的暂停状态、嵌套转接缓冲以及 Relay 的来源、活跃集合和背压目标仍须按对象身份归属。
 - `Expect.open(own: true)` 在 Session 分配前被中断时也关闭所属 IO；借用 IO 保持打开，原异常身份保留。
-- 块已有主异常时，关闭冲刷中的 transcript writer 或 Logger formatter StandardError 不覆盖它；无主异常仍抛清理错误，新发生的 Interrupt/SystemExit 不被吞掉。
+- 块已有主异常时，关闭冲刷中的 transcript writer 或 Logger formatter StandardError 不覆盖它；无主异常仍抛清理错误，新发生的
+  Interrupt/SystemExit 不被吞掉。
 - SSH 示例的 known_hosts 路径同时遵守 argv 和 ssh_config 两层解析，含空格、引号和反斜杠时仍是一个原路径。
 
 移除的测试对应已删除的门面、配置和辅助进程接口；PID、GC、EINTR、原始字节、错误归属、终端恢复和短写恢复继续验收。
-API 门禁按具体方法的 YARD 标注识别内部协议，保留缺文档/缺签名的负向检查；测试替身恢复原生 Class 方法查找链，避免随机执行顺序污染 API 检查。
+API 门禁按具体方法的 YARD 标注识别内部协议，保留缺文档/缺签名的负向检查；测试替身恢复原生 Class 方法查找链，避免随机执行顺序污染
+API 检查。
 
 ### 独立环境验收
 
@@ -39,14 +42,15 @@ API 门禁按具体方法的 YARD 标注识别内部协议，保留缺文档/缺
 最低 Ruby 与 Linux 使用同一份 101 文件源码归档；Linux 容器禁用网络，从本地 Gem 缓存安装依赖。
 四组最终 `bash script/ci` 均退出 0：
 
-| 环境 | Minitest | 其余门禁 |
-| --- | --- | --- |
-| macOS arm64 / Ruby 3.4.11 | 428 runs / 7,170 assertions；零失败、错误、跳过 | 74 文件 RuboCop、API/RBS、示例对话、五组 benchmark smoke、Gem 构建与两种隔离安装 |
-| macOS arm64 / Ruby 4.0.7 | 同上 | 同上 |
-| Linux aarch64 / Ruby 3.4.11（bookworm） | 同上 | 同上 |
-| Linux aarch64 / Ruby 4.0.7（bookworm） | 同上 | 同上 |
+| 环境                                    | Minitest                                        | 其余门禁                                                                         |
+|-----------------------------------------|-------------------------------------------------|----------------------------------------------------------------------------------|
+| macOS arm64 / Ruby 3.4.11               | 428 runs / 7,170 assertions；零失败、错误、跳过 | 74 文件 RuboCop、API/RBS、示例对话、五组 benchmark smoke、Gem 构建与两种隔离安装 |
+| macOS arm64 / Ruby 4.0.7                | 同上                                            | 同上                                                                             |
+| Linux aarch64 / Ruby 3.4.11（bookworm） | 同上                                            | 同上                                                                             |
+| Linux aarch64 / Ruby 4.0.7（bookworm）  | 同上                                            | 同上                                                                             |
 
-两种安装分别为普通 RubyGems 和仅声明 expect-pty 的 Bundler 应用，验证实际加载路径、包清单、运行依赖、终端模式/尺寸、真实本地 PTY 对话、过滤与缓冲合同。
+两种安装分别为普通 RubyGems 和仅声明 expect-pty 的 Bundler 应用，验证实际加载路径、包清单、运行依赖、终端模式/尺寸、真实本地
+PTY 对话、过滤与缓冲合同。
 首次 Ruby 4.0 离线安装因目录未携带新运行依赖 Logger 而失败；代码测试已通过。修正 script/ci 仅复制本次解析的非默认运行依赖缓存后，四组完整重跑均通过。
 没有通过宿主 GEM_PATH 或开发依赖绕过安装边界。
 
@@ -54,23 +58,27 @@ API 门禁按具体方法的 YARD 标注识别内部协议，保留缺文档/缺
 包括不可变事件、原始匹配、transcript 脱敏和借用目标不关闭。未将 ActiveSupport 加入 Gem 依赖。
 macOS OpenSSH 10.2p1 与 Linux OpenSSH 9.2p1 的 `ssh -G` 对五类特殊字符路径均返回原路径；这些检查不建立连接。
 
-对已构建的 `expect-pty-0.7.0.gem` 执行 `script/release.rb --dry-run --rubygems-only --artifact ...`，核对版本、说明、包内容和权限；不查询或上传远端。
+对已构建的 `expect-pty-0.7.0.gem` 执行 `script/release.rb --dry-run --rubygems-only --artifact ...`
+，核对版本、说明、包内容和权限；不查询或上传远端。
 完整 CI 与 dry-run 日志在本地忽略目录 `tmp/conventions-review/`，源码清单为其中的 `manifest.json`。
 
-本次仅提交本地 Git，不推送、不打标签、不发布 RubyGems。未运行远端 GitHub Actions、真实 SSH 登录、网络设备或生产持续负载；本地 PTY 与离线配置解析不代替这些证据。
+本次仅提交本地 Git，不推送、不打标签、不发布 RubyGems。未运行远端 GitHub Actions、真实 SSH 登录、网络设备或生产持续负载；本地
+PTY 与离线配置解析不代替这些证据。
 
 ## 2026-09-30：0.6.1 本地提交准备
 
 将两轮审查的兼容性修复和性能优化归入 0.6.1，同步版本常量、README 安装示例和发布文档；0.6.0 迁移说明及历史证据保持原记录。
 
-以 `961c4d8` 的独立工作树应用完整待提交差异，确认与主工作区一致后，在 macOS arm64、Ruby 4.0.7、Bundler 4.0.20 执行 `bash script/ci`：
+以 `961c4d8` 的独立工作树应用完整待提交差异，确认与主工作区一致后，在 macOS arm64、Ruby 4.0.7、Bundler 4.0.20 执行
+`bash script/ci`：
 
 - 421 tests / 7,235 assertions，零失败、错误及跳过；71 个 Ruby 文件 lint 通过。
 - API 文档/RBS 覆盖、RBS validate、示例对话和五组 benchmark smoke 通过。
 - 构建 `expect-pty-0.6.1.gem`，普通 RubyGems 与最小 Bundler 应用的隔离安装、真实本地 PTY 和核心契约检查通过。
 - 对同一构建包执行 `script/release.rb --dry-run --rubygems-only --artifact ...`，版本、发布说明、包内容和权限校验通过；该路径不调用远端查询或上传。
 
-日志位于 `tmp/local-release-0.6.1/ci-macos40.log` 与 `dry-run.log`。本次版本整理未改变运行逻辑，先前 Ruby 3.4/Linux 矩阵见下文，本次未重复执行。
+日志位于 `tmp/local-release-0.6.1/ci-macos40.log` 与 `dry-run.log`。本次版本整理未改变运行逻辑，先前 Ruby 3.4/Linux
+矩阵见下文，本次未重复执行。
 本次仅提交本地 Git，不推送 GitHub、不创建标签、不发布 RubyGems。
 
 ## 2026-09-30：逻辑与性能复审
@@ -81,10 +89,10 @@ macOS OpenSSH 10.2p1 与 Linux OpenSSH 9.2p1 的 `ssh -G` 对五类特殊字符�
 
 ### 可靠性修复
 
-| 问题 | 修复前证据 | 修复与回归 |
-| --- | --- | --- |
-| EOF 后继续等待，后续 select 错误覆盖已结束来源 | 故障注入后返回的来源错误地指向已结束会话，其 EOF 与尾部结果被覆盖 | 只更新活跃来源，保留原始异常及已结束来源的 Result 对象 |
-| 发送前嵌套写入的进度被算入当前命令 | 诊断回调或 `to_s` 向第二条真实管道写入 2 字节后超时，当前命令未发送却报告 `bytes_written == 2` | 当前 write 报告 0，cause 保留嵌套进度 2；确认命令管道为空，随后完整重试成功 |
+| 问题                                           | 修复前证据                                                                                     | 修复与回归                                                                  |
+|------------------------------------------------|------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| EOF 后继续等待，后续 select 错误覆盖已结束来源 | 故障注入后返回的来源错误地指向已结束会话，其 EOF 与尾部结果被覆盖                              | 只更新活跃来源，保留原始异常及已结束来源的 Result 对象                      |
+| 发送前嵌套写入的进度被算入当前命令             | 诊断回调或 `to_s` 向第二条真实管道写入 2 字节后超时，当前命令未发送却报告 `bytes_written == 2` | 当前 write 报告 0，cause 保留嵌套进度 2；确认命令管道为空，随后完整重试成功 |
 
 上述缺陷先观察到失败再修复；另补 EOF 重复来源去重/顺序、批量就绪反序下的身份/声明顺序保护。
 本轮共增加 4 个测试方法，原有随机脱敏差分断言全部保留。日志与安全复审未发现其他有充分证据的新缺陷，
@@ -99,12 +107,12 @@ macOS OpenSSH 10.2p1 与 Linux OpenSSH 9.2p1 的 `ssh -G` 对五类特殊字符�
 运行代码冻结后，以 detached worktree 的 `961c4d8` 加本次完整相关差异验证，另以相同源码归档验证最低 Ruby 和 Linux。
 四组 `bash script/ci` 均退出 0：
 
-| 环境 | 测试 | 其他检查 |
-| --- | --- | --- |
-| macOS arm64，Ruby 3.4.11 | 421 runs / 7,235 assertions，零失败、错误及跳过 | 71 文件 RuboCop；API/RBS；示例；五组 benchmark smoke；Gem 构建及普通/Bundler 隔离安装与真实本地 PTY |
-| macOS arm64，Ruby 4.0.7 | 同上 | 同上 |
-| Linux aarch64，Ruby 3.4.11，Docker bookworm | 同上 | 同上 |
-| Linux aarch64，Ruby 4.0.7，Docker bookworm | 同上 | 同上 |
+| 环境                                        | 测试                                            | 其他检查                                                                                            |
+|---------------------------------------------|-------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| macOS arm64，Ruby 3.4.11                    | 421 runs / 7,235 assertions，零失败、错误及跳过 | 71 文件 RuboCop；API/RBS；示例；五组 benchmark smoke；Gem 构建及普通/Bundler 隔离安装与真实本地 PTY |
+| macOS arm64，Ruby 4.0.7                     | 同上                                            | 同上                                                                                                |
+| Linux aarch64，Ruby 3.4.11，Docker bookworm | 同上                                            | 同上                                                                                                |
+| Linux aarch64，Ruby 4.0.7，Docker bookworm  | 同上                                            | 同上                                                                                                |
 
 日志为 `tmp/performance-review/ci-{macos34,macos40,linux34,linux40}.log`。Linux 禁用网络，从本地 Gem 缓存安装。
 macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显式指定 Homebrew Ruby 后才计入上表。
@@ -121,13 +129,13 @@ macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显�
 
 ### 失败证据与修复
 
-| 问题 | 修复前复现 | 修复 |
-|---|---|---|
-| fork 后延迟启动子进程 | 父进程创建 PTY、fork 子进程再 spawn，wait 返回 nil 且 PID 残留；期望退出码 7 并清空 PID | 登记 PID 时记录实际启动者，继承已有 PID 的副本仍保留原归属 |
-| 启动错误被清理错误覆盖 | fork 失败遇错误管道关闭失败、exec 失败遇 master 关闭失败，均错误返回 IOError | 复用 Cleanup.always 和逐端清理，保留原始 fork 错误及 SpawnError |
-| 会话/IO 值相等混淆身份 | 独立来源漏读、模式组错并、EOF 错派、就绪查询遗漏/多报；转接遗漏可写目标或选择错误停止来源 | 去重、分组、事件与就绪归属使用对象身份，保持声明顺序 |
-| 混合转义跨次调用漏检 | 同时注册字面 STOPS 和正则 STOP，首轮 ST 超时发出，后续 OPtail 未触发正则退出 | 超时排出尾部同步补入正则历史，保留 tail 供恢复 |
-| 自定义 writer 返回非法哨兵 | listener.write 返回 :wait_writable 时未抛 IOError | 仅真实 IO.write_nonblock 接受该哨兵，自定义 writer 仍校验字节计数 |
+| 问题                       | 修复前复现                                                                                | 修复                                                              |
+|----------------------------|-------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
+| fork 后延迟启动子进程      | 父进程创建 PTY、fork 子进程再 spawn，wait 返回 nil 且 PID 残留；期望退出码 7 并清空 PID   | 登记 PID 时记录实际启动者，继承已有 PID 的副本仍保留原归属        |
+| 启动错误被清理错误覆盖     | fork 失败遇错误管道关闭失败、exec 失败遇 master 关闭失败，均错误返回 IOError              | 复用 Cleanup.always 和逐端清理，保留原始 fork 错误及 SpawnError   |
+| 会话/IO 值相等混淆身份     | 独立来源漏读、模式组错并、EOF 错派、就绪查询遗漏/多报；转接遗漏可写目标或选择错误停止来源 | 去重、分组、事件与就绪归属使用对象身份，保持声明顺序              |
+| 混合转义跨次调用漏检       | 同时注册字面 STOPS 和正则 STOP，首轮 ST 超时发出，后续 OPtail 未触发正则退出              | 超时排出尾部同步补入正则历史，保留 tail 供恢复                    |
+| 自定义 writer 返回非法哨兵 | listener.write 返回 :wait_writable 时未抛 IOError                                         | 仅真实 IO.write_nonblock 接受该哨兵，自定义 writer 仍校验字节计数 |
 
 新增 13 条回归并扩展 1 条非法写入计数回归；对应缺陷均先观察修复前失败，再执行修复后验证。
 真实管道和 fork 验证来源身份及子进程归属；故障注入验证清理错误优先级。可写唤醒用 Queue 协调，避免依赖固定 sleep。
@@ -137,16 +145,18 @@ macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显�
 
 四组均执行项目 `bash script/ci`，退出码为 0：
 
-| 平台 | Ruby | Minitest | 其他门禁 |
-|---|---|---|---|
-| macOS arm64 | 3.4.11 | 417 runs / 7,206 assertions，零失败、错误及跳过 | 71 文件 RuboCop、API/RBS、示例、五组 benchmark smoke、Gem 构建及隔离安装通过 |
-| macOS arm64 | 4.0.7 | 同上 | 同上 |
-| Linux aarch64，Docker bookworm | 3.4.11 | 同上 | 同上 |
-| Linux aarch64，Docker bookworm | 4.0.7 | 同上 | 同上 |
+| 平台                           | Ruby   | Minitest                                        | 其他门禁                                                                     |
+|--------------------------------|--------|-------------------------------------------------|------------------------------------------------------------------------------|
+| macOS arm64                    | 3.4.11 | 417 runs / 7,206 assertions，零失败、错误及跳过 | 71 文件 RuboCop、API/RBS、示例、五组 benchmark smoke、Gem 构建及隔离安装通过 |
+| macOS arm64                    | 4.0.7  | 同上                                            | 同上                                                                         |
+| Linux aarch64，Docker bookworm | 3.4.11 | 同上                                            | 同上                                                                         |
+| Linux aarch64，Docker bookworm | 4.0.7  | 同上                                            | 同上                                                                         |
 
 普通 RubyGems 与最小 Bundler 应用分别验证真实本地 PTY、运行时依赖、RBS 分发及开发文件未混入包。
-最低 Ruby 和 Linux 使用相同源码快照，Linux 容器禁用网络并从本地缓存安装依赖；macOS 3.4 副本位于仓库之外，确认实际扫描了 71 个 Ruby 文件。
-日志位于忽略目录 `tmp/deep-review/ci-{macos34,macos40,linux34,linux40}.log`。既有 Process 替换、宿主 RDoc 重定义及无依赖上限提示没有影响退出状态。
+最低 Ruby 和 Linux 使用相同源码快照，Linux 容器禁用网络并从本地缓存安装依赖；macOS 3.4 副本位于仓库之外，确认实际扫描了 71
+个 Ruby 文件。
+日志位于忽略目录 `tmp/deep-review/ci-{macos34,macos40,linux34,linux40}.log`。既有 Process 替换、宿主 RDoc
+重定义及无依赖上限提示没有影响退出状态。
 
 未运行远端 GitHub Actions、x86_64、真实 SSH/网络设备或完整性能评估。benchmark smoke 只证明小规模工作负载正确，不作为性能提升结论。
 本节是本地源码与安装包验收记录，没有推送、打标签或发布 RubyGems。
@@ -160,7 +170,8 @@ macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显�
 - 404 tests / 7,150 assertions，零失败、错误及跳过；71 个 Ruby 文件 lint 通过。
 - API 文档/RBS 覆盖检查、RBS validate、示例对话及五组 benchmark smoke 通过。
 - 构建 `expect-pty-0.6.0.gem`，普通 RubyGems 与最小 Bundler 应用的隔离安装、运行时依赖和真实本地 PTY 验证通过。
-- 对同一构建包执行 `script/release.rb --dry-run --rubygems-only --artifact tmp/ci/expect-pty-0.6.0.gem`，版本、发布说明、包元数据及源码内容校验通过。
+- 对同一构建包执行 `script/release.rb --dry-run --rubygems-only --artifact tmp/ci/expect-pty-0.6.0.gem`
+  ，版本、发布说明、包元数据及源码内容校验通过。
 
 测试中有既有 Process 方法替换警告，构建时有宿主 RDoc 常量重定义警告；上述命令均退出 0。
 本次仅验证当前 macOS Ruby 4.0.7 环境；此前 Ruby 3.4/Linux 的矩阵记录见下文，本次未重新执行。
@@ -174,12 +185,12 @@ macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显�
 
 本轮最终本地 `bash script/ci` 结果：
 
-| 环境 | Ruby | 测试 | 风格及安装 |
-|---|---|---|---|
-| macOS arm64 | 3.4.11 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
-| macOS arm64 | 4.0.7 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+| 环境                           | Ruby   | 测试                                           | 风格及安装                                        |
+|--------------------------------|--------|------------------------------------------------|---------------------------------------------------|
+| macOS arm64                    | 3.4.11 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+| macOS arm64                    | 4.0.7  | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
 | Linux aarch64，Docker bookworm | 3.4.11 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
-| Linux aarch64，Docker bookworm | 4.0.7 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+| Linux aarch64，Docker bookworm | 4.0.7  | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
 
 四组均通过 API 文档/签名覆盖检查、RBS validate、示例对话、五组基准 smoke、Gem 构建和安装后的真实本地 PTY 对话。
 新增回归证明模块方法遗漏文档或签名、Result 构造签名缺失会使门禁失败；同时验证结果便捷读取、谓词配置、
@@ -199,17 +210,18 @@ macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显�
 
 ### 最终检查
 
-| 环境 | 完整 `bash script/ci` |
-|---|---|
-| macOS arm64，Ruby 4.0.7 | 394 测试 / 7,026 断言；70 文件 lint；API 文档/RBS 覆盖与签名验证；五组 benchmark smoke；Gem 构建及普通 Ruby/Bundler 隔离安装，全部通过 |
-| macOS arm64，Ruby 3.4.11 | 同上，在 `/tmp/expect-modernization-macos34-final` 独立副本执行，70 文件确实参与 lint |
-| Linux aarch64，Ruby 4.0.7 | 同上，现有 `ruby:4.0-bookworm` 容器独立源码副本及依赖 |
-| Linux aarch64，Ruby 3.4.11 | 同上，在上述 Linux 容器中从官方 Ruby 3.4.11 源码构建独立运行时 |
+| 环境                       | 完整 `bash script/ci`                                                                                                                  |
+|----------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| macOS arm64，Ruby 4.0.7    | 394 测试 / 7,026 断言；70 文件 lint；API 文档/RBS 覆盖与签名验证；五组 benchmark smoke；Gem 构建及普通 Ruby/Bundler 隔离安装，全部通过 |
+| macOS arm64，Ruby 3.4.11   | 同上，在 `/tmp/expect-modernization-macos34-final` 独立副本执行，70 文件确实参与 lint                                                  |
+| Linux aarch64，Ruby 4.0.7  | 同上，现有 `ruby:4.0-bookworm` 容器独立源码副本及依赖                                                                                  |
+| Linux aarch64，Ruby 3.4.11 | 同上，在上述 Linux 容器中从官方 Ruby 3.4.11 源码构建独立运行时                                                                         |
 
 Linux Ruby 3.4.11 源码包 SHA256：`5c22be44524312b3d433d68739bcc530633b1da5ef8ba0afa0a37680da17d3de`，构建前已校验。
 macOS 安装了 Homebrew ruby@3.4，未切换默认 Ruby；测试 Gem 依赖放在忽略目录下。
 四种环境的 Ctrl-C 专项各重复 50 次通过；处理器退出码验证信号，不依赖可被终端刷新丢弃的输出。
-第一次 macOS 3.4 副本位于仓库 tmp，RuboCop 因继承排除规则扫描 0 文件，因此该轮 lint **不计作证明**；上表采用移至 `/tmp` 后的完整复验。
+第一次 macOS 3.4 副本位于仓库 tmp，RuboCop 因继承排除规则扫描 0 文件，因此该轮 lint **不计作证明**；上表采用移至 `/tmp`
+后的完整复验。
 
 最终日志：`tmp/modernization/ci-{macos40,macos34,linux40,linux34}-final.log`。
 公开 Expect 实例方法与改前快照比较无新增/缺失；Result 的破坏性调整另见 MIGRATION。
@@ -222,21 +234,20 @@ RBS 验证只证明声明有效且覆盖公开方法，不代表全库方法体�
 同一 macOS Ruby 4.0.7，改前/后均 10 次迭代、3 个样本，表中使用中位数；耗时比小于 1 表示本次样本更快。
 采样较小，耗时不作为稳定性能提升的结论。拆分中发现临时目标数组可避免，已合并遍历；多目标转接分配比基线减少约 4.5%。
 
-| 工作负载 | 改后/改前耗时 | 分配对象数（改前 → 改后） |
-|---|---|---|
-| `stream/1048576/literal` | 0.958 | 4,441 → 4,481 |
-| `stream/1048576/regexp` | 1.038 | 14,691 → 14,731 |
-| `groups/32` | 0.985 | 2,891 → 2,891 |
-| `ready/32` | 1.055 | 1,661 → 1,671 |
-| `escape/none` | 0.981 | 151 → 161 |
-| `escape/literal` | 1.044 | 191 → 201 |
-| `escape/regexps` | 1.029 | 811 → 821 |
-| `mixed_targets` | 1.045 | 849,301 → 810,821 |
+| 工作负载                 | 改后/改前耗时 | 分配对象数（改前 → 改后） |
+|--------------------------|---------------|---------------------------|
+| `stream/1048576/literal` | 0.958         | 4,441 → 4,481             |
+| `stream/1048576/regexp`  | 1.038         | 14,691 → 14,731           |
+| `groups/32`              | 0.985         | 2,891 → 2,891             |
+| `ready/32`               | 1.055         | 1,661 → 1,671             |
+| `escape/none`            | 0.981         | 151 → 161                 |
+| `escape/literal`         | 1.044         | 191 → 201                 |
+| `escape/regexps`         | 1.029         | 811 → 821                 |
+| `mixed_targets`          | 1.045         | 849,301 → 810,821         |
 
 JSON 证据为 `tmp/modernization/{matching,relay}-{before,after}.json`；基线源码和原始差异同目录保存。
 
 未执行远程 GitHub Actions、x86_64、真实 SSH/网络设备或发布。上述 Linux 容器不等同于 GitHub Ubuntu runner。
-
 
 ## v0.5.2 改进计划 T00–T07（2026-09-27，本地实施阶段）
 
@@ -268,15 +279,15 @@ script/ci
 从基线建立独立 detached worktree `tmp/improvement-052/baseline`，只复制对应的新回归测试，逐文件重放旧行为。
 下表红灯为该基线的真实失败，绿灯为修复后同一测试文件的独立运行；全部使用 seed 20260927。
 
-| 任务 | 修改与回归文件 | 旧版失败证据 | 修复后结果（测试 / 断言） |
-| --- | --- | --- | --- |
-| T01 / F01 | `lib/expect.rb`、`session_resources.rb`、`test/initialization_failure_test.rb` | 6 项失败：PTY 未关闭、open 用 NoMethodError 覆盖原中断 | 6 / 39，通过 |
-| T02 / F02 | 上述生命周期文件、`test/process_interruption_test.rb` | 3 项失败、4 项错误：EINTR 提前终止 wait/close，finalizer 未 detach，归属变化后仍 detach | 12 / 56，通过 |
-| T03 / F03 | `lib/expect.rb`、`interaction.rb`、`relay.rb`、`test/relay_reentrancy_test.rb` | 5 项失败：`abc` 变为 `abcabc`、重叠来源未拒绝、准备异常丢失缓冲 | 8 / 47，通过 |
-| T04 / F04 | `script/release.rb`、发布 workflow、`test/release_test.rb` | 2 项失败：中文说明在 US-ASCII 下无法解析，非法 UTF-8 缺少明确诊断 | 21 / 124，通过（含原有发布拒绝条件） |
-| T05 / C01–C02 | `lib/expect.rb`、`test/write_contract_test.rb` | 2 项失败：零计数依赖 watchdog 才退出，超出当前 chunk 的计数未拒绝 | 6 / 39，通过 |
-| T06 | `test/ownership_sequence_test.rb` | 组合回归，非新增独立缺陷 | 6 / 161，通过 |
-| T07 | README、内部契约、CHANGELOG、本记录 | 保留所有原测试及原有 CI 门禁 | 见下方完整验证 |
+| 任务          | 修改与回归文件                                                                 | 旧版失败证据                                                                            | 修复后结果（测试 / 断言）            |
+|---------------|--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|--------------------------------------|
+| T01 / F01     | `lib/expect.rb`、`session_resources.rb`、`test/initialization_failure_test.rb` | 6 项失败：PTY 未关闭、open 用 NoMethodError 覆盖原中断                                  | 6 / 39，通过                         |
+| T02 / F02     | 上述生命周期文件、`test/process_interruption_test.rb`                          | 3 项失败、4 项错误：EINTR 提前终止 wait/close，finalizer 未 detach，归属变化后仍 detach | 12 / 56，通过                        |
+| T03 / F03     | `lib/expect.rb`、`interaction.rb`、`relay.rb`、`test/relay_reentrancy_test.rb` | 5 项失败：`abc` 变为 `abcabc`、重叠来源未拒绝、准备异常丢失缓冲                         | 8 / 47，通过                         |
+| T04 / F04     | `script/release.rb`、发布 workflow、`test/release_test.rb`                     | 2 项失败：中文说明在 US-ASCII 下无法解析，非法 UTF-8 缺少明确诊断                       | 21 / 124，通过（含原有发布拒绝条件） |
+| T05 / C01–C02 | `lib/expect.rb`、`test/write_contract_test.rb`                                 | 2 项失败：零计数依赖 watchdog 才退出，超出当前 chunk 的计数未拒绝                       | 6 / 39，通过                         |
+| T06           | `test/ownership_sequence_test.rb`                                              | 组合回归，非新增独立缺陷                                                                | 6 / 161，通过                        |
+| T07           | README、内部契约、CHANGELOG、本记录                                            | 保留所有原测试及原有 CI 门禁                                                            | 见下方完整验证                       |
 
 F01 使用真实 IO/PTY 并注入构造与 close 故障；F02 包含真实孩子的 waitpid 中断、真实 fork 非创建者检查，
 连续中断和 GC 路径另外使用受控时钟与全部系统调用替身。假 PID 不进入真实信号或回收调用。
@@ -289,17 +300,17 @@ hard_close 后读取真实状态并确认 ECHILD。测试时钟与系统调用�
 
 ### 完整验证与发布预演
 
-新增 40 项测试，最终本机 `bundle exec rake`：66 个文件 lint 通过，**386 项 / 6,965 断言**，退出码 0。
+新增 40 项测试，最终本机 `bundle exec rake`：66 个文件 lint 通过， **386 项 / 6,965 断言**，退出码 0。
 三个固定 seed 的默认套件也各为 386 / 6,965，退出码均为 0，无失败、错误或跳过。
 原有 cleanup/process/terminal_cleanup、relay/interact/diagnostics、io/timeout/deadline 定向组合也全部通过。
 
-| 环境 | 完整 `script/ci` |
-| --- | --- |
-| macOS 26.6.2 arm64，Ruby 4.0.6 | 退出 0；386 / 6,965；66 文件 lint 通过 |
-| Linux aarch64，Ruby 3.2.11，`ruby:3.2` | 退出 0；386 / 6,965；66 文件 lint 通过 |
-| Linux aarch64，Ruby 3.3.12，`ruby:3.3` | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| 环境                                        | 完整 `script/ci`                       |
+|---------------------------------------------|----------------------------------------|
+| macOS 26.6.2 arm64，Ruby 4.0.6              | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 3.2.11，`ruby:3.2`      | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 3.3.12，`ruby:3.3`      | 退出 0；386 / 6,965；66 文件 lint 通过 |
 | Linux aarch64，Ruby 3.4.10，`ruby:3.4-slim` | 退出 0；386 / 6,965；66 文件 lint 通过 |
-| Linux aarch64，Ruby 4.0.6，`ruby:4.0` | 退出 0；386 / 6,965；66 文件 lint 通过 |
+| Linux aarch64，Ruby 4.0.6，`ruby:4.0`       | 退出 0；386 / 6,965；66 文件 lint 通过 |
 
 Linux 验证以只读源目录挂载到临时容器，复制到独立 `/work` 后，使用同一 Gemfile.lock、Bundler 4.0.17 与
 `BUNDLE_FROZEN=true` 执行原始 `script/ci`。3.4 slim 的 git 和构建工具仅安装在该临时容器。
@@ -316,7 +327,8 @@ LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ruby -EUTF-8 script/release.rb --dry-run --a
 两次退出 0、验证相同 Gem 字节，生成的中文 release-notes 逐字节相同。该候选只是中途本地验证物，不是可发布版本。
 新增 CLI 测试另覆盖独立 fixture 项目的非法 UTF-8 拒绝，以及 C/UTF-8 两种外部编码；不会访问发布服务。
 当前 Unreleased 保留本轮变更，正式发布前仍需维护者自行归档并选择版本，原有拒绝条件不绕过。
-最后对当前工作区再次执行 C locale dry-run，按预期退出 1 并提示 `Move Unreleased changes into the versioned changelog before releasing`。
+最后对当前工作区再次执行 C locale dry-run，按预期退出 1 并提示
+`Move Unreleased changes into the versioned changelog before releasing`。
 
 ### 同类检查、兼容性与剩余范围
 
@@ -338,36 +350,50 @@ G1–G6 由上述红绿回归与实际 locale dry-run 覆盖；G7–G8 由默认
 
 ## 0.5.0 公共字节过滤器发布前复核（2026-09-27）
 
-基线为已发布的 `5a219f7`（0.4.0）。本轮公开 `Expect::Redactor`，新增 11 项回归，覆盖独立加载不引入 PTY、完整文本与流尾部策略、跨分片与重叠秘密、自定义替换标记、空规则、输入复制、无效更新原子性及安全摘要；现有会话日志与诊断继续复用该过滤器。
+基线为已发布的 `5a219f7`（0.4.0）。本轮公开 `Expect::Redactor`，新增 11 项回归，覆盖独立加载不引入
+PTY、完整文本与流尾部策略、跨分片与重叠秘密、自定义替换标记、空规则、输入复制、无效更新原子性及安全摘要；现有会话日志与诊断继续复用该过滤器。
 
-从基线建立独立检出，仅带入本轮改动。macOS arm64、Ruby 4.0.6、Bundler 4.0.17 下执行 `ruby script/release.rb --dry-run`，330 项测试、1,894 条断言全部通过，无失败、错误或跳过；RuboCop 检查 59 个文件无违规。四组基准 smoke、Gem 构建、普通 RubyGems 与最小 Bundler 应用的隔离安装均通过，安装后实际调用公共完整文本和分块过滤接口。
+从基线建立独立检出，仅带入本轮改动。macOS arm64、Ruby 4.0.6、Bundler 4.0.17 下执行 `ruby script/release.rb --dry-run`，330
+项测试、1,894 条断言全部通过，无失败、错误或跳过；RuboCop 检查 59 个文件无违规。四组基准 smoke、Gem 构建、普通 RubyGems 与最小
+Bundler 应用的隔离安装均通过，安装后实际调用公共完整文本和分块过滤接口。
 
-此处记录本地发布预演；远端 Linux/macOS 与 Ruby 3.2/3.3/3.4/4.0 矩阵、标签及下载包校验，以 0.5.0 发布提交对应的 GitHub Actions 与 Release 为准。
+此处记录本地发布预演；远端 Linux/macOS 与 Ruby 3.2/3.3/3.4/4.0 矩阵、标签及下载包校验，以 0.5.0 发布提交对应的 GitHub
+Actions 与 Release 为准。
 
 ## 0.4.0 发布前复核（2026-09-27）
 
-发布前新增七项回归：总期限在文本回调后到达时，已知 EOF 先于剩余活跃来源的超时派发；覆盖日志路径前交付旧尾部，冲刷失败不能提前截断新文件；嵌套诊断等待保留外层匹配结果；日志回调轮换目标时正确交接所有权；诊断回调新建或再次写入另一方向时，尾部仍交给旧目标。各项均先复现失败，再验证修复，纯相对超时行为保持不变。
+发布前新增七项回归：总期限在文本回调后到达时，已知 EOF
+先于剩余活跃来源的超时派发；覆盖日志路径前交付旧尾部，冲刷失败不能提前截断新文件；嵌套诊断等待保留外层匹配结果；日志回调轮换目标时正确交接所有权；诊断回调新建或再次写入另一方向时，尾部仍交给旧目标。各项均先复现失败，再验证修复，纯相对超时行为保持不变。
 
-从 `b5e9159` 建立独立检出，只带入本轮 30 个功能、测试、文档和版本文件，排除主工作区的其他格式化改动。macOS arm64、Ruby 4.0.6、Bundler 4.0.17 下执行 `ruby script/release.rb --dry-run`，319 项测试、1,820 条断言全部通过，RuboCop 检查 58 个文件无违规；四组基准 smoke、Gem 构建、两种隔离安装和新增接口检查均通过。
+从 `b5e9159` 建立独立检出，只带入本轮 30 个功能、测试、文档和版本文件，排除主工作区的其他格式化改动。macOS arm64、Ruby
+4.0.6、Bundler 4.0.17 下执行 `ruby script/release.rb --dry-run`，319 项测试、1,820 条断言全部通过，RuboCop 检查 58
+个文件无违规；四组基准 smoke、Gem 构建、两种隔离安装和新增接口检查均通过。
 
 此处记录本地发布预演，远端矩阵、标签和发布产物以 0.4.0 对应提交的 GitHub Actions 与 Release 为准；下节保留改进阶段的双平台验证结果。
 
 ## 底层引擎补齐与模块注释（2026-09-27）
 
-基线为已发布的 `b5e9159`（0.3.3），本节记录 0.4.0 发布准备前的底层改进验证。范围限于底层 Expect：裁剪计数、生命周期及错误契约、等待总期限、诊断目标、按字节流脱敏、增量字面扫描及多来源基准。未引入厂商实现、SSH 编排或新的 Reactor。
+基线为已发布的 `b5e9159`（0.3.3），本节记录 0.4.0 发布准备前的底层改进验证。范围限于底层
+Expect：裁剪计数、生命周期及错误契约、等待总期限、诊断目标、按字节流脱敏、增量字面扫描及多来源基准。未引入厂商实现、SSH 编排或新的
+Reactor。
 
-新增 43 项回归，覆盖外部回收、借用 IO、关闭重试、缓冲裁剪与正常消费、绝对期限限制各类重置、已知 EOF、EINTR、分片与重叠秘密、二进制诊断、流尾部交付，以及字面缓存与全量扫描的操作序列对照。
+新增 43 项回归，覆盖外部回收、借用 IO、关闭重试、缓冲裁剪与正常消费、绝对期限限制各类重置、已知
+EOF、EINTR、分片与重叠秘密、二进制诊断、流尾部交付，以及字面缓存与全量扫描的操作序列对照。
 
-| 当前环境 | 完整 `bash script/ci` |
-| --- | --- |
-| macOS arm64，Ruby 4.0.6，Bundler 4.0.17 | 312 项 / 1,784 条断言，0 失败、错误、跳过；RuboCop 58 文件无违规 |
-| Linux aarch64，Ruby 3.2.11，Bundler 4.0.17，当前源码独立容器副本 | 同上；容器使用冻结锁文件及独立 Linux 依赖 |
+| 当前环境                                                         | 完整 `bash script/ci`                                            |
+|------------------------------------------------------------------|------------------------------------------------------------------|
+| macOS arm64，Ruby 4.0.6，Bundler 4.0.17                          | 312 项 / 1,784 条断言，0 失败、错误、跳过；RuboCop 58 文件无违规 |
+| Linux aarch64，Ruby 3.2.11，Bundler 4.0.17，当前源码独立容器副本 | 同上；容器使用冻结锁文件及独立 Linux 依赖                        |
 
-两套检查均通过对话示例、四组基准 smoke、Gem 构建、普通 RubyGems 和最小 Bundler 应用的隔离安装。安装后检查新增总期限、裁剪计数、内部过滤器和结构化诊断实际工作，并确认 Logger 等开发依赖没有泄漏到运行时。macOS 构建存在宿主 RDoc 7/8 重复常量警告，命令退出状态为 0。
+两套检查均通过对话示例、四组基准 smoke、Gem 构建、普通 RubyGems 和最小 Bundler 应用的隔离安装。安装后检查新增总期限、裁剪计数、内部过滤器和结构化诊断实际工作，并确认
+Logger 等开发依赖没有泄漏到运行时。macOS 构建存在宿主 RDoc 7/8 重复常量警告，命令退出状态为 0。
 
-审阅 `lib/expect` 全部 14 个模块，补齐其中 12 个模块的中文职责、方法及复杂流程注释；加载入口和版本文件保留现有充分说明。以注释编辑开始时的源码快照对照，15 个库文件的 Ripper 语法树（忽略位置）完全相同，逐行差异也仅为注释或空白。工作区其他 Ruby 格式化修正同样核对语法树等价。
+审阅 `lib/expect` 全部 14 个模块，补齐其中 12 个模块的中文职责、方法及复杂流程注释；加载入口和版本文件保留现有充分说明。以注释编辑开始时的源码快照对照，15
+个库文件的 Ripper 语法树（忽略位置）完全相同，逐行差异也仅为注释或空白。工作区其他 Ruby 格式化修正同样核对语法树等价。
 
-另通过 14 个文档 Ruby 片段语法解析、工作流 actionlint（未启用 shellcheck）和 `git diff --check`。两轮同机匹配性能对照、真实管道来源容量与阻塞目标检查见 [性能基准](PERFORMANCE.md#持续字面扫描验证2026-09-27)；1,000 管道来源只证明该受控场景，不代表真实设备吞吐或长期运行。
+另通过 14 个文档 Ruby 片段语法解析、工作流 actionlint（未启用 shellcheck）和 `git diff --check`
+。两轮同机匹配性能对照、真实管道来源容量与阻塞目标检查见 [性能基准](PERFORMANCE.md#持续字面扫描验证2026-09-27)；1,000
+管道来源只证明该受控场景，不代表真实设备吞吐或长期运行。
 
 本轮未运行远端 CI、Ruby 3.3/3.4 或真实 SSH/设备测试，未提交、推送或发布。以下历史记录不作为本轮验收结果。
 

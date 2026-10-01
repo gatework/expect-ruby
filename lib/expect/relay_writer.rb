@@ -5,6 +5,7 @@ module Expect
   # 只借用目标，不 dup 描述符，也不负责读取；所有就绪等待统一交给 Relay 调度。
   # @api private
   class RelayWriter
+    # target 始终借用；deadline 是本轮背压预算，不表示整块数据已交付。
     attr_reader :target, :deadline
 
     # data 在本游标存活期间由上层保持不变，offset 始终以实际交付的字节数计量。

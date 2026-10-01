@@ -5,6 +5,7 @@ module Expect
   # 本对象只暂借未处理输入；读缓冲、发送进度与转义回调分开保存，避免重入时重复交付。
   # @api private
   class Relay
+    # 只串行化来源归属交接；Session 的其他操作仍须由调用方避免并发修改。
     OWNERSHIP_MUTEX = Mutex.new
     private_constant :OWNERSHIP_MUTEX
 

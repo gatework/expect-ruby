@@ -24,6 +24,7 @@ module Expect
 
   # PTY 创建后命令启动失败。
   class SpawnError < StandardError; end
+
   # 同一个来源不能同时交给两个 Relay。
   class ReentrancyError < StandardError; end
 

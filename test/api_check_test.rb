@@ -20,7 +20,9 @@ class APICheckTest < ExpectTest
   end
 
   def test_included_public_methods_cannot_escape_documentation_or_signature_checks
-    extension = Module.new { def undocumented_api = nil }
+    extension = Module.new do
+      def undocumented_api = nil
+    end
     Expect::Session.include(extension)
     builder = APICheck.prepare
     error = assert_raises(RuntimeError) { APICheck.validate_type!(Expect::Session, builder) }
@@ -35,7 +37,9 @@ class APICheckTest < ExpectTest
   end
 
   def test_documented_internal_protocol_does_not_need_a_public_signature
-    extension = Module.new { def internal_protocol = nil }
+    extension = Module.new do
+      def internal_protocol = nil
+    end
     Expect::Session.include(extension)
     builder = APICheck.prepare
     object = YARD::CodeObjects::MethodObject.new(YARD::Registry.at("Expect::Session"), :internal_protocol)

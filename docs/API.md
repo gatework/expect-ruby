@@ -18,14 +18,18 @@ Session 构造器不接收命令或操作参数。同一会话只能启动一次
 `spawn`、`open` 无块时返回 Session，有块时返回块结果并确保按 `graceful:` 关闭；非局部返回也清理。
 清理中的 StandardError 不覆盖本次作用域已有的主异常；没有主异常时照常传播。新发生的 Interrupt/SystemExit 不会被清理包装吞掉。
 
-`close(graceful: false)` 最终硬关闭兜底，返回 nil；`soft_close(timeout: 15, term_timeout: 1)` 收取尾部、关闭句柄并最多发送 TERM；
-`hard_close(timeout: 0.2)` 关闭句柄后分阶段等待、TERM、KILL。后两者和 `wait(timeout: nil)` 返回真实 `Process::Status` 或 nil。
+`close(graceful: false)` 最终硬关闭兜底，返回 nil；`soft_close(timeout: 15, term_timeout: 1)` 收取尾部、关闭句柄并最多发送
+TERM；
+`hard_close(timeout: 0.2)` 关闭句柄后分阶段等待、TERM、KILL。后两者和 `wait(timeout: nil)` 返回真实 `Process::Status` 或
+nil。
 借用 IO 不随会话关闭。输入 EOF、IO 关闭与子进程退出分别由 `eof?`、`closed?`、`process_status` 表示。
 
 ## 匹配与回调
 
-`session.expect(*patterns, timeout: session.timeout, deadline: nil, consume: true, reset_timeout_on_read: false)` 返回不可变 `Expect::Result`。
-`Expect.expect` 使用相同操作关键字，另加 `from:` 指定默认来源；其 timeout 默认 nil。模式为 String、Regexp、`:eof` 或 `:timeout`，
+`session.expect(*patterns, timeout: session.timeout, deadline: nil, consume: true, reset_timeout_on_read: false)` 返回不可变
+`Expect::Result`。
+`Expect.expect` 使用相同操作关键字，另加 `from:` 指定默认来源；其 timeout 默认 nil。模式为 String、Regexp、`:eof` 或
+`:timeout`，
 位置模式与声明块不能混用。`number` 为从 1 开始的文本模式序号或 nil，事件声明也占序号；使用 `matched?` 判断成功。
 
 ```ruby
@@ -48,25 +52,27 @@ result => { number:, captures: }
 `reset_timeout_on_read: true` 使每次读取重置本轮相对期限。`deadline` 是单调时钟绝对秒数，不被输入或回调延长。
 IO 期限不打断用户代码或单次正则；不可信正则应使用 Ruby `Regexp` 自身的 timeout。
 
-Result 字段为 `number`、`error`、`match`、`before`、`after`、`session`、`captures`。对象、文本及捕获数组均不可变，未参与捕获为 nil。
+Result 字段为 `number`、`error`、`match`、`before`、`after`、`session`、`captures`。对象、文本及捕获数组均不可变，未参与捕获为
+nil。
 错误为 nil、`:timeout`、`:eof` 或原始 IO 异常；来源会话与异常不复制、不冻结。使用 `matched?`、`timeout?`、`eof?` 查询，
 使用 `to_h`、位置/键模式解构或 `with` 构造新结果；没有字段 writer 或 `to_a`。
 会话的 `last_result`、`before`、`after`、`match`、`match_number`、`captures`、`error` 读取最近结果。
 
-匹配、捕获按原始字节保存；文本显示时先 `dup` 再 `force_encoding`。固定 UTF-8 正则等待尾部字符收齐，非法编码抛出 EncodingError。
+匹配、捕获按原始字节保存；文本显示时先 `dup` 再 `force_encoding`。固定 UTF-8 正则等待尾部字符收齐，非法编码抛出
+EncodingError。
 成功默认消费匹配前缀，超时保留缓冲，EOF 将余下内容放入 before 并清空缓冲。EOF 不表示子进程已经退出。
 
 ## 会话属性与读写
 
 不提供全局配置或配置对象。构造器、工厂显式接受以下设置，会话可通过同名 reader/writer 修改；非法更新保留原值。
 
-| 设置 | 默认值 | 语义 |
-|---|---|---|
-| timeout、write_timeout | nil | 非负有限秒数；nil 无限，0 非阻塞尝试 |
-| buffer_limit | nil | 正整数尾部字节上限，nil 无限 |
-| logger | nil | 借用 Ruby Logger 的 add/debug? 协议 |
-| transcript | nil | 借用 write 协议，记录真实接收字节 |
-| outputs | [] | 复制可写目标数组，原样转发接收字节 |
+| 设置                   | 默认值 | 语义                                 |
+|------------------------|--------|--------------------------------------|
+| timeout、write_timeout | nil    | 非负有限秒数；nil 无限，0 非阻塞尝试 |
+| buffer_limit           | nil    | 正整数尾部字节上限，nil 无限         |
+| logger                 | nil    | 借用 Ruby Logger 的 add/debug? 协议  |
+| transcript             | nil    | 借用 write 协议，记录真实接收字节    |
+| outputs                | []     | 复制可写目标数组，原样转发接收字节   |
 
 操作参数 `raw`、`consume`、`reset_timeout_on_read`、`graceful` 不持久化为会话设置。
 `buffer` 返回副本，`buffer=` 复制并应用上限，`clear_buffer` 移交并清空缓冲；`buffer_discarded_bytes` 累计窗口裁剪量，匹配消费不计入。
@@ -79,7 +85,8 @@ Result 字段为 `number`、`error`、`match`、`before`、`after`、`session`�
 
 ## 诊断、脱敏与转接
 
-`logger=` 接收 nil 或支持 `add` / `debug?` 的对象，直接兼容 Ruby Logger 及符合此协议的 ActiveSupport logger；不依赖 ActiveSupport。
+`logger=` 接收 nil 或支持 `add` / `debug?` 的对象，直接兼容 Ruby Logger 及符合此协议的 ActiveSupport logger；不依赖
+ActiveSupport。
 Logger 自身控制级别和格式。INFO 记录生命周期/匹配，DEBUG 增加收发字节；`add` 接收冻结事件 Hash
 `{ event:, pid:, fd:, message: }` 和 progname `"Expect"`，message 字符串也冻结。
 
@@ -96,9 +103,11 @@ logger、transcript、outputs 一律借用，显式关闭冲刷过滤尾部，�
 `pending_output?` 表示尚未交付数据；再次转接同源会话继续发送，不重放成功前缀；更换 outputs 不改变已排队字节的目标。
 同源递归转接抛出 ReentrancyError；转义回调可嵌套匹配，所有来源状态按对象身份隔离。
 
-`interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)` 临时建立双向转接，退出后恢复 outputs、转义和本地终端模式。
+`interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)` 临时建立双向转接，退出后恢复
+outputs、转义和本地终端模式。
 `output: nil` 使用默认输出，`escape: nil` 不注册退出序列；显式 false 不是缺省值，非法输出或转义会在转发前报错。
 `raw: false` 将终端设置留给调用方。transcript、logger 及自定义 writer 同步执行，应及时返回。
 
 `Expect.monotonic` 读取单调时钟，`Expect.duration` 校验秒数，`Expect.readable_sessions(*sources, timeout: 0)` 返回就绪来源。
-Matcher、Relay、资源账本和标为 `@api private` 的 Session 协作方法不是用户契约。RBS 覆盖公开声明；`rbs validate` 不验证 Ruby 方法体。
+Matcher、Relay、资源账本和标为 `@api private` 的 Session 协作方法不是用户契约。RBS 覆盖公开声明；`rbs validate` 不验证 Ruby
+方法体。

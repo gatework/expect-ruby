@@ -12,6 +12,7 @@ module Expect
 
   interface _Logger
     def add: (Integer, diagnostic_event, String) -> untyped
+
     def debug?: () -> bool
   end
 
@@ -21,128 +22,195 @@ module Expect
 
   class SpawnError < StandardError
   end
+
   class ReentrancyError < StandardError
   end
+
   class WriteTimeout < IOError
     attr_reader bytes_written: Integer
+
     def initialize: (?String message, ?bytes_written: Integer) -> void
   end
 
   def self.spawn: (
-    *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
-    ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
-    ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
-  ) -> Session
-                | [A] (
-                  *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
-                  ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
-                  ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
-                ) { (Session) -> A } -> A
+      *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
+      ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+      ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+    ) -> Session
+    | [A] (
+      *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
+      ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+      ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+    ) { (Session) -> A } -> A
+
   def self.open: (
-    IO io, ?writer: IO, ?own: bool, ?graceful: bool,
-    ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
-    ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
-  ) -> Session
-               | [A] (
-                 IO io, ?writer: IO, ?own: bool, ?graceful: bool,
-                 ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
-                 ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
-               ) { (Session) -> A } -> A
+      IO io, ?writer: IO, ?own: bool, ?graceful: bool,
+      ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+      ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+    ) -> Session
+    | [A] (
+      IO io, ?writer: IO, ?own: bool, ?graceful: bool,
+      ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+      ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+    ) { (Session) -> A } -> A
+
   def self.continue: (?reset_timeout: bool) -> (:continue | :continue_without_reset)
+
   def self.monotonic: () -> Float
+
   def self.duration: (duration?) -> Float?
+
   def self.readable_sessions: (*Session sessions, ?timeout: duration?) -> Array[Session]
+
   def self.interconnect: (*Session sessions, ?timeout: duration?) -> Session?
+
   def self.expect: (
-    *pattern patterns, ?from: (Session | Array[Session]), ?timeout: duration?, ?deadline: duration?,
-    ?consume: bool, ?reset_timeout_on_read: bool
-  ) ?{ (PatternList) -> untyped } -> Result
+      *pattern patterns, ?from: (Session | Array[Session]), ?timeout: duration?, ?deadline: duration?,
+      ?consume: bool, ?reset_timeout_on_read: bool
+    ) ?{ (PatternList) -> untyped } -> Result
 
   class Session
     def initialize: (
-      ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
-      ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
-    ) -> void
+        ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+        ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+      ) -> void
+
     def spawn: (*String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool) -> Session
+
     def expect: (
-      *pattern patterns, ?timeout: duration?, ?deadline: duration?, ?consume: bool, ?reset_timeout_on_read: bool
-    ) ?{ (PatternList) -> untyped } -> Result
+        *pattern patterns, ?timeout: duration?, ?deadline: duration?, ?consume: bool, ?reset_timeout_on_read: bool
+      ) ?{ (PatternList) -> untyped } -> Result
+
     def after: () -> String?
+
     def before: () -> String?
+
     def match: () -> String?
+
     def alive?: () -> bool
+
     def closed?: () -> bool
+
     def eof?: () -> bool
+
     def tty?: () -> bool
+
     def pending_output?: () -> bool
+
     def buffer: () -> String
+
     def buffer=: (String value) -> void
+
     def clear_buffer: () -> String
+
     def buffer_discarded_bytes: () -> Integer
+
     def captures: () -> Array[String?]
+
     def command: () -> Array[String]?
+
     def error: () -> result_error
+
     def exit_code: () -> Integer?
+
     def fileno: () -> Integer?
+
     def pid: () -> Integer?
+
     def match_number: () -> Integer?
+
     def last_result: () -> Result?
+
     def slave: () -> IO?
+
     def tty_name: () -> String?
+
     def to_io: () -> IO
+
     def writer: () -> IO
+
     def process_status: () -> Process::Status?
+
     def inspect: () -> String
+
     def close: (?graceful: bool) -> nil
+
     def soft_close: (?timeout: duration?, ?term_timeout: duration) -> Process::Status?
+
     def hard_close: (?timeout: duration) -> Process::Status?
+
     def wait: (?timeout: duration?) -> Process::Status?
+
     def write: (*untyped objects) -> Integer
+
     def send_slow: (*untyped objects, delay: duration) -> Integer
+
     def puts: (*untyped objects) -> nil
+
     def <<: (untyped object) -> Session
+
     def on_sequence: ((String | Regexp | :eof) sequence) ?{ () -> untyped } -> Session
+
     def redact: (*String secrets) -> Session
+
     def interact: (?input: (IO | Session), ?escape: (String | Regexp)?, ?output: _Writer?, ?timeout: duration?, ?raw: bool) -> Session?
+
     def timeout: () -> Float?
+
     def timeout=: (duration? value) -> void
+
     def write_timeout: () -> Float?
+
     def write_timeout=: (duration? value) -> void
+
     def buffer_limit: () -> Integer?
+
     def buffer_limit=: (Integer? value) -> void
+
     def logger: () -> _Logger?
+
     def logger=: (_Logger? value) -> void
+
     def transcript: () -> _Writer?
+
     def transcript=: (_Writer? value) -> void
+
     def outputs: () -> Array[_Writer]
+
     def outputs=: (Array[_Writer] value) -> void
+
     def write_transcript: (*untyped objects) -> nil
   end
 
   class Result < Data
     def self.new: (
-      ?number: Integer?,
-      ?error: result_error,
-      ?match: String?,
-      ?before: String?,
-      ?after: String?,
-      ?session: Session?,
-      ?captures: Array[String?]
-    ) -> Result
-                | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
+        ?number: Integer?,
+        ?error: result_error,
+        ?match: String?,
+        ?before: String?,
+        ?after: String?,
+        ?session: Session?,
+        ?captures: Array[String?]
+      ) -> Result
+      | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
+
     def self.[]: (
-      ?number: Integer?,
-      ?error: result_error,
-      ?match: String?,
-      ?before: String?,
-      ?after: String?,
-      ?session: Session?,
-      ?captures: Array[String?]
-    ) -> Result
-                | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
+        ?number: Integer?,
+        ?error: result_error,
+        ?match: String?,
+        ?before: String?,
+        ?after: String?,
+        ?session: Session?,
+        ?captures: Array[String?]
+      ) -> Result
+      | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
+
     def self.members: () -> Array[Symbol]
+
     def self.inspect: () -> String
+
     def members: () -> Array[Symbol]
+
     attr_reader number: Integer?
     attr_reader error: result_error
     attr_reader match: String?
@@ -150,46 +218,62 @@ module Expect
     attr_reader after: String?
     attr_reader session: Session?
     attr_reader captures: Array[String?]
+
     def initialize: (
-      ?number: Integer?,
-      ?error: result_error,
-      ?match: String?,
-      ?before: String?,
-      ?after: String?,
-      ?session: Session?,
-      ?captures: Array[String?]
-    ) -> void
+        ?number: Integer?,
+        ?error: result_error,
+        ?match: String?,
+        ?before: String?,
+        ?after: String?,
+        ?session: Session?,
+        ?captures: Array[String?]
+      ) -> void
+
     def matched?: () -> bool
+
     def timeout?: () -> bool
+
     def eof?: () -> bool
+
     def deconstruct: () -> [Integer?, result_error, String?, String?, String?, Session?, Array[String?]]
+
     def with: (
-      ?number: Integer?,
-      ?error: result_error,
-      ?match: String?,
-      ?before: String?,
-      ?after: String?,
-      ?session: Session?,
-      ?captures: Array[String?]
-    ) -> Result
+        ?number: Integer?,
+        ?error: result_error,
+        ?match: String?,
+        ?before: String?,
+        ?after: String?,
+        ?session: Session?,
+        ?captures: Array[String?]
+      ) -> Result
+
     def to_h: () -> result_fields
-            | [K, V] () { (Symbol, untyped) -> [K, V] } -> Hash[K, V]
+      | [K, V] () { (Symbol, untyped) -> [K, V] } -> Hash[K, V]
+
     def deconstruct_keys: (Array[Symbol]?) -> Hash[Symbol, untyped]
   end
 
   class PatternList
     def initialize: (?(Session | Array[Session]) sessions, ?Array[pattern] patterns) -> void
+
     def on: ((String | Regexp) value, ?from: (Session | Array[Session])) ?{ (Session) -> untyped } -> PatternList
+
     def eof: (?from: (Session | Array[Session])) ?{ (Session) -> untyped } -> PatternList
+
     def timeout: () ?{ (Array[Session]) -> untyped } -> PatternList
   end
 
   class Redactor
     def self.redact: (String data, Array[String] patterns, ?replacement: String) -> String
+
     def initialize: (Array[String] patterns, ?replacement: String) -> void
+
     def patterns=: (Array[String]) -> void
+
     def append: (String) -> String
+
     def finish: (?partial: bool) -> String
+
     def inspect: () -> String
   end
 end

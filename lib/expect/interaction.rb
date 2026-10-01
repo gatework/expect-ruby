@@ -6,9 +6,12 @@ require_relative "relay"
 # 为会话补充人工接管和多路 IO 转接；核心会话定义位于 session.rb。
 module Expect
   # 为公开 Session 混入转义注册与人工接管接口；协作方法各自标记为内部协议。
+  # 宿主提供真实读写 IO、缓冲及 outputs；本模块保存转义、显示历史和待写游标。
+  # Relay 暂借输入缓冲并调度游标，Matcher 可在转义回调中临时接管，退出时归还未消费尾部。
   module Interaction
     # 正则没有“潜在部分匹配”接口，只保留有限历史；已转发的历史字节不能撤回。
     REGEXP_ESCAPE_HISTORY_LIMIT = 65_536
+    # 没有显式回调的转义仍用同一 callable 协议，返回 false 让 Relay 停止。
     STOP = -> { false }.freeze
     private_constant :REGEXP_ESCAPE_HISTORY_LIMIT, :STOP
 

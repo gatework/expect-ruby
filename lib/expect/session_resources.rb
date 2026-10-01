@@ -5,7 +5,9 @@ module Expect
   # IO 是否关闭与子进程是否退出分别记录；不能仅凭句柄状态清空 PID 或伪造退出状态。
   # @api private
   class SessionResources
+    # 缓存已取得的状态；被外部回收的进程仍保留未知状态，不伪造成功。
     attr_accessor :status
+    # own 控制句柄关闭责任，owner 控制进程回收责任；fork 后两者不能混为一谈。
     attr_reader :pid, :reader, :writer, :slave, :owner, :own
 
     # 记录创建资源的进程；fork 后的副本不能向父进程拥有的子进程发信号。

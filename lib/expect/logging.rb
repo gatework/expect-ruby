@@ -7,6 +7,8 @@ require_relative "redactor"
 # 脱敏只作用于诊断与接收记录，协议输出和匹配缓冲始终保留原始字节。
 module Expect
   # 会话诊断、接收记录和协议转发的独立输出接口。
+  # 宿主 Session 初始化目标与过滤器状态，并提供 pid、fileno 作为诊断元数据。
+  # 三种输出各有边界：Logger 接收事件，transcript 接收脱敏字节，outputs 接收原协议字节。
   module Logging
     # 调用方提供的诊断 Logger 与原始接收记录 writer，均由调用方管理生命周期。
     attr_reader :logger, :transcript

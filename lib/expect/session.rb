@@ -5,6 +5,8 @@ require_relative "interaction"
 
 module Expect
   # 一个真实 PTY 或 IO 会话；缓冲、最近结果和所属进程都保存在本对象中。
+  # SessionResources 保存可独立回收的资源账本；Matcher、Relay 仅在操作期间借用会话状态。
+  # 日志与协议目标属于调用方，显式关闭和 GC 均不得接管这些借用对象。
   class Session
     include Logging
     include Interaction
@@ -521,6 +523,7 @@ module Expect
       end
     end
 
+    # 只结束读取方向并冲刷接收记录；EOF 不代表子进程已经退出或写端已经关闭。
     def mark_eof
       @eof = true
       flush_transcript
