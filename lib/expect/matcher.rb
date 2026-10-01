@@ -135,9 +135,9 @@ module Expect
         stalled = (@stalled_matches[session] ||= { buffer: previous_buffer, patterns: [] })
         stalled[:patterns] << pattern
       end
-      @deadline = next_deadline if action == CONTINUE
+      @deadline = next_deadline if CONTINUE.equal?(action)
       # 总期限到达时回主循环先派发已知 EOF；仅相对期限延续原有立即超时语义。
-      return handle_timeout if action == CONTINUE_WITHOUT_RESET && expired? && !hard_expired?
+      return handle_timeout if CONTINUE_WITHOUT_RESET.equal?(action) && expired? && !hard_expired?
 
       :retry
     end
@@ -154,11 +154,12 @@ module Expect
       actions = @patterns.eof_patterns_for(session).map { |pattern| pattern.call(session) }
       return result unless actions.any? { |action| continuing?(action) }
 
-      @deadline = next_deadline if actions.include?(CONTINUE)
+      reset_timeout = actions.any? { |action| CONTINUE.equal?(action) }
+      @deadline = next_deadline if reset_timeout
       return result if @handled_eof.size == @sessions.size
 
       # 期限已过时不再扫描文本，但先派发已知 EOF；最后一个源结束不能被误报为超时。
-      @expired_eof_continuation = !actions.include?(CONTINUE) && expired?
+      @expired_eof_continuation = !reset_timeout && expired?
 
       :retry
     end
@@ -211,7 +212,7 @@ module Expect
     def active_sessions = @sessions.reject { |session| @handled_eof.key?(session) }
 
     # 只有约定的继续符号会驱动下一轮，普通回调返回值不会改变等待流程。
-    def continuing?(action) = [CONTINUE, CONTINUE_WITHOUT_RESET].include?(action)
+    def continuing?(action) = CONTINUE.equal?(action) || CONTINUE_WITHOUT_RESET.equal?(action)
 
     # 使用单调时钟计算期限；nil 一直表示无限等待，不受系统时间调整影响。
     # 每次重置都重新与总期限取较早者，避免连续输入或继续回调无限推迟结束。
@@ -227,10 +228,10 @@ module Expect
     def remaining = @deadline && [@deadline - Expect.monotonic, 0].max
 
     # 判断有限期限是否已到达；无限等待不会触发超时。
-    def expired? = @deadline && Expect.monotonic >= @deadline
+    def expired? = !@deadline.nil? && Expect.monotonic >= @deadline
 
     # 绝对总期限不受接收数据和 continue 重置；已知 EOF 仍按原顺序派发。
-    def hard_expired? = @hard_deadline && Expect.monotonic >= @hard_deadline
+    def hard_expired? = !@hard_deadline.nil? && Expect.monotonic >= @hard_deadline
 
     # select 失败时无法归属单个源，只更新仍监听的会话；已派发 EOF 的结果保持不变。
     def record_error(error)
@@ -242,7 +243,7 @@ module Expect
     def handle_timeout
       results = active_sessions.map { |session| session.record_error(:timeout) }
       action = @patterns.timeout_pattern&.call(active_sessions)
-      return results.first unless action == CONTINUE && !hard_expired?
+      return results.first unless CONTINUE.equal?(action) && !hard_expired?
 
       @deadline = next_deadline
       @polled = false

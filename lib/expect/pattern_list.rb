@@ -103,7 +103,7 @@ module Expect
 
     # 会话的业务相等性不能合并不同读取源；来源对象及排列都必须相同。
     def same_sessions?(previous, sessions)
-      previous && previous.size == sessions.size &&
+      !previous.nil? && previous.size == sessions.size &&
         previous.each_with_index.all? { |session, index| session.equal?(sessions[index]) }
     end
 

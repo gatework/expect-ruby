@@ -162,7 +162,7 @@ module Expect
     end
 
     # 转接总期限不因持续输入或某个目标的写入进展而重置。
-    def expired? = @deadline && Expect.monotonic >= @deadline
+    def expired? = !@deadline.nil? && Expect.monotonic >= @deadline
 
     # 背压源暂停吸收新输入，限制排队增长；作为写入目标的会话仍需读取以解除双向等待。
     def read_sources(pending)

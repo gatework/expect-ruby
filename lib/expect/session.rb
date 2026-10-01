@@ -60,8 +60,13 @@ module Expect
         from_child, to_parent = IO.pipe
         to_parent.close_on_exec = true
         @command = command.map { |part| part.dup.freeze }.freeze
-        child = fork { exec_child(command, env:, chdir:, from_child:, to_parent:) }
-        @resources.pid = child
+        # 原生 fork 返回后先登记 PID，再交付线程中断或终止，避免清理时遗漏新子进程。
+        child = Thread.handle_interrupt(Object => :never) do
+          @resources.pid = fork do
+            # 子进程不继承父侧登记临界区，执行前仍可立即响应异步异常。
+            Thread.handle_interrupt(Object => :immediate) { exec_child(command, env:, chdir:, from_child:, to_parent:) }
+          end
+        end
         to_parent.close
         @slave.close
         failure = from_child.read

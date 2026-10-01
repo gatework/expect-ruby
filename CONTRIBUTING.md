@@ -28,4 +28,5 @@ RuboCop 对生产代码保留有限的长度、ABC、嵌套、参数数量和分
 
 PR 请说明行为变化、运行过的命令及结果。不要把本机生成的 `tmp/`、日志或凭据加入提交。
 
-公开 API 必须有 YARD 文档与 RBS 声明；`bundle exec rake api` 检查文档覆盖、签名有效性和 README 版本引用。
+公开 API 必须有 YARD 文档与 RBS 声明；`bundle exec rake api` 检查文档与声明覆盖及 RBS 有效性。
+默认测试中的 `test/release_test.rb` 另行检查 README 安装示例的版本引用。

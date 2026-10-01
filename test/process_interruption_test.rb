@@ -4,6 +4,38 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class ProcessInterruptionTest < ExpectTest
+  def test_interruption_after_fork_cannot_leave_an_unregistered_child
+    failure = Interrupt.new("interrupted after fork")
+    assert_same(failure, interrupt_after_fork { |owner| owner.raise(failure) })
+  end
+
+  def test_thread_termination_after_fork_cannot_leave_an_unregistered_child
+    assert_nil interrupt_after_fork(&:kill)
+  end
+
+  def test_spawned_child_does_not_inherit_the_pid_registration_interrupt_mask
+    session_class = Class.new(Expect::Session) do
+      private
+
+      def exec_child(command, env:, **)
+        owner = Thread.current
+        interrupted = false
+        begin
+          Thread.new { owner.raise(Interrupt) }.join
+        rescue Interrupt
+          interrupted = true
+        end
+        super(command, env: env.merge("EXPECT_CHILD_INTERRUPTED" => interrupted.to_s), **)
+      end
+    end
+    session = session_class.new
+    @sessions << session
+    session.spawn(RbConfig.ruby, "--disable-gems", "-e", 'puts ENV.fetch("EXPECT_CHILD_INTERRUPTED")', raw: true)
+
+    assert session.expect("true\n", timeout: 2).matched?
+    assert session.soft_close(timeout: 2).success?
+  end
+
   def test_bound_resource_finalizer_accepts_the_gc_object_id
     reader, writer = IO.pipe
     @ios.push(reader, writer)
@@ -322,6 +354,57 @@ class ProcessInterruptionTest < ExpectTest
   end
 
   private
+
+  # 在原生 fork 返回、尚未登记 PID 时中断，不依赖生产代码行号或调度时机。
+  def interrupt_after_fork(&interrupt)
+    gate = Queue.new
+    owner = background do
+      gate.pop
+      Expect.spawn(RbConfig.ruby, "--disable-gems", "-e",
+                   'STDOUT.sync = true; Signal.trap("HUP", "IGNORE"); puts "ready"; sleep 60', raw: true)
+    end
+    owner.report_on_exception = false
+    session = pid = nil
+    trace = TracePoint.new(:c_return) do |point|
+      next unless point.method_id == :fork && point.self.is_a?(Expect::Session)
+      next unless point.return_value.is_a?(Integer)
+
+      trace.disable
+      session = point.self
+      @sessions << session
+      pid = point.return_value
+      # 先确认子进程忽略 HUP，避免 PTY 关闭恰好终止它而掩盖 PID 泄漏。
+      assert session.expect("ready", timeout: 2).matched?
+      background { interrupt.call(owner) }.join
+    end
+    result = trace.enable(target_thread: owner) do
+      gate << true
+      begin
+        bounded { owner.value }
+      rescue Interrupt => error
+        error
+      end
+    end
+    assert session.closed?
+    assert_nil session.pid
+    assert_raises(Errno::ECHILD) { Process.waitpid(pid, Process::WNOHANG) }
+    assert_instance_of Process::Status, session.process_status
+    result
+  ensure
+    trace&.disable
+    owner&.kill&.join if owner&.alive?
+    # 回归失败时仍回收尚未进入账本的真实子进程。
+    if pid
+      begin
+        unless Process.waitpid(pid, Process::WNOHANG)
+          Process.kill("KILL", pid)
+          Process.waitpid(pid)
+        end
+      rescue Errno::ECHILD, Errno::ESRCH
+        nil
+      end
+    end
+  end
 
   # 假 PID 只存在于系统调用全部被替换的作用域；ensure 先撤销 PID，再交给通用 teardown。
   def with_fake_child

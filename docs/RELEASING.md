@@ -5,8 +5,8 @@ GitHub Release，附带同一个 Gem 和 `SHA256SUMS`。生成文件统一放在
 
 ## 准备版本
 
-1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.0`，同步 README 中的安装版本和构建包路径。
-2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.0 - 2026-10-01`；可以保留空的 `Unreleased` 标题。
+1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.1`，同步 README 中的安装版本和构建包路径。
+2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.1 - 2026-10-01`；可以保留空的 `Unreleased` 标题。
 3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
 发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
@@ -50,9 +50,9 @@ GitHub Runner 不会继承本机的 Gem 登录状态。要在 Actions 发布 Rub
 Actions 中配置 `RUBYGEMS_API_KEY`，使用具有 `Push rubygem` 权限的发布 Key。
 
 ```sh
-git tag -a v0.7.0 -m 'Release v0.7.0'
-git push origin v0.7.0
-gh workflow run release.yml --ref v0.7.0 --repo gatework/expect-ruby
+git tag -a v0.7.1 -m 'Release v0.7.1'
+git push origin v0.7.1
+gh workflow run release.yml --ref v0.7.1 --repo gatework/expect-ruby
 ```
 
 也可以在 Actions → Release → Run workflow 选择对应版本标签。工作流仅支持手动触发，避免本地发布时出现第二次并发上传。
@@ -68,7 +68,7 @@ gh workflow run release.yml --ref v0.7.0 --repo gatework/expect-ruby
 CI 或 Release 下载的原包：
 
 ```sh
-ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.7.0.gem
+ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.7.1.gem
 ```
 
 将示例路径替换为实际输出的 `Artifact` 路径。`--artifact` 会跳过构建和测试，但仍核对包与当前源码是否一致；需要同时恢复

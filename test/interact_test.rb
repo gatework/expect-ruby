@@ -32,6 +32,51 @@ class InteractTest < ExpectTest
     [session, peer]
   end
 
+  def test_false_output_is_rejected_without_forwarding_buffered_bytes
+    session, = socket_session
+    source, screen = socket_session
+    session.buffer = "payload"
+    original = InteractProbe.settings(session)
+    source_original = InteractProbe.settings(source)
+
+    assert_raises(ArgumentError) { session.interact(input: source, output: false, raw: false, timeout: 0) }
+
+    assert_equal "payload", session.buffer
+    assert_equal :wait_readable, screen.read_nonblock(100, exception: false)
+    assert_equal original, InteractProbe.settings(session)
+    assert_equal source_original, InteractProbe.settings(source)
+  end
+
+  def test_nil_output_defaults_to_the_input_writer
+    session, = socket_session
+    source, screen = socket_session
+    session.buffer = "payload"
+
+    assert_nil session.interact(input: source, output: nil, raw: false, timeout: 0)
+    assert_equal "payload", screen.read_nonblock(100)
+  end
+
+  def test_false_escape_is_rejected_without_consuming_or_forwarding_input
+    session, remote = socket_session
+    source, = pipe_session
+    output = StringIO.new
+    session.buffer = "payload"
+    source.buffer = "typed"
+    original = InteractProbe.settings(session)
+    source_original = InteractProbe.settings(source)
+
+    assert_raises(ArgumentError) do
+      session.interact(input: source, output:, escape: false, raw: false, timeout: 0)
+    end
+
+    assert_equal "payload", session.buffer
+    assert_equal "typed", source.buffer
+    assert_empty output.string
+    assert_equal :wait_readable, remote.read_nonblock(100, exception: false)
+    assert_equal original, InteractProbe.settings(session)
+    assert_equal source_original, InteractProbe.settings(source)
+  end
+
   def test_changed_interact_regexp_does_not_match_previously_forwarded_input
     session, peer = socket_session
     input, keyboard = pipe_session

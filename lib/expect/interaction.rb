@@ -56,7 +56,7 @@ module Expect
     # 临时将输入、会话和输出相连，实现人工接管；结束时恢复双方输出目标、转义和终端模式。
     def interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)
       source = interact_source(input)
-      output ||= input.equal?($stdin) ? $stdout : input
+      output = input.equal?($stdin) ? $stdout : input if output.nil?
       saved_self = outputs
       saved_source = [source.outputs, source.sequences.dup]
       terminal_state = prepare_interact_terminal(source) if raw
@@ -64,7 +64,7 @@ module Expect
       # 临时建立“用户输入 -> 子进程 -> 显示输出”的双向连接，原监听关系在 ensure 中恢复。
       self.outputs = [display]
       source.outputs = [self]
-      source.on_sequence(escape) if escape
+      source.on_sequence(escape) unless escape.nil?
       Relay.new([self, source], timeout).run
     ensure
       begin

@@ -3,6 +3,63 @@
 require_relative "test_helper"
 
 class TimeoutTest < ExpectTest
+  def test_timeout_callback_cannot_impersonate_the_continue_symbol_with_equality
+    session, = pipe_session
+    action = Object.new
+    action.define_singleton_method(:==) { |other| other == Expect::CONTINUE }
+    calls = 0
+
+    result = session.expect(timeout: 0) do
+      timeout do
+        calls += 1
+        action if calls == 1
+      end
+    end
+
+    assert result.timeout?
+    assert_equal 1, calls
+  end
+
+  def test_match_callback_cannot_impersonate_a_continue_symbol_with_equality
+    session, = pipe_session
+    session.buffer = "ready"
+    action = Object.new
+    action.define_singleton_method(:==) { |other| [Expect::CONTINUE, Expect::CONTINUE_WITHOUT_RESET].include?(other) }
+
+    result = session.expect(timeout: 0) { on("ready") { action } }
+
+    assert result.matched?
+    assert_equal "ready", result.match
+  end
+
+  def test_eof_callback_cannot_reset_an_expired_budget_with_custom_equality
+    ended, writer = pipe_session
+    live, = pipe_session
+    writer.close
+    ended.read_available
+    action = Object.new
+    action.define_singleton_method(:==) { |other| other == Expect::CONTINUE }
+    now = 0.0
+
+    result = Expect.stub(:monotonic, -> { now }) do
+      Expect.expect(timeout: 1) do
+        eof(from: ended) do
+          now = 2.0
+          Expect.continue(reset_timeout: false)
+        end
+        eof(from: ended) do
+          live.buffer = "ready"
+          action
+        end
+        on("ready", from: live)
+      end
+    end
+
+    assert result.timeout?
+    assert_same live, result.session
+    assert_equal "ready", live.buffer
+  end
+
   def test_default_timeout_and_explicit_infinite_timeout
     session, writer = pipe_session
     session.timeout = 0.01

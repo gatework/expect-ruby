@@ -52,11 +52,11 @@ module APICheck
 
       raise "Undocumented public API: #{path}" unless object && !object.docstring.empty?
 
-      validate_signature!(type, method, path, owner, definition)
+      validate_declaration!(type, method, path, owner, definition)
     end
   end
 
-  def self.validate_signature!(type, method, path, owner, definition)
+  def self.validate_declaration!(type, method, path, owner, definition)
     # 不能用 Data.new 等基类占位声明冒充具体接口；模块声明由解析后的类型查找链确认。
     declared_in = definition.methods[method]&.defined_in&.to_s
     allowed = ["::#{type}"]

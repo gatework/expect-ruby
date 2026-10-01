@@ -97,6 +97,7 @@ logger、transcript、outputs 一律借用，显式关闭冲刷过滤尾部，�
 同源递归转接抛出 ReentrancyError；转义回调可嵌套匹配，所有来源状态按对象身份隔离。
 
 `interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)` 临时建立双向转接，退出后恢复 outputs、转义和本地终端模式。
+`output: nil` 使用默认输出，`escape: nil` 不注册退出序列；显式 false 不是缺省值，非法输出或转义会在转发前报错。
 `raw: false` 将终端设置留给调用方。transcript、logger 及自定义 writer 同步执行，应及时返回。
 
 `Expect.monotonic` 读取单调时钟，`Expect.duration` 校验秒数，`Expect.readable_sessions(*sources, timeout: 0)` 返回就绪来源。
