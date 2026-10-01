@@ -31,21 +31,21 @@ module ScriptProbe
     end
 
     def ready!
-      result = session.expect_result(PROMPT, timeout: @timeout)
+      result = session.expect(PROMPT, timeout: @timeout)
       ScriptProbe.check(result.matched?, "shell prompt missing (#{result.error})")
       # Avoid terminal echo being mistaken for script output or leaking the
       # test's wrapper command into the output we verify.
       # Interactive shells may interpret high-bit bytes as readline commands
       # in a C locale. Disable editing for literal script transmission.
       session.write("stty -echo; set +o emacs; set +o vi\n")
-      result = session.expect_result(PROMPT, timeout: @timeout)
+      result = session.expect(PROMPT, timeout: @timeout)
       ScriptProbe.check(result.matched?, "shell setup failed (#{result.error})")
       session.clear_buffer
       self
     end
 
     def run_file(path, expected_status:, expected_output:)
-      run(File.basename(path), File.binread(path), expected_status: expected_status, expected_output: expected_output)
+      run(File.basename(path), File.binread(path), expected_status:, expected_output:)
     end
 
     def run(name, script, expected_status:, expected_output:)
@@ -63,20 +63,20 @@ module ScriptProbe
                 "/bin/sh -c #{quoted_script}; probe_status=$?; " \
                 "printf '\\n%s%s:%s\\n' 'PROBE_END_' '#{nonce}' \"$probe_status\"\n"
       session.write(command)
-      started = session.expect_result(/(?:\A|\r?\n)#{Regexp.escape(start_marker)}\r?\n/, timeout: @timeout)
+      started = session.expect(/(?:\A|\r?\n)#{Regexp.escape(start_marker)}\r?\n/, timeout: @timeout)
       ScriptProbe.check(started.matched?, "#{name}: begin marker missing (#{started.error})")
-      ended = session.expect_result(/(?:\A|\r?\n)#{Regexp.escape(end_marker)}:(\d+)\r?\n/, timeout: @timeout)
+      ended = session.expect(/(?:\A|\r?\n)#{Regexp.escape(end_marker)}:(\d+)\r?\n/, timeout: @timeout)
       ScriptProbe.check(ended.matched?, "#{name}: script did not finish (#{ended.error})")
       output = ScriptProbe.normalize(ended.before)
       status = Integer(ended.captures.fetch(0), 10)
       # Wait for the shell before starting another script, including when the
       # prior script exited nonzero. Each script runs in its own subshell.
-      prompt = session.expect_result(PROMPT, timeout: @timeout)
+      prompt = session.expect(PROMPT, timeout: @timeout)
       ScriptProbe.check(prompt.matched?, "#{name}: shell did not recover (#{prompt.error})")
       session.write_log("\n[EXIT] #{name} status=#{status}\n")
       passed = status == expected_status && output == expected_output.b
-      result = { name: name, sha256: digest, status: status, expected_status: expected_status,
-                 output: output.dup.force_encoding(Encoding::UTF_8), passed: passed }
+      result = { name:, sha256: digest, status:, expected_status:,
+                 output: output.dup.force_encoding(Encoding::UTF_8), passed: }
       results << result
       ScriptProbe.check(status == expected_status, "#{name}: exit #{status}, expected #{expected_status}")
       ScriptProbe.check(output == expected_output.b, "#{name}: output differs from fixture expectation")
@@ -99,10 +99,10 @@ module ScriptProbe
     # With SSH, the remote TTY differs from the local PTY. Obtain it using an
     # independent command, then demand an exact identity fixture response.
     session.write("printf '\\n%s' 'TTY_PROBE='; tty\n")
-    tty = session.expect_result(%r{(?:\A|\n)TTY_PROBE=(/dev/[^\r\n]+)\r?\n}, timeout: 5)
+    tty = session.expect(%r{(?:\A|\n)TTY_PROBE=(/dev/[^\r\n]+)\r?\n}, timeout: 5)
     check(tty.matched?, "remote TTY probe failed")
     terminal = tty.captures.fetch(0)
-    check(session.expect(PROMPT, timeout: 5), "TTY probe did not return to shell")
+    check(session.expect(PROMPT, timeout: 5).matched?, "TTY probe did not return to shell")
 
     # The caller allocates a fresh private directory; exercise truncation only
     # on this new test file, never on an existing user's log.

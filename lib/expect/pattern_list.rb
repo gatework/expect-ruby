@@ -4,6 +4,8 @@ class Expect
   # 将 Ruby 模式和块回调整理为有序会话组；注册阶段不读取 IO、不执行匹配回调。
   # 分组结构直接决定 Matcher 的“声明组 → 会话 → 模式”优先级，不能按匹配位置重排。
   class PatternList
+    # 供匹配器读取的已编译分组和超时规则。
+    # @api private
     attr_reader :groups, :timeout_pattern
 
     # 建立默认来源，并将位置参数中的文本、正则、:eof、:timeout 转成统一模式。
@@ -26,7 +28,7 @@ class Expect
     def on(value, from: @default_sessions, &block)
       raise ArgumentError, "pattern must be a String or Regexp" unless value.is_a?(String) || value.is_a?(Regexp)
 
-      add(value.is_a?(String) ? value.b.freeze : value, from, block)
+      add(value, from, block)
     end
 
     # 为指定来源注册 EOF 回调；实例 DSL 默认使用当前会话。
@@ -37,6 +39,8 @@ class Expect
     # 注册一次等待的唯一超时回调，重复定义直接报错，避免悄悄覆盖业务处理。
     # 超时是整次等待的事件，回调收到全部活跃会话，不归属于某一个来源组。
     def timeout(&block)
+      raise FrozenError, "patterns are finalized" if frozen?
+
       raise ArgumentError, "timeout callback already registered" if @timeout_pattern
 
       @timeout_pattern = build(:timeout, block)
@@ -45,9 +49,11 @@ class Expect
 
     # 汇总并去重读取源，同一会话出现在多个模式组时仍只读取一次。
     # 这里只去重会话对象；不同会话包装同一 IO 时的读取归属由 Matcher 决定。
+    # @api private
     def sessions = groups.flat_map(&:first).uniq
 
     # 收集指定会话的所有 EOF 处理器，保留原注册顺序。
+    # @api private
     def eof_patterns_for(session)
       groups.flat_map do |sessions, patterns|
         sessions.include?(session) ? patterns.select(&:eof?) : []
@@ -55,10 +61,24 @@ class Expect
     end
 
     # 启动引擎前确保存在读取源；类级等待必须通过 from: 明确来源。
+    # @api private
     def validate!
       raise ArgumentError, "at least one session is required" if groups.empty?
 
       self
+    end
+
+    # 固定本次等待的规则；只冻结声明容器，不冻结借用的会话与回调。
+    # @api private
+    def finalize!
+      validate!
+      groups.each do |sessions, patterns|
+        sessions.freeze
+        patterns.freeze
+      end
+      groups.each(&:freeze).freeze
+      @default_sessions.freeze
+      freeze
     end
 
     private
@@ -80,7 +100,7 @@ class Expect
     # 按注册顺序分配从 1 开始的序号，文本模式与事件共用编号。
     def build(value, callback)
       @number += 1
-      Pattern.new(number: @number, value: value, callback: callback)
+      Pattern.new(number: @number, value:, callback:)
     end
 
     # 拒绝空来源和非 Expect 对象，在任何 IO 读取之前暴露调用错误。

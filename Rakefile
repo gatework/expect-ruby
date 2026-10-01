@@ -13,7 +13,13 @@ task :lint do
   ruby "-S", "rubocop"
 end
 
-task default: %i[lint test]
+desc "Validate public API documentation, README versions and RBS signatures"
+task :api do
+  ruby "script/check_api.rb"
+  ruby "-S", "rbs", "-I", "sig", "validate"
+end
+
+task default: %i[lint test api]
 
 namespace :test do
   desc "Log in over SSH and verify multiple scripts and persisted logs (opt-in)"

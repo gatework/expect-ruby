@@ -8,7 +8,7 @@ class EdgeCaseTest < ExpectTest
     session, = pipe_session
     session.buffer = "ready"
     result = bounded(1) do
-      session.expect_result(timeout: 0.01) { on(/(?=ready)/) { Expect.continue(reset_timeout: false) } }
+      session.expect(timeout: 0.01) { on(/(?=ready)/) { Expect.continue(reset_timeout: false) } }
     end
     assert result.timeout?
   end
@@ -19,7 +19,7 @@ class EdgeCaseTest < ExpectTest
     calls = 0
 
     result = bounded(1) do
-      session.expect_result(timeout: 0.01) do
+      session.expect(timeout: 0.01) do
         on(/(?=ready)/) do
           calls += 1
           Expect.continue
@@ -42,7 +42,7 @@ class EdgeCaseTest < ExpectTest
     calls = 0
 
     result = bounded(1) do
-      session.expect_result(timeout: 0.5) do
+      session.expect(timeout: 0.5) do
         on(/(?=ready)/) do
           calls += 1
           first_match << true if calls == 1
@@ -63,7 +63,7 @@ class EdgeCaseTest < ExpectTest
     timeouts = 0
 
     result = bounded(1) do
-      session.expect_result(timeout: 0.01) do
+      session.expect(timeout: 0.01) do
         on(/(?=ready)/) do
           calls += 1
           calls == 1 ? Expect.continue : nil
@@ -84,14 +84,14 @@ class EdgeCaseTest < ExpectTest
   def test_stdout_works_with_utf8_banner_and_ascii_regexp
     session, writer = pipe_session
     writer.write("欢迎登录\nprompt>")
-    assert_equal 1, session.expect(/prompt>/, timeout: 1)
+    assert_equal 1, session.expect(/prompt>/, timeout: 1).number
     assert_equal "欢迎登录\n".b, session.before
   end
 
   def test_invalid_fixed_encoding_regexp_data_raises
     session, = pipe_session
     session.buffer = "\xffinvalid".b
-    assert_raises(EncodingError) { session.expect(/中文/, timeout: 0) }
+    assert_raises(EncodingError) { session.expect(/中文/, timeout: 0).number }
   end
 
   def test_replacing_log_with_invalid_target_preserves_current_log
@@ -117,9 +117,9 @@ class EdgeCaseTest < ExpectTest
       file.write("first\nsecond\n")
       file.rewind
       Expect.open(file) do |session|
-        assert_equal 1, session.expect(/^second$/, timeout: 0)
+        assert_equal 1, session.expect(/^second$/, timeout: 0).number
         assert_equal "first\n", session.before
-        assert session.expect_result(:eof, timeout: 1).eof?
+        assert session.expect(:eof, timeout: 1).eof?
       end
       refute file.closed?
     end
@@ -132,9 +132,9 @@ class EdgeCaseTest < ExpectTest
     @sessions << session
     slave.write("end")
     slave.flush
-    assert_equal 1, session.expect("end", timeout: 1)
+    assert_equal 1, session.expect("end", timeout: 1).number
     slave.close
-    assert bounded { session.expect_result(:eof, timeout: 1) }.eof?
+    assert bounded { session.expect(:eof, timeout: 1) }.eof?
   end
 
   def test_distinct_reader_writer_io
@@ -144,7 +144,7 @@ class EdgeCaseTest < ExpectTest
     session = Expect.open(incoming, writer: outgoing)
     @sessions << session
     producer.write("ready")
-    assert_equal 1, session.expect("ready", timeout: 1)
+    assert_equal 1, session.expect("ready", timeout: 1).number
     assert_equal 3, session.write("abc")
     assert_equal "abc", consumer.read(3)
     session.close
@@ -153,11 +153,10 @@ class EdgeCaseTest < ExpectTest
   end
 
   def test_control_character_delivers_signal_to_foreground_child
-    session = child('Signal.trap("INT") { puts "interrupted"; exit 0 }; puts "ready"; sleep 30')
-    session.expect("ready", timeout: 2)
+    session = child('Signal.trap("INT") { exit 42 }; puts "ready"; sleep 30')
+    assert_equal 1, session.expect("ready", timeout: 2).number
     session.write("\x03")
-    assert_equal 1, session.expect("interrupted", timeout: 2)
-    assert_equal 0, session.wait(timeout: 1).exitstatus
+    assert_equal 42, session.wait(timeout: 2).exitstatus
   end
 
   def test_multiple_real_pty_processes
@@ -168,7 +167,7 @@ class EdgeCaseTest < ExpectTest
       seen << session
       Expect.continue(reset_timeout: false)
     end
-    result = Expect.expect_result(timeout: 2) do
+    result = Expect.expect(timeout: 2) do
       on(/one/, from: first, &record_session)
       eof(from: first) do
         # 明确建立两个进程的顺序，不能通过 sleep 推断启动和输出的先后。
@@ -192,7 +191,7 @@ class EdgeCaseTest < ExpectTest
       end
       writer.write("ready")
     end
-    assert_equal(1, bounded { session.expect("ready", timeout: 1) })
+    assert_equal(1, bounded { session.expect("ready", timeout: 1).number })
   ensure
     Signal.trap("USR1", old_handler) if old_handler
   end
@@ -208,8 +207,8 @@ class EdgeCaseTest < ExpectTest
   def test_invalid_options_raise_before_spawning
     assert_raises(ArgumentError) { Expect.new(typo: true) }
     session, = pipe_session
-    assert_raises(ArgumentError) { session.expect(0, "x") }
-    assert_raises(ArgumentError) { session.expect(["-unknown", "x"], timeout: 0) }
+    assert_raises(ArgumentError) { session.expect(0, "x").number }
+    assert_raises(ArgumentError) { session.expect(["-unknown", "x"], timeout: 0).number }
     assert_raises(ArgumentError) { session.on_sequence("") }
   end
 

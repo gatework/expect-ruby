@@ -99,7 +99,7 @@ class TerminalCleanupTest < ExpectTest
                'Signal.trap("TERM", "IGNORE"); STDOUT.sync = true; puts "ready"; sleep 60']
     signals = []
     kill = Process.method(:kill)
-    with_stty_pipe(command: command) do |reader, _sink, spawned|
+    with_stty_pipe(command:) do |reader, _sink, spawned|
       read = reader.method(:gets)
       reader.stub(:read, lambda {
         assert_equal("ready\n", bounded { read.call })
@@ -129,7 +129,7 @@ class TerminalCleanupTest < ExpectTest
 
         wait.call(pid, *flags)
       }) do
-        session.stub(:sleep, ->(*) { flunk "successful stty must not add a fixed delay" }) do
+        session.__send__(:session).stub(:sleep, ->(*) { flunk "successful stty must not add a fixed delay" }) do
           Process.stub(:kill, ->(*) { flunk "successful helper must not be signalled" }) do
             refute_empty session.stty
           end
@@ -150,7 +150,7 @@ class TerminalCleanupTest < ExpectTest
     with_stty_pipe do |reader, _sink, spawned|
       reader.stub(:read, -> { raise failure }) do
         Expect.stub(:monotonic, -> { clock }) do
-          session.stub(:sleep, ->(duration) { clock += duration }) do
+          session.__send__(:session).stub(:sleep, ->(duration) { clock += duration }) do
             Process.stub(:waitpid2, lambda { |pid, flags|
               assert_equal spawned.fetch(:pid), pid
               assert_equal Process::WNOHANG, flags
@@ -187,7 +187,7 @@ class TerminalCleanupTest < ExpectTest
     with_stty_pipe do |reader, _sink, spawned|
       reader.stub(:read, -> { raise failure }) do
         Expect.stub(:monotonic, -> { clock }) do
-          session.stub(:sleep, ->(duration) { clock += duration }) do
+          session.__send__(:session).stub(:sleep, ->(duration) { clock += duration }) do
             Process.stub(:waitpid2, lambda { |pid, flags|
               assert_equal Process::WNOHANG, flags
               signalled ? wait.call(pid, flags) : nil
@@ -276,7 +276,7 @@ class TerminalCleanupTest < ExpectTest
     with_stty_pipe do |reader, sink, _spawned|
       Process.stub(:pid, -> { current_pid }) do
         reader.stub(:read, -> { raise failure }) do
-          session.stub(:sleep, ->(*) { current_pid = -1 }) do
+          session.__send__(:session).stub(:sleep, ->(*) { current_pid = -1 }) do
             Process.stub(:waitpid2, ->(*) {}) do
               Process.stub(:kill, ->(*) { flunk "fork during wait must release inherited process ownership" }) do
                 Process.stub(:detach, ->(*) { flunk "non-owner must not detach" }) do
@@ -301,7 +301,7 @@ class TerminalCleanupTest < ExpectTest
         puts "reply:#{line.strip}"
       end
     RUBY
-    assert_equal 1, session.expect("ready", timeout: 2)
+    assert_equal 1, session.expect("ready", timeout: 2).number
     session
   end
 
@@ -310,7 +310,7 @@ class TerminalCleanupTest < ExpectTest
     assert_nil session.process_status
     refute session.closed?
     session.puts "still usable"
-    assert_equal 1, session.expect("reply:still usable", timeout: 2)
+    assert_equal 1, session.expect("reply:still usable", timeout: 2).number
   end
 
   def assert_reaped(pid)

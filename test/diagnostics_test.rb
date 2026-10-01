@@ -64,11 +64,11 @@ class DiagnosticsTest < ExpectTest
     failure = IOError.new("diagnostic failed")
     session.diagnostic_output = ->(_) { raise failure }
     writer.write("ready")
-    result = session.expect_result("ready", timeout: 1)
+    result = session.expect("ready", timeout: 1)
     assert_same failure, result.error
     assert_equal "ready", session.buffer
     session.debug_level = 0
-    assert_equal 1, session.expect("ready", timeout: 0)
+    assert_equal 1, session.expect("ready", timeout: 0).number
   end
 
   def test_nested_diagnostic_wait_preserves_the_outer_match_result
@@ -81,9 +81,9 @@ class DiagnosticsTest < ExpectTest
       next unless event[:event] == :matched && !notified
 
       notified = true
-      nested = session.expect_result("missing", timeout: 0)
+      nested = session.expect("missing", timeout: 0)
     end
-    result = session.expect_result(timeout: 0) do |patterns|
+    result = session.expect(timeout: 0) do |patterns|
       patterns.on("ready") { |source| callback_result = source.last_result }
     end
     assert nested.timeout?
@@ -118,12 +118,12 @@ class DiagnosticsTest < ExpectTest
     session.redact("password")
     "password!".each_char do |byte|
       writer.write(byte)
-      session.__send__(:read_available)
+      session.__send__(:session).__send__(:read_available)
       refute_includes log.string, "password"
     end
-    assert_equal 1, session.expect("password!", timeout: 0)
+    assert_equal 1, session.expect("password!", timeout: 0).number
     writer.close
-    assert session.expect_result(:eof, timeout: 1).eof?
+    assert session.expect(:eof, timeout: 1).eof?
     assert_equal "[FILTERED]!", log.string
     assert_equal "password!", forwarded.string
     received = events.select { |event| event[:event] == :received }.map { |event| event[:message] }.join
@@ -176,7 +176,7 @@ class DiagnosticsTest < ExpectTest
     secret = "\xff\0\n".b
     session.redact(secret)
     session.write_log("before#{secret}after".b)
-    session.__send__(:trace_data, :received, secret, level: 2)
+    session.__send__(:session).__send__(:trace_data, :received, secret, level: 2)
     session.close
     assert_equal "before[FILTERED]after", log.string
     refute_includes diagnostics.string, '\\xFF'
@@ -190,7 +190,7 @@ class DiagnosticsTest < ExpectTest
     session.redact("password")
     writer.write("hello pass")
     writer.close
-    assert session.expect_result(:eof, timeout: 1).eof?
+    assert session.expect(:eof, timeout: 1).eof?
     assert_equal "hello [FILTERED]", log.string
     session.close
     assert_equal "hello [FILTERED]", log.string
@@ -275,7 +275,7 @@ class DiagnosticsTest < ExpectTest
       log = session.log_to(File.join(directory, "session.log"))
       failure = RuntimeError.new("diagnostic callback failed")
       session.diagnostic_output = ->(_) { raise failure }
-      session.__send__(:trace_data, :sending, "hi", level: 2)
+      session.__send__(:session).__send__(:trace_data, :sending, "hi", level: 2)
       assert_same failure, assert_raises(RuntimeError) { session.close }
       assert log.closed?
       assert session.closed?
@@ -288,9 +288,9 @@ class DiagnosticsTest < ExpectTest
     first = StringIO.new
     second = StringIO.new
     session.diagnostic_output = first
-    session.__send__(:trace_data, :received, "pass", level: 2)
+    session.__send__(:session).__send__(:trace_data, :received, "pass", level: 2)
     session.diagnostic_output = second
-    session.__send__(:trace_data, :received, "password!", level: 2)
+    session.__send__(:session).__send__(:trace_data, :received, "password!", level: 2)
     session.close
     assert_includes first.string, "[FILTERED]"
     refute_includes first.string, "pass"
@@ -338,7 +338,7 @@ class DiagnosticsTest < ExpectTest
         assert_equal initial_send, peer.read(initial_send.bytesize)
       end
       peer.write("xyz")
-      assert_equal 1, session.expect("xyz", timeout: 0)
+      assert_equal 1, session.expect("xyz", timeout: 0).number
       replacement = StringIO.new
       session.diagnostic_output = replacement
       assert_equal "ack", peer.read(3)

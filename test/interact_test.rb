@@ -79,12 +79,12 @@ class InteractTest < ExpectTest
     input, keyboard = pipe_session
     loop { break if session.writer.write_nonblock("x" * 4096, exception: false) == :wait_writable }
     keyboard.write("old")
-    assert_nil session.interact(input: input, output: StringIO.new, escape: /STOP/, timeout: 0)
+    assert_nil session.interact(input:, output: StringIO.new, escape: /STOP/, timeout: 0)
     assert input.pending_output?
     input.buffer = "tail"
     loop { break if peer.read_nonblock(65_536, exception: false) == :wait_readable }
 
-    assert_nil session.interact(input: input, output: StringIO.new, escape: /old/, timeout: 0.01)
+    assert_nil session.interact(input:, output: StringIO.new, escape: /old/, timeout: 0.01)
     refute input.pending_output?
     assert_empty input.buffer
     assert_equal "oldtail", peer.read_nonblock(100)
@@ -129,14 +129,16 @@ class InteractTest < ExpectTest
     saved = InteractProbe.configuration(source)
     session.write("printf '\\n%s\\n' 'MANUAL_READY'\n")
     keyboard = Thread.new do
-      ScriptProbe.check(screen.expect(/\r?\nMANUAL_READY\r?\n/, timeout: 3), "manual handoff was not ready")
-      ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 3), "manual prompt missing")
+      ScriptProbe.check(screen.expect(/\r?\nMANUAL_READY\r?\n/, timeout: 3).matched?, "manual handoff was not ready")
+      ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 3).matched?, "manual prompt missing")
       command = "printf 'VISIBLE_COMMAND\\n'"
       screen.write(command)
-      ScriptProbe.check(screen.expect(command, timeout: 3), "typed command was invisible before Enter")
+      ScriptProbe.check(screen.expect(command, timeout: 3).matched?, "typed command was invisible before Enter")
       screen.write("\n")
-      ScriptProbe.check(screen.expect(/\r?\nVISIBLE_COMMAND\r?\n/, timeout: 3), "manual command output missing")
-      ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 3), "manual command did not return to shell")
+      ScriptProbe.check(screen.expect(/\r?\nVISIBLE_COMMAND\r?\n/, timeout: 3).matched?,
+                        "manual command output missing")
+      ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 3).matched?,
+                        "manual command did not return to shell")
       screen.write(InteractProbe::ESCAPE)
       true
     rescue Exception # rubocop:disable Lint/RescueException -- Clean up terminal drivers even on Interrupt or SystemExit.
@@ -177,10 +179,10 @@ class InteractTest < ExpectTest
     @sessions << screen
     driver = Thread.new do
       screen.write("show\n")
-      ScriptProbe.check(screen.expect("first\r\nsecond\r", timeout: 3),
+      ScriptProbe.check(screen.expect("first\r\nsecond\r", timeout: 3).matched?,
                         "interact disabled output newline processing")
       screen.write("continue\n")
-      ScriptProbe.check(screen.expect("\nFW# ", timeout: 3), "interact duplicated a split CRLF sequence")
+      ScriptProbe.check(screen.expect("\nFW# ", timeout: 3).matched?, "interact duplicated a split CRLF sequence")
       screen.write(InteractProbe::ESCAPE)
       true
     rescue Exception # rubocop:disable Lint/RescueException -- Release interact when the assertion fails.
@@ -206,7 +208,7 @@ class InteractTest < ExpectTest
     saved = InteractProbe.configuration(source)
     output = StringIO.new
     session.write("go\n")
-    assert_same session, session.interact(input: source, escape: "\x1d", output: output, timeout: 3)
+    assert_same session, session.interact(input: source, escape: "\x1d", output:, timeout: 3)
     assert_equal "FINAL_REMOTE_OUTPUT", output.string
     assert_equal saved, InteractProbe.configuration(source)
     refute slave.closed?
@@ -220,7 +222,7 @@ class InteractTest < ExpectTest
     assert_same source, session.interact(input: source, escape: "\x1d", output: StringIO.new, timeout: 2)
     assert session.alive?
     session.write("printf 'AFTER_LOCAL_EOF\\n'\n")
-    assert_equal 1, session.expect(/AFTER_LOCAL_EOF\r?\n/, timeout: 2)
+    assert_equal 1, session.expect(/AFTER_LOCAL_EOF\r?\n/, timeout: 2).number
   end
 
   def test_remote_callback_exception_restores_both_terminals
@@ -246,7 +248,7 @@ class InteractTest < ExpectTest
     output = StringIO.new
     output.close
     session.write("printf 'OUTPUT_FAILURE\\n'\n")
-    assert_raises(IOError) { session.interact(input: source, escape: "\x1d", output: output, timeout: 2) }
+    assert_raises(IOError) { session.interact(input: source, escape: "\x1d", output:, timeout: 2) }
     assert_equal saved, InteractProbe.configuration(source)
     refute slave.closed?
   end

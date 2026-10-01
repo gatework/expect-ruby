@@ -9,8 +9,8 @@ class ProcessTest < ExpectTest
       puts [STDIN.tty?, STDOUT.tty?, STDERR.tty?, terminal].join(":")
       STDERR.puts "error-stream"
     RUBY
-    assert_equal 1, session.expect("true:true:true:true", timeout: 2)
-    assert_equal 1, session.expect("error-stream", timeout: 2)
+    assert_equal 1, session.expect("true:true:true:true", timeout: 2).number
+    assert_equal 1, session.expect("error-stream", timeout: 2).number
     session.soft_close(timeout: 1)
     assert_equal 0, session.exit_code
     assert_equal 0, session.process_status.to_i
@@ -26,7 +26,7 @@ class ProcessTest < ExpectTest
     RUBY
     session.expect("name: ", timeout: 2)
     session.write("crate\n")
-    assert_equal 1, session.expect("reply=etarc\n", timeout: 2)
+    assert_equal 1, session.expect("reply=etarc\n", timeout: 2).number
     assert_equal "", session.before
   end
 
@@ -39,7 +39,7 @@ class ProcessTest < ExpectTest
     # 子进程需要 io-console gem，保留 RubyGems 以使用 Bundler 选定的版本。
     session.spawn(RbConfig.ruby, "-rio/console", "-e",
                   'STDOUT.sync = true; puts STDIN.winsize.join(":"); puts STDIN.gets')
-    assert_equal 1, session.expect("37:111", timeout: 2), session.before.inspect
+    assert_equal 1, session.expect("37:111", timeout: 2).number, session.before.inspect
     assert_equal [37, 111], session.winsize
     session.winsize = [24, 80]
     assert_equal [24, 80], session.winsize
@@ -57,14 +57,14 @@ class ProcessTest < ExpectTest
                              env: { "EXPECT_TEST_VALUE" => "environment" }, chdir: dir,
                              log_stdout: false, raw_pty: true)
       @sessions << session
-      assert_equal 1, session.expect("a;$(exit) b\nenvironment\n#{File.realpath(dir)}\n", timeout: 2)
+      assert_equal 1, session.expect("a;$(exit) b\nenvironment\n#{File.realpath(dir)}\n", timeout: 2).number
     end
   end
 
   def test_string_command_supports_shell_semantics
     session = Expect.new("printf 'shell-one'; printf 'shell-two'", log_stdout: false)
     @sessions << session
-    assert_equal 1, session.expect("shell-oneshell-two", timeout: 2)
+    assert_equal 1, session.expect("shell-oneshell-two", timeout: 2).number
   end
 
   def test_exec_failure_is_synchronous_and_reaped
@@ -199,8 +199,8 @@ class ProcessTest < ExpectTest
 
   def test_eof_does_not_prevent_buffered_match
     session = child('print "final"; exit 4', raw_pty: true)
-    assert_equal 1, session.expect("final", timeout: 2)
-    assert session.expect_result(:eof, timeout: 2).eof?
+    assert_equal 1, session.expect("final", timeout: 2).number
+    assert session.expect(:eof, timeout: 2).eof?
     assert_equal 4, session.wait(timeout: 1).exitstatus
   end
 
@@ -254,9 +254,9 @@ class ProcessTest < ExpectTest
     refute session.log_stdout?
     assert_equal 0.01, session.timeout
     session.log_stdout = true
-    assert session.log_stdout
+    assert session.log_stdout?
     session.log_stdout = false
-    refute session.log_stdout
+    refute session.log_stdout?
     session.buffer_limit = 30
     assert_equal 30, session.buffer_limit
     assert_match(/\A#<Expect .*closed=false>\z/, session.inspect)

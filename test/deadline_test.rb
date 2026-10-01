@@ -6,7 +6,7 @@ class DeadlineTest < ExpectTest
   def test_absolute_deadline_caps_timeout_resets_from_incoming_data
     session, writer = pipe_session(reset_timeout_on_read: true)
     with_clock([[4, writer, "."], [8, writer, "."], [12, writer, "done"]]) do |clock|
-      result = session.expect_result("done", timeout: 5, deadline: 10)
+      result = session.expect("done", timeout: 5, deadline: 10)
       assert result.timeout?
       assert_equal 10, clock[0]
       assert_equal "..", session.buffer
@@ -16,8 +16,8 @@ class DeadlineTest < ExpectTest
   def test_class_api_and_nil_timeout_use_the_absolute_deadline
     session, writer = pipe_session
     with_clock([[4, writer, "ready"]]) do |clock|
-      assert_equal 1, Expect.expect("ready", from: session, timeout: nil, deadline: 5)
-      result = Expect.expect_result("missing", from: session, timeout: nil, deadline: 5)
+      assert_equal 1, Expect.expect("ready", from: session, timeout: nil, deadline: 5).number
+      result = Expect.expect("missing", from: session, timeout: nil, deadline: 5)
       assert result.timeout?
       assert_equal 5, clock[0]
     end
@@ -26,7 +26,7 @@ class DeadlineTest < ExpectTest
   def test_shorter_relative_timeout_still_wins
     session, = pipe_session
     with_clock do |clock|
-      assert session.expect_result("missing", timeout: 2, deadline: 10).timeout?
+      assert session.expect("missing", timeout: 2, deadline: 10).timeout?
       assert_equal 2, clock[0]
     end
   end
@@ -35,7 +35,7 @@ class DeadlineTest < ExpectTest
     session, = pipe_session
     session.buffer = "first second"
     with_clock do |clock|
-      result = session.expect_result(timeout: 10, deadline: 5) do
+      result = session.expect(timeout: 10, deadline: 5) do
         on("first") do
           clock[0] = 6
           Expect.continue
@@ -51,7 +51,7 @@ class DeadlineTest < ExpectTest
     session, = pipe_session
     calls = 0
     with_clock do |clock|
-      result = session.expect_result(timeout: 3, deadline: 5) do
+      result = session.expect(timeout: 3, deadline: 5) do
         timeout do
           calls += 1
           Expect.continue
@@ -69,7 +69,7 @@ class DeadlineTest < ExpectTest
     writer.write("unread")
     with_clock do |clock|
       clock[0] = 5
-      assert session.expect_result("buffered", timeout: 0, deadline: 5).timeout?
+      assert session.expect("buffered", timeout: 0, deadline: 5).timeout?
       assert_equal "buffered", session.buffer
       assert_equal "unread", session.to_io.read_nonblock(6)
     end
@@ -78,7 +78,7 @@ class DeadlineTest < ExpectTest
   def test_zero_relative_timeout_still_polls_with_a_future_hard_deadline
     session, writer = pipe_session
     writer.write("ready")
-    assert_equal 1, session.expect("ready", timeout: 0, deadline: Expect.monotonic + 1)
+    assert_equal 1, session.expect("ready", timeout: 0, deadline: Expect.monotonic + 1).number
   end
 
   def test_repeated_interruptions_cannot_extend_a_deadline
@@ -89,7 +89,7 @@ class DeadlineTest < ExpectTest
         clock[0] += 1
         raise Errno::EINTR
       }) do
-        assert session.expect_result("missing", deadline: 3).timeout?
+        assert session.expect("missing", deadline: 3).timeout?
       end
       assert_equal 3, clock[0]
     end
@@ -102,7 +102,7 @@ class DeadlineTest < ExpectTest
     live.buffer = "ready"
     seen = []
     with_clock do
-      result = Expect.expect_result(from: [ended, live], deadline: 0) do
+      result = Expect.expect(from: [ended, live], deadline: 0) do
         on("ready") { flunk "deadline already expired" }
         eof(from: ended) do
           seen << :eof
@@ -123,7 +123,7 @@ class DeadlineTest < ExpectTest
     [first, second].each(&:close)
     seen = []
     with_clock do
-      result = Expect.expect_result(from: [first, second], deadline: 0) do
+      result = Expect.expect(from: [first, second], deadline: 0) do
         eof do |session|
           seen << session
           Expect.continue
@@ -145,7 +145,7 @@ class DeadlineTest < ExpectTest
         clock[0] = 5
         match.call(text)
       }) do
-        assert session.expect_result(pattern, deadline: 5).timeout?
+        assert session.expect(pattern, deadline: 5).timeout?
       end
       assert_equal "ready", session.buffer
     end
@@ -158,7 +158,7 @@ class DeadlineTest < ExpectTest
     first.buffer = "ready"
     seen = []
     with_clock do |clock|
-      result = Expect.expect_result(from: [first, second], deadline: 5) do
+      result = Expect.expect(from: [first, second], deadline: 5) do
         on("ready") do
           clock[0] = 5
           Expect.continue(reset_timeout: false)
@@ -181,7 +181,7 @@ class DeadlineTest < ExpectTest
     ended.buffer = "ready"
     seen = []
     with_clock do |clock|
-      result = Expect.expect_result(from: [ended, live], deadline: 5) do
+      result = Expect.expect(from: [ended, live], deadline: 5) do
         on("ready") do
           clock[0] = 5
           Expect.continue(reset_timeout: false)
@@ -203,7 +203,7 @@ class DeadlineTest < ExpectTest
     writer.write("ready")
     [Float::INFINITY, -Float::INFINITY, Float::NAN, "invalid"].each do |deadline|
       assert_raises(ArgumentError) do
-        session.expect_result(deadline: deadline) { flunk "invalid deadline must reject before registration" }
+        session.expect(deadline:) { flunk "invalid deadline must reject before registration" }
       end
     end
     assert_equal "ready", session.to_io.read_nonblock(5)

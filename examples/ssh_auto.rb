@@ -50,12 +50,12 @@ begin
 
     Expect.spawn(*ssh_args, raw_pty: true, log_stdout: false, write_timeout: 5) do |ssh|
       # 登录成功后才开启日志，密码不写入文件。
-      ssh.expect(/password:\s*\z/i, timeout: 10) or abort "未收到密码提示：#{ssh.error}"
+      ssh.expect(/password:\s*\z/i, timeout: 10).matched? or abort "未收到密码提示：#{ssh.error}"
       ssh.write(password, "\n")
-      ssh.expect(PROMPT, timeout: 10) or abort "SSH 登录失败：#{ssh.error}"
+      ssh.expect(PROMPT, timeout: 10).matched? or abort "SSH 登录失败：#{ssh.error}"
       password.replace("\0" * password.bytesize)
       ssh.write("stty sane -echo; set +o emacs; set +o vi\n")
-      ssh.expect(PROMPT, timeout: 5) or abort "终端初始化失败：#{ssh.error}"
+      ssh.expect(PROMPT, timeout: 5).matched? or abort "终端初始化失败：#{ssh.error}"
 
       log_dir = ENV.fetch("EXPECT_LOG_DIR", File.expand_path("../tmp/ssh-auto", __dir__))
       FileUtils.mkdir_p(log_dir)
@@ -69,14 +69,15 @@ begin
         token = SecureRandom.hex(8)
         # 远端拼接结束标记并带回退出码，避免把命令回显当成执行结果。
         ssh.write("#{command}; printf '\\n__DONE_%s:%s\\n' '#{token}' \"$?\"\n")
-        ssh.expect(/\r?\n__DONE_#{token}:(\d+)\r?\n#{Regexp.escape(PROMPT)}/, timeout: 30) or abort "命令未完成：#{ssh.error}"
+        ssh.expect(/\r?\n__DONE_#{token}:(\d+)\r?\n#{Regexp.escape(PROMPT)}/,
+                   timeout: 30).matched? or abort "命令未完成：#{ssh.error}"
         print ssh.before.gsub("\r\n", "\n")
         abort "命令失败（退出码 #{ssh.captures.first}）：#{command}" unless ssh.captures.first == "0"
       end
 
       if interactive
         ssh.write("stty echo\n")
-        ssh.expect(PROMPT, timeout: 5) or abort "无法进入交互：#{ssh.error}"
+        ssh.expect(PROMPT, timeout: 5).matched? or abort "无法进入交互：#{ssh.error}"
         puts "\n检查完成，进入 interact。输入 exit 或按 Ctrl-] 结束。"
         $stdout.print(PROMPT)
         $stdout.flush

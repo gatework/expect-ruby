@@ -16,7 +16,7 @@ class RelayReentrancyTest < ExpectTest
         result = original.call(*arguments)
         unless entered
           entered = true
-          cursors = source.__send__(:relay_outputs)
+          cursors = source.__send__(:session).__send__(:relay_outputs)
           snapshot = -> { [source.buffer, cursors.map { |c| c.instance_variable_get(:@offset) }] }
           snapshots << snapshot.call
           begin
@@ -47,7 +47,7 @@ class RelayReentrancyTest < ExpectTest
       calls += 1
       error = assert_raises(StandardError) { Expect.interconnect(source, timeout: 0) }
       assert_equal "Expect::ReentrancyError", error.class.name
-      assert_equal "inside", source.expect_result("inside", timeout: 0).match
+      assert_equal "inside", source.expect("inside", timeout: 0).match
       false
     end
     source.buffer = "prefix!insidetail"
@@ -124,7 +124,7 @@ class RelayReentrancyTest < ExpectTest
     first.buffer = "first"
     second.buffer = "second"
     error = IOError.new("injected preparation failure")
-    second.stub(:clear_buffer, -> { raise error }) do
+    second.__send__(:session).stub(:clear_buffer, -> { raise error }) do
       assert_same error, assert_raises(IOError) { Expect.interconnect(first, second, timeout: 0) }
     end
     assert_equal "first", first.buffer

@@ -23,7 +23,7 @@ class OwnershipSequenceTest < ExpectTest
               attempts << :writer
               original.call
             }) do
-              error = assert_raises(failure.class) { Expect.open(reader, writer: writer, own: own) }
+              error = assert_raises(failure.class) { Expect.open(reader, writer:, own:) }
               assert_same failure, error, "seed=#{seed} own=#{own}"
             end
           end
@@ -95,7 +95,7 @@ class OwnershipSequenceTest < ExpectTest
       source.on_sequence("!") do
         calls += 1
         assert_equal prefix, sink.string.b, "seed=#{seed} prefix not delivered"
-        assert_equal "consume", source.expect_result("consume", timeout: 0).match
+        assert_equal "consume", source.expect("consume", timeout: 0).match
         false
       end
       producer.write(payload)
@@ -154,9 +154,9 @@ class OwnershipSequenceTest < ExpectTest
       sleep 60
     RUBY
     pid = Process.spawn(RbConfig.ruby, "--disable-gems", "-e", script, in: File::NULL, out: writer, err: File::NULL)
-    session.instance_variable_get(:@resources).pid = pid
+    session.__send__(:session).instance_variable_get(:@resources).pid = pid
     writer.close
-    result = session.expect_result(:eof, timeout: 2)
+    result = session.expect(:eof, timeout: 2)
     assert result.eof?
     assert_equal "tail", result.before
     assert session.alive?
@@ -191,7 +191,7 @@ class OwnershipSequenceTest < ExpectTest
       producer.write("unread")
       seen = []
       Expect.stub(:monotonic, 1.0) do
-        result = Expect.expect_result(from: [*ended, live], deadline: 1.0) do
+        result = Expect.expect(from: [*ended, live], deadline: 1.0) do
           on("buffered") { flunk "seed=#{seed} consumed text after deadline" }
           eof do |session|
             seen << session

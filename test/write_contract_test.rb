@@ -98,7 +98,7 @@ class WriteContractTest < ExpectTest
     reader, producer = IO.pipe
     sink, writer = IO.pipe
     @ios.push(reader, producer, sink, writer)
-    session = Expect.open(reader, writer: writer, **)
+    session = Expect.open(reader, writer:, **)
     @sessions << session
     [session, sink]
   end

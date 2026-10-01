@@ -62,7 +62,7 @@ class RedactorTest < Minitest::Test
     secret = +"secret"
     patterns = [secret]
     replacement = +"hidden"
-    filter = Expect::Redactor.new(patterns, replacement: replacement)
+    filter = Expect::Redactor.new(patterns, replacement:)
     secret.replace("public")
     patterns.clear
     replacement.clear
@@ -90,7 +90,7 @@ class RedactorTest < Minitest::Test
 
   def test_invalid_input_and_replacement_do_not_mutate_stream
     [nil, "", 3].each do |replacement|
-      assert_raises(ArgumentError) { Expect::Redactor.new([], replacement: replacement) }
+      assert_raises(ArgumentError) { Expect::Redactor.new([], replacement:) }
     end
     filter = Expect::Redactor.new(["secret"])
     filter.append("sec")
@@ -108,9 +108,9 @@ class RedactorTest < Minitest::Test
     random = Random.new(5000)
     250.times do |index|
       alphabet = index.even? ? [97, 98] : [0, 97, 98, 99, 128, 255]
-      input = Array.new(random.rand(0..120)) { alphabet.sample(random: random) }.pack("C*")
+      input = Array.new(random.rand(0..120)) { alphabet.sample(random:) }.pack("C*")
       patterns = Array.new(random.rand(0..6)) do
-        Array.new(random.rand(1..8)) { alphabet.sample(random: random) }.pack("C*")
+        Array.new(random.rand(1..8)) { alphabet.sample(random:) }.pack("C*")
       end
       chunks = []
       offset = 0
@@ -119,12 +119,12 @@ class RedactorTest < Minitest::Test
         offset += chunks.last.bytesize
       end
       [false, true].each do |partial|
-        expected = reference_redact(input, patterns, partial: partial)
+        expected = reference_redact(input, patterns, partial:)
         [[input], input.bytes.map(&:chr), chunks].each_with_index do |partition, kind|
           filter = Expect::Redactor.new(patterns)
-          actual = partition.map { |chunk| filter.append(chunk) }.join.b + filter.finish(partial: partial)
+          actual = partition.map { |chunk| filter.append(chunk) }.join.b + filter.finish(partial:)
           assert_equal expected, actual, "seed=5000 case=#{index} partition=#{kind} partial=#{partial}"
-          assert_empty filter.finish(partial: partial)
+          assert_empty filter.finish(partial:)
         end
       end
     end

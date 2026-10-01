@@ -17,12 +17,14 @@ begin
       valid = if hit == :miss
                 result.nil?
               else
-                result && result[0].equal?(session) && result[1].number == index + 1 && result[2] == [size - 3, 3, []]
+                result && result[0].connection.equal?(session) && result[1].number == index + 1 && result[2] == [
+                  size - 3, 3, []
+                ]
               end
       ExpectBenchmark.check(valid)
     end
-    runner.measure("scan/#{size}/#{count}/#{hit}", bytes: size, inputs: { size: size, patterns: count, hit: hit },
-                                                   verify: verify) { matcher.__send__(:find_match) }
+    runner.measure("scan/#{size}/#{count}/#{hit}", bytes: size, inputs: { size:, patterns: count, hit: },
+                                                   verify:) { matcher.__send__(:find_match) }
   end
   sizes.each do |size|
     prefix = "中" * (size / 3)
@@ -32,7 +34,7 @@ begin
       ExpectBenchmark.check(result && result[2] == [prefix.bytesize, 7, ["终".b, nil]])
     end
     runner.measure("utf8/#{size}", bytes: session.buffer.bytesize, inputs: { prefix_bytes: prefix.bytesize },
-                                   verify: verify) { matcher.__send__(:find_match) }
+                                   verify:) { matcher.__send__(:find_match) }
   end
 
   # 同一次等待不断追加新字节，分别对照字面与正则；跨块命中仍按声明优先级选择。
@@ -45,18 +47,18 @@ begin
       ExpectBenchmark.check(result && result[1].number == 32 && result[2] == [size + (chunks * 1024), 3, []])
     end
     runner.measure("stream/#{size}/#{kind}", bytes: size + (chunks * 1024) + 3,
-                                             inputs: { initial_bytes: size, chunks: chunks, patterns: 32, kind: kind },
-                                             iterations: 5, verify: verify) do
+                                             inputs: { initial_bytes: size, chunks:, patterns: 32, kind: },
+                                             iterations: 5, verify:) do
       session.buffer = "x" * size
       matcher = Expect::Matcher.new(Expect::PatternList.new([session], patterns), nil)
       ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
       chunks.times do
         writer.write("x" * 1024)
-        session.__send__(:read_available)
+        session.__send__(:session).__send__(:read_available)
         ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
       end
       writer.write("END")
-      session.__send__(:read_available)
+      session.__send__(:session).__send__(:read_available)
       matcher.__send__(:find_match)
     end
   end
@@ -84,11 +86,11 @@ end
     verify = lambda do |result|
       ExpectBenchmark.check(result == :retry && sessions.all? { |source| source.buffer == "r" })
     end
-    runner.measure("ready/#{count}", bytes: count, inputs: { sessions: count }, verify: verify) do
+    runner.measure("ready/#{count}", bytes: count, inputs: { sessions: count }, verify:) do
       sessions.each(&:clear_buffer)
       pipes.each { |pipe| pipe.last.write("r") }
       ready = IO.select(pipes.map(&:first), nil, nil, 0).first
-      matcher.__send__(:read_ready, ready, sessions)
+      matcher.__send__(:read_ready, ready, sessions.map { |s| s.__send__(:session) })
     end
   ensure
     sessions.each(&:close)

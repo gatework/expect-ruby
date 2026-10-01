@@ -5,6 +5,22 @@ require "minitest/mock"
 require_relative "../script/release"
 
 class ReleaseTest < Minitest::Test
+  def test_readme_version_validation_rejects_stale_installation_examples
+    Release.validate_readme!(%(gem "expect-pty", "~> 0.5.3"), "0.5.3")
+    Release.validate_readme!("gem build --output tmp/expect-pty-0.5.3.gem", "0.5.3")
+    assert_raises(RuntimeError) { Release.validate_readme!(%(gem "expect-pty", "~> 0.5.2"), "0.5.3") }
+    assert_raises(RuntimeError) { Release.validate_readme!("gem install expect-pty-0.5.2.gem", "0.5.3") }
+  end
+
+  def test_package_contains_runtime_types_and_user_docs_without_development_material
+    spec = Gem::Specification.load(File.expand_path("../expect-pty.gemspec", __dir__))
+    %w[lib/expect/session.rb lib/expect/cleanup.rb sig/expect.rbs docs/API.md docs/MIGRATION.md].each do |path|
+      assert_includes spec.files, path
+    end
+    assert_empty spec.files.grep(%r{\A(?:test/|benchmark/|examples/|script/|Gemfile|Rakefile|\.rubocop)})
+    assert_equal Gem::Requirement.new(">= 3.4"), spec.required_ruby_version
+  end
+
   def test_extracts_only_the_selected_version
     changelog = "# Changelog\n\n## Unreleased\n\n## 0.2.0 - 2026-09-12\n\n- New API.\n\n## 0.1.1\n\n- Old API.\n"
     assert_equal "- New API.", Release.release_notes(changelog, "0.2.0")
@@ -71,7 +87,7 @@ class ReleaseTest < Minitest::Test
   def test_rubygems_only_publishes_the_verified_copy_without_github
     with_package do |_release, artifact|
       commit_package_source
-      release = Release.new(artifact: artifact, rubygems_only: true)
+      release = Release.new(artifact:, rubygems_only: true)
       bytes = File.binread(artifact)
       checksum = Digest::SHA256.hexdigest(bytes)
       published = false
@@ -128,7 +144,7 @@ class ReleaseTest < Minitest::Test
 
   def test_rubygems_only_rejects_uncommitted_source_before_publishing
     with_package do |_release, artifact|
-      release = Release.new(artifact: artifact, rubygems_only: true)
+      release = Release.new(artifact:, rubygems_only: true)
       release.stub(:capture, " M payload.rb") do
         release.stub(:get, ->(*) { flunk "uncommitted source contacted RubyGems" }) do
           assert_match "Commit all source changes", assert_raises(RuntimeError) { release.run }.message
@@ -140,7 +156,7 @@ class ReleaseTest < Minitest::Test
   def test_rubygems_only_rechecks_source_after_verification
     with_package do |_release, artifact|
       commit_package_source
-      release = Release.new(artifact: artifact, rubygems_only: true)
+      release = Release.new(artifact:, rubygems_only: true)
       statuses = ["", " M payload.rb"]
       original = release.method(:capture)
       capture = ->(*arguments) { arguments.include?("rev-parse") ? original.call(*arguments) : statuses.shift }
@@ -173,7 +189,7 @@ class ReleaseTest < Minitest::Test
       error = publishing_source_error(artifact)
       assert_match "not in release commit: lib/local_only.rb", error.message
       # 提交前的 dry-run 仍可检验候选包，但不能以此证明发布来源。
-      capture_io { Release.new(artifact: artifact, dry_run: true).run }
+      capture_io { Release.new(artifact:, dry_run: true).run }
     end
   end
 
@@ -331,7 +347,7 @@ class ReleaseTest < Minitest::Test
   end
 
   def publishing_source_error(artifact)
-    release = Release.new(artifact: artifact, rubygems_only: true)
+    release = Release.new(artifact:, rubygems_only: true)
     release.stub(:get, ->(*) { flunk "uncommitted package content reached RubyGems" }) do
       error = nil
       capture_io { error = assert_raises(RuntimeError) { release.run } }
@@ -368,7 +384,7 @@ class ReleaseTest < Minitest::Test
         RUBY
         artifact = nil
         capture_io { artifact = Gem::Package.build(Gem::Specification.load(File.expand_path("expect-pty.gemspec"))) }
-        yield Release.new(artifact: artifact, dry_run: true), artifact
+        yield Release.new(artifact:, dry_run: true), artifact
       end
     end
   end

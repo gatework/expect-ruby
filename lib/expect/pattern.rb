@@ -2,7 +2,12 @@
 
 class Expect
   # 一个已编号的文本模式或事件及其回调；匹配结果统一使用字节偏移，便于精确消费 IO 缓冲。
-  Pattern = Struct.new(:number, :value, :callback, keyword_init: true) do
+  # @api private
+  Pattern = Data.define(:number, :value, :callback) do
+    def initialize(value:, number: nil, callback: nil)
+      super(value: value.is_a?(String) ? value.b.freeze : value, number:, callback:)
+    end
+
     # 将匹配会话或超时会话数组交给回调；额外上下文由调用方闭包保存。
     def call(subject)
       callback&.call(subject)
@@ -28,7 +33,7 @@ class Expect
                end
         unless text.valid_encoding?
           # 不完整的尾字符可能改变锚点或前瞻结果，必须等字符收齐后再匹配。
-          validate_incomplete_suffix!(text, final: final)
+          validate_incomplete_suffix!(text, final:)
           return nil
         end
         found = value.match(text)
@@ -58,4 +63,5 @@ class Expect
       raise EncodingError, "received invalid #{text.encoding} data; use a binary regexp (/.../n) for binary streams"
     end
   end
+  private_constant :Pattern
 end

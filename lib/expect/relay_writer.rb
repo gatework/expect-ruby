@@ -3,6 +3,7 @@
 class Expect
   # 向单个转接目标写入数据，维护发送进度与期限；恢复时不重放已成功写出的前缀。
   # 只借用目标，不 dup 描述符，也不负责读取；所有就绪等待统一交给 Relay 调度。
+  # @api private
   class RelayWriter
     attr_reader :target, :deadline
 

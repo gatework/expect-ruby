@@ -34,7 +34,7 @@ counts.each do |count|
       ExpectBenchmark.check(result.matched? && ready_count == count && sessions.all? { |source| source.buffer.empty? })
     end
     runner.measure("all_ready/#{count}", bytes: count * marker.bytesize, inputs: { sessions: count },
-                                         iterations: 10, verify: verify) do
+                                         iterations: 10, verify:) do
       ready_count = 0
       pipes.each { |pipe| pipe.last.write(marker) }
       Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
@@ -58,7 +58,7 @@ begin
     ExpectBenchmark.check(result.equal?(fast) && slow.pending_output? && fast.buffer.empty?)
   end
   runner.measure("blocked_target_probe", bytes: 5, inputs: { sources: 2, blocked_targets: 1 },
-                                         iterations: 100, verify: verify) do
+                                         iterations: 100, verify:) do
     slow.buffer = "blocked"
     pipes[1].last.write("PROBE")
     Timeout.timeout(10) { Expect.interconnect(slow, fast, timeout: 5) }

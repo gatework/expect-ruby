@@ -1,5 +1,5 @@
 AllCops:
-  TargetRubyVersion: 3.2
+  TargetRubyVersion: 3.4
   NewCops: enable
   SuggestExtensions: false
   Exclude:
@@ -64,3 +64,6 @@ Naming/RescuedExceptionsVariableName:
 
 Layout/LineLength:
   Max: 120
+
+Style/HashSyntax:
+  EnforcedShorthandSyntax: always

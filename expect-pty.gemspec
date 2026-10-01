@@ -11,21 +11,17 @@ Gem::Specification.new do |spec|
   spec.description = "Automate interactive programs with exact and regexp matching, " \
                      "Ruby blocks, multi-session waits, logging and terminal interaction."
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.2"
+  spec.required_ruby_version = ">= 3.4"
   spec.files = Dir[
-    "lib/**/*.rb", "examples/**/*.rb", "examples/**/*.md", "docs/**/*.md", "benchmark/**/*.rb",
-    "test/**/*.rb", "test/**/*.sh", "test/**/*.md", "Gemfile", "Rakefile",
-    ".rubocop.yml", "expect-pty.gemspec", "README.md", "CONTRIBUTING.md", "LICENSE", "CHANGELOG.md",
-    "script/ci", "script/release.rb"
+    "lib/**/*.rb", "sig/**/*.rbs", "README.md", "LICENSE", "CHANGELOG.md", "docs/API.md", "docs/MIGRATION.md"
   ]
   spec.require_paths = ["lib"]
   # 显式声明可独立升级的标准库 gem，供应用的 Bundler 解析完整运行时依赖。
   # pty 是 Ruby 自带的 POSIX 扩展，不是独立 gem。
-  spec.add_dependency "forwardable", "~> 1.3"
-  spec.add_dependency "io-console", ">= 0.6", "< 1.0"
-  spec.add_dependency "io-wait", ">= 0.3", "< 1.0"
-  spec.add_dependency "shellwords", ">= 0.1", "< 1.0"
-  spec.add_dependency "stringio", "~> 3.0"
+  spec.add_dependency "forwardable", ">= 1.3"
+  spec.add_dependency "io-console", ">= 0.6"
+  spec.add_dependency "shellwords", ">= 0.1"
+  spec.add_dependency "stringio", ">= 3.0"
   spec.metadata["rubygems_mfa_required"] = "true"
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/CHANGELOG.md"

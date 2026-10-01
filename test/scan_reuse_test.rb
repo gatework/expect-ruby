@@ -11,14 +11,14 @@ class ScanReuseTest < ExpectTest
     list.on("missing", from: first).on("other", from: second).on("ready", from: first)
     matcher = Expect::Matcher.new(list, 0)
     snapshots = 0
-    original = first.method(:buffer)
-    first.stub(:buffer, lambda {
+    original = first.__send__(:session).method(:buffer)
+    first.__send__(:session).stub(:buffer, lambda {
       snapshots += 1
       original.call
     }) do
       2.times do
         result = matcher.__send__(:find_match)
-        assert_same first, result[0]
+        assert_same first.__send__(:session), result[0]
         assert_equal 3, result[1].number
         assert_equal [0, 5, []], result[2]
       end
@@ -31,7 +31,7 @@ class ScanReuseTest < ExpectTest
     second, = pipe_session
     first.buffer = "start"
     events = []
-    result = Expect.expect_result(timeout: 0) do
+    result = Expect.expect(timeout: 0) do
       on("start", from: first) do |session|
         events << session.match
         session.buffer = "nested finish"
@@ -59,7 +59,7 @@ class ScanReuseTest < ExpectTest
     end
     writer.write("first")
     other_writer.write("other")
-    result = Expect.expect_result(timeout: 0) do
+    result = Expect.expect(timeout: 0) do
       on("missing", from: [first, second, other])
       on("other", from: other)
     end
@@ -72,17 +72,17 @@ class ScanReuseTest < ExpectTest
     session, = pipe_session
     session.listeners = [StringIO.new]
     [0, 4].each do |count|
-      session.__send__(:sequences=, {})
+      session.__send__(:session).__send__(:sequences=, {})
       count.times { |index| session.on_sequence(/missing#{index}/) }
       session.on_sequence("STOP")
-      history = session.__send__(:relay_history)
+      history = session.__send__(:session).__send__(:relay_history)
       concatenations = 0
       original = history.method(:+)
       history.define_singleton_method(:+) do |other|
         concatenations += 1
         original.call(other)
       end
-      assert Expect.__send__(:relay_buffer, session, { session => "payload".b })
+      assert Expect::Interaction.relay_buffer(session.__send__(:session), { session.__send__(:session) => "payload".b })
       assert_equal count.zero? ? 0 : 1, concatenations
     end
   end
@@ -101,7 +101,8 @@ class ScanReuseTest < ExpectTest
       true
     end
     buffers = { session => "aONEbTWOtail".b }
-    refute Expect.__send__(:relay_buffer, session, buffers)
+    refute Expect::Interaction.relay_buffer(session.__send__(:session),
+                                            { session.__send__(:session) => buffers.fetch(session) })
     assert_equal %i[one two], events
     assert_equal "ab", output.string
     assert_equal "tail", buffers.fetch(session)

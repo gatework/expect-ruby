@@ -33,10 +33,10 @@ class KibitzTest < ExpectTest
     @sessions << session
     saved = InteractProbe.configuration(session)
     session.spawn(RbConfig.ruby, KibitzProbe::EXAMPLE, "--timeout", "0.2")
-    result = session.expect_result(%r{--join (/tmp/expect-kibitz-[^\r\n ]+/peer\.sock)}, timeout: 3)
+    result = session.expect(%r{--join (/tmp/expect-kibitz-[^\r\n ]+/peer\.sock)}, timeout: 3)
     assert result.matched?
     path = result.captures.first
-    assert session.expect_result(:eof, timeout: 3).eof?
+    assert session.expect(:eof, timeout: 3).eof?
     assert_includes session.before, "timed out waiting for partner"
     assert_equal 1, session.wait(timeout: 1).exitstatus
     assert_equal saved, InteractProbe.configuration(session)

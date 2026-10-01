@@ -7,7 +7,7 @@ class Expect
   class Redactor
     # 完整诊断文本只匹配完整秘密；流边界的疑似秘密前缀由 finish 的默认策略保护。
     def self.redact(data, patterns, replacement: "[FILTERED]")
-      filter = new(patterns, replacement: replacement)
+      filter = new(patterns, replacement:)
       filter.append(data) + filter.finish(partial: false)
     end
 

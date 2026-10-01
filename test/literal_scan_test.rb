@@ -10,7 +10,7 @@ class LiteralScanTest < ExpectTest
     session.buffer = "prefix pass"
     assert_nil matcher.__send__(:find_match)
     writer.write("word:")
-    session.__send__(:read_available)
+    session.__send__(:session).__send__(:read_available)
     result = matcher.__send__(:find_match)
     assert_equal 1, result[1].number
     assert_equal [7, 9, []], result[2]
@@ -23,7 +23,7 @@ class LiteralScanTest < ExpectTest
     session.buffer = "ready"
     assert_equal 2, matcher.__send__(:find_match)[1].number
     writer.write(" preferred")
-    session.__send__(:read_available)
+    session.__send__(:session).__send__(:read_available)
     assert_equal 1, matcher.__send__(:find_match)[1].number
   end
 
@@ -38,15 +38,15 @@ class LiteralScanTest < ExpectTest
     session.clear_buffer
     assert_nil matcher.__send__(:find_match)
     writer.write("token")
-    session.__send__(:read_available)
+    session.__send__(:session).__send__(:read_available)
     assert_equal 2, matcher.__send__(:find_match)[1].number
     session.expect("token", timeout: 0)
     session.buffer_limit = 8
     writer.write("xxxxstart")
-    session.__send__(:read_available)
+    session.__send__(:session).__send__(:read_available)
     assert_equal [3, 5, []], matcher.__send__(:find_match)[2]
     session.clear_buffer
-    session.__send__(:restore_relay_buffer, "token")
+    session.__send__(:session).__send__(:restore_relay_buffer, "token")
     assert_equal 2, matcher.__send__(:find_match)[1].number
   end
 
@@ -60,18 +60,18 @@ class LiteralScanTest < ExpectTest
     150.times do
       case random.rand(6)
       when 0
-        session.buffer = chunks.sample(random: random) * random.rand(1..4)
+        session.buffer = chunks.sample(random:) * random.rand(1..4)
       when 1
         session.clear_buffer
       when 2
-        session.buffer_limit = [nil, 2, 5, 12].sample(random: random)
+        session.buffer_limit = [nil, 2, 5, 12].sample(random:)
       when 3
-        session.__send__(:restore_relay_buffer, chunks.sample(random: random).b)
+        session.__send__(:session).__send__(:restore_relay_buffer, chunks.sample(random:).b)
       when 4
-        session.expect("x", timeout: 0)
+        session.expect("x", timeout: 0).number
       else
-        writer.write(chunks.sample(random: random))
-        session.__send__(:read_available)
+        writer.write(chunks.sample(random:))
+        session.__send__(:session).__send__(:read_available)
       end
       expected = Expect::Matcher.new(list, nil).__send__(:find_match)
       actual = matcher.__send__(:find_match)
@@ -79,14 +79,14 @@ class LiteralScanTest < ExpectTest
     end
   end
 
-  def test_a_dynamically_registered_pattern_is_scanned_from_the_start
+  def test_registration_is_closed_when_the_matcher_is_constructed
     session, = pipe_session
     session.buffer = "prefix ready"
     list = Expect::PatternList.new([session], ["missing"])
     matcher = Expect::Matcher.new(list, nil)
     assert_nil matcher.__send__(:find_match)
-    list.on("prefix")
-    assert_equal [0, 6, []], matcher.__send__(:find_match)[2]
+    assert_raises(FrozenError) { list.on("prefix") }
+    assert_nil matcher.__send__(:find_match)
   end
 
   private

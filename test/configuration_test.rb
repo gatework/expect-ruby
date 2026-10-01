@@ -118,8 +118,8 @@ class ConfigurationTest < ExpectTest
   def test_predicates_use_ruby_truthiness_and_normalize_boolean_attributes
     Expect.configure(raw_pty: 0, log_stdout: nil)
     config = Expect.configuration
-    assert_equal true, config.raw_pty
-    assert_equal false, config.log_stdout
+    assert_equal true, config.raw_pty?
+    assert_equal false, config.log_stdout?
     session, = pipe_session
     assert session.raw_pty?
     refute session.log_stdout?
@@ -128,6 +128,6 @@ class ConfigurationTest < ExpectTest
     session.preserve_buffer = nil
     refute session.preserve_buffer?
     assert_raises(ArgumentError) { session.timeout(1) }
-    assert_raises(ArgumentError) { session.log_stdout(true) }
+    assert_raises(NoMethodError) { session.log_stdout(true) }
   end
 end

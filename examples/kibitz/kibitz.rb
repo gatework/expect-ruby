@@ -28,7 +28,7 @@ module Kibitz
           partner.listeners = [output]
           partner.log_output = log if log
         end
-        stopped = Expect.interconnect(*[keyboard, partner, shell].compact, timeout: timeout)
+        stopped = Expect.interconnect(*[keyboard, partner, shell].compact, timeout:)
         reason = if stopped.nil?
                    :timeout
                  elsif stopped.equal?(keyboard)
@@ -38,7 +38,7 @@ module Kibitz
                  else
                    :process
                  end
-        { reason: reason, tail: keyboard.buffer }
+        { reason:, tail: keyboard.buffer }
       end
     end
   end
@@ -113,8 +113,8 @@ module Kibitz
     result = input.raw do
       hint = options[:escape] ? "Escape #{options[:escape].inspect} ends this session." : "Escape disabled."
       output.write("Kibitz connected. #{hint}\r\n")
-      relay(input: input, output: output, peer: peer, shell: shell,
-            escape: options[:escape], timeout: options[:timeout], log: log)
+      relay(input:, output:, peer:, shell:,
+            escape: options[:escape], timeout: options[:timeout], log:)
     end
     if result[:reason] == :process
       shell.soft_close(timeout: 2)

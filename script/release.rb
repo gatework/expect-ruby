@@ -4,7 +4,6 @@
 require "digest"
 require "fileutils"
 require "json"
-require "net/http"
 require "open3"
 require "optparse"
 require "rubygems/package"
@@ -89,6 +88,14 @@ class Release
     section[1].strip
   end
 
+  # README 的安装示例必须使用当前版本；历史发布说明不参与此校验。
+  def self.validate_readme!(text, version)
+    references = text.scan(/expect-pty-(\d+\.\d+\.\d+)\.gem/).flatten
+    references.concat(text.scan(/gem "expect-pty", "~> (\d+\.\d+\.\d+)"/).flatten)
+    stale = references.reject { |reference| reference == version }.uniq
+    raise "README version references differ from #{version}: #{stale.join(", ")}" unless stale.empty?
+  end
+
   private
 
   def capture(*)
@@ -145,6 +152,8 @@ class Release
     end
     raise "Artifact file list differs from the source" unless package.contents.sort == expected.files.sort
 
+    self.class.validate_readme!(File.read("README.md"), @version) if expected.files.include?("README.md")
+
     committed = committed_files if @commit
     # 直接检查归档中的权限，避免解包时本机 umask 改写执行位。
     File.open(@artifact, "rb") do |io|
@@ -190,6 +199,8 @@ class Release
   end
 
   def get(path)
+    require "net/http"
+
     uri = URI("#{GEM_HOST}#{path}")
     Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 10, read_timeout: 30) do |http|
       http.get(uri.request_uri)

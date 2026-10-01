@@ -5,8 +5,8 @@ GitHub Release，附带同一个 Gem 和 `SHA256SUMS`。生成文件统一放在
 
 ## 准备版本
 
-1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.3.3`。
-2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.3.3 - 2026-09-27`；可以保留空的 `Unreleased` 标题。
+1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.6.0`，同步 README 中的安装版本和构建包路径。
+2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.6.0 - 2026-09-30`；可以保留空的 `Unreleased` 标题。
 3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
 发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
@@ -50,14 +50,14 @@ GitHub Runner 不会继承本机的 Gem 登录状态。要在 Actions 发布 Rub
 Actions 中配置 `RUBYGEMS_API_KEY`，使用具有 `Push rubygem` 权限的发布 Key。
 
 ```sh
-git tag -a v0.3.3 -m 'Release v0.3.3'
-git push origin v0.3.3
-gh workflow run release.yml --ref v0.3.3 --repo gatework/expect-ruby
+git tag -a v0.6.0 -m 'Release v0.6.0'
+git push origin v0.6.0
+gh workflow run release.yml --ref v0.6.0 --repo gatework/expect-ruby
 ```
 
 也可以在 Actions → Release → Run workflow 选择对应版本标签。工作流仅支持手动触发，避免本地发布时出现第二次并发上传。
 
-发布作业先验证标签与版本号一致，再复用 CI 的 Linux/macOS、Ruby 3.2/3.3/3.4/4.0 共 8 个环境。全部通过后，下载 Ubuntu / Ruby
+发布作业先验证标签与版本号一致，再复用 CI 的 Linux/macOS、Ruby 3.4/4.0 共 4 个环境。全部通过后，下载 Ubuntu / Ruby
 4.0 作业验证过的 Gem，交给同一个发布脚本；发布阶段不重新构建。
 
 未配置 `RUBYGEMS_API_KEY` 时，GitHub Release 仍会创建，RubyGems 步骤会明确失败；此时可以下载 Release 中的原包，在本地使用已有登录状态完成上传。
@@ -68,7 +68,7 @@ gh workflow run release.yml --ref v0.3.3 --repo gatework/expect-ruby
 CI 或 Release 下载的原包：
 
 ```sh
-ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.3.3.gem
+ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.6.0.gem
 ```
 
 将示例路径替换为实际输出的 `Artifact` 路径。`--artifact` 会跳过构建和测试，但仍核对包与当前源码是否一致；需要同时恢复

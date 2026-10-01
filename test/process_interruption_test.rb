@@ -7,7 +7,7 @@ class ProcessInterruptionTest < ExpectTest
   def test_hard_close_reaps_a_real_child_after_one_wait_interruption
     session = child('Signal.trap("HUP", "IGNORE"); Signal.trap("TERM", "IGNORE"); puts "ready"; sleep 60',
                     raw_pty: true)
-    assert_equal 1, session.expect("ready", timeout: 2)
+    assert_equal 1, session.expect("ready", timeout: 2).number
     pid = session.pid
     original = Process.method(:waitpid2)
     interrupted = false
@@ -154,7 +154,7 @@ class ProcessInterruptionTest < ExpectTest
 
   def test_forked_copy_cannot_reap_signal_or_detach_the_parent_child
     session = child('puts "ready"; sleep 60', raw_pty: true)
-    assert_equal 1, session.expect("ready", timeout: 2)
+    assert_equal 1, session.expect("ready", timeout: 2).number
     reader, writer = IO.pipe
     @ios.push(reader, writer)
     probe = fork do
@@ -163,7 +163,7 @@ class ProcessInterruptionTest < ExpectTest
       Process.stub(:waitpid2, forbidden) do
         Process.stub(:kill, forbidden) do
           Process.stub(:detach, forbidden) do
-            session.instance_variable_get(:@resources).finalize
+            session.__send__(:session).instance_variable_get(:@resources).finalize
             session.hard_close(timeout: 0)
             writer.write("ok")
           end
@@ -265,7 +265,7 @@ class ProcessInterruptionTest < ExpectTest
   # 假 PID 只存在于系统调用全部被替换的作用域；ensure 先撤销 PID，再交给通用 teardown。
   def with_fake_child
     session, = pipe_session
-    resources = session.instance_variable_get(:@resources)
+    resources = session.__send__(:session).instance_variable_get(:@resources)
     calls = []
     originals = %i[waitpid2 kill detach].to_h { |name| [name, Process.method(name)] }
     Process.define_singleton_method(:waitpid2) do |*|
@@ -290,7 +290,7 @@ class ProcessInterruptionTest < ExpectTest
   def with_clock(session)
     now = 0.0
     Expect.stub(:monotonic, -> { now }) do
-      session.stub(:sleep, ->(seconds) { now += seconds }) { yield -> { now } }
+      session.__send__(:session).stub(:sleep, ->(seconds) { now += seconds }) { yield -> { now } }
     end
   end
 end

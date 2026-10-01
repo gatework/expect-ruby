@@ -12,13 +12,13 @@ module RedactorBenchmark
              end
     runner.measure(name, bytes: input.bytesize,
                          inputs: { bytes: input.bytesize, secret_lengths: patterns.map(&:bytesize),
-                                   chunk_size: chunk_size, partial: partial, repeated_finish: true },
+                                   chunk_size:, partial:, repeated_finish: true },
                          verify: ->(output) { ExpectBenchmark.check(output == expected, "incorrect #{name} output") },
                          iterations: 5) do
       filter = Expect::Redactor.new(patterns)
       output = +"".b
       chunks.each { |chunk| output << filter.append(chunk) }
-      output << filter.finish(partial: partial) << filter.finish(partial: partial)
+      output << filter.finish(partial:) << filter.finish(partial:)
     end
   end
 end
@@ -45,11 +45,11 @@ RedactorBenchmark.measure(runner, "marker_in_input", "[FILTERED] secret!" * coun
 
 [1, 7, 4096].each do |chunk_size|
   RedactorBenchmark.measure(runner, "stream_#{chunk_size}", "prefix secret!\n" * count,
-                            ["secret"], "prefix [FILTERED]!\n" * count, chunk_size: chunk_size)
+                            ["secret"], "prefix [FILTERED]!\n" * count, chunk_size:)
 end
 [true, false].each do |partial|
   RedactorBenchmark.measure(runner, "partial_#{partial}", "prefix pass", ["password"],
-                            partial ? "prefix [FILTERED]" : "prefix pass", chunk_size: 1, partial: partial)
+                            partial ? "prefix [FILTERED]" : "prefix pass", chunk_size: 1, partial:)
 end
 
 runner.measure("update_pending", bytes: 10, inputs: { update: "keep old mask and match new secret" },

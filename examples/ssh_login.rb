@@ -35,21 +35,21 @@ begin
                  "-o", "UserKnownHostsFile=#{known_hosts}", "-l", user, host,
                  "env PS1='EXPECT_SHELL> ' /bin/sh -i"]
     Expect.spawn(*arguments, log_stdout: false, raw_pty: true) do |session|
-      prompt = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10)
+      prompt = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).number
       abort "SSH password prompt not received (#{session.error || "authentication rejected"})" unless prompt == 1
       session.write(password, "\n")
       password.replace("\0" * password.bytesize)
 
       # Start a command after authentication. The marker is assembled remotely
       # from two quoted arguments, so terminal command echo cannot satisfy it.
-      login = session.expect("EXPECT_SHELL> ", /Permission denied/i, timeout: 10)
+      login = session.expect("EXPECT_SHELL> ", /Permission denied/i, timeout: 10).number
       abort "SSH login failed (#{session.error || "authentication rejected"})" unless login == 1
       token = SecureRandom.hex(12)
       session.write("printf '\\n%s%s\\n' 'EXPECT_OK_' '#{token}'; id -un; tty\n")
       marker = session.expect(/EXPECT_OK_#{Regexp.escape(token)}\r?\n/, timeout: 10)
-      abort "remote command did not run (#{session.error})" unless marker
+      abort "remote command did not run (#{session.error})" unless marker.matched?
       identity = session.expect(%r{([^\r\n]+)\r?\n(/dev/[^\r\n]+)\r?\n}, timeout: 5)
-      abort "remote identity/TTY response missing" unless identity
+      abort "remote identity/TTY response missing" unless identity.matched?
       abort "unexpected SSH user" unless session.captures.first == user.b
       puts "SSH password login verified: #{user}@#{host}"
       puts "Remote identity: #{session.captures.first}; TTY: #{session.captures.last}"

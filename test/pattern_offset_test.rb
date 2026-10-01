@@ -18,10 +18,10 @@ class PatternOffsetTest < ExpectTest
     cases.each do |text, regexp, offset, length, captures|
       # 扫描只读调用者输入；省去正则副本后也不能改变编码标记或冻结字符串。
       bytes = text.b.freeze
-      assert_equal [offset, length, captures], Expect::Pattern.new(value: regexp).locate(bytes)
+      assert_equal [offset, length, captures], Expect.const_get(:Pattern).new(value: regexp).locate(bytes)
       assert_equal Encoding::BINARY, bytes.encoding
       session.buffer = bytes
-      result = session.expect_result(regexp, timeout: 0)
+      result = session.expect(regexp, timeout: 0)
       assert_equal bytes.byteslice(0, offset), result.before
       assert_equal bytes.byteslice(offset, length), result.match
       assert_equal bytes.byteslice((offset + length)..), result.after
@@ -31,7 +31,7 @@ class PatternOffsetTest < ExpectTest
   end
 
   def test_incomplete_utf8_defers_matching_and_eof_still_rejects_it
-    pattern = Expect::Pattern.new(value: /中(?=😀)/)
+    pattern = Expect.const_get(:Pattern).new(value: /中(?=😀)/)
     bytes = "前中😀".b
     (1..3).each do |missing|
       partial = bytes.byteslice(0, bytes.bytesize - missing)

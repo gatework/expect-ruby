@@ -9,21 +9,21 @@ begin
   size = runner.smoke ? 4096 : 65_536
   payload = "x" * size
   %i[none literal regexps].each do |kind|
-    session.__send__(:sequences=, {})
+    session.__send__(:session).__send__(:sequences=, {})
     session.on_sequence("STOP") if kind == :literal
     16.times { |index| session.on_sequence(/missing#{index}/) } if kind == :regexps
     output = StringIO.new("".b)
     session.listeners = [output]
     verify = ->(result) { ExpectBenchmark.check(result == true && output.string == payload) }
-    runner.measure("escape/#{kind}", bytes: size, inputs: { size: size, regexps: kind == :regexps ? 16 : 0 },
-                                     verify: verify) do
+    runner.measure("escape/#{kind}", bytes: size, inputs: { size:, regexps: kind == :regexps ? 16 : 0 },
+                                     verify:) do
       output.string = "".b
-      session.__send__(:relay_history).clear
-      Expect.__send__(:relay_buffer, session, { session => payload.b })
+      session.__send__(:session).__send__(:relay_history).clear
+      Expect::Interaction.relay_buffer(session.__send__(:session), { session.__send__(:session) => payload.b })
     end
   end
 
-  session.__send__(:sequences=, {})
+  session.__send__(:session).__send__(:sequences=, {})
   writer.close
   normal = StringIO.new("".b)
   slow = StringIO.new("".b)
@@ -33,8 +33,8 @@ begin
     ExpectBenchmark.check(result.equal?(session) && normal.string == payload && slow.string == payload)
     ExpectBenchmark.check(!session.pending_output? && session.buffer.empty?)
   end
-  runner.measure("mixed_targets", bytes: size * 2, inputs: { size: size, short_write: 17 }, iterations: 5,
-                                  verify: verify) do
+  runner.measure("mixed_targets", bytes: size * 2, inputs: { size:, short_write: 17 }, iterations: 5,
+                                  verify:) do
     normal.string = "".b
     slow.string = "".b
     session.buffer = payload

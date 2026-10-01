@@ -1,5 +1,92 @@
 # 验证记录
 
+## 2026-09-30：0.6.0 本地提交准备
+
+将现有改动归入 0.6.0，更新版本常量、安装示例、迁移说明及发布文档，保留历史验证记录。
+
+在 macOS arm64、Ruby 4.0.7、Bundler 4.0.20 上执行 `bash script/ci`：
+
+- 404 tests / 7,150 assertions，零失败、错误及跳过；71 个 Ruby 文件 lint 通过。
+- API 文档/RBS 覆盖检查、RBS validate、示例对话及五组 benchmark smoke 通过。
+- 构建 `expect-pty-0.6.0.gem`，普通 RubyGems 与最小 Bundler 应用的隔离安装、运行时依赖和真实本地 PTY 验证通过。
+- 对同一构建包执行 `script/release.rb --dry-run --rubygems-only --artifact tmp/ci/expect-pty-0.6.0.gem`，版本、发布说明、包元数据及源码内容校验通过。
+
+测试中有既有 Process 方法替换警告，构建时有宿主 RDoc 常量重定义警告；上述命令均退出 0。
+本次仅验证当前 macOS Ruby 4.0.7 环境；此前 Ruby 3.4/Linux 的矩阵记录见下文，本次未重新执行。
+本次操作仅用于本地 Git 提交，不推送 GitHub、不创建标签、不发布 RubyGems，也未执行远端 CI 或真实 SSH/网络设备验证。
+
+## 2026-09-30：接口收敛与审查整改
+
+在上一轮未提交工作树上继续实施。`expect` 统一返回 Result，移除 `expect_result` 和七个布尔普通 reader；
+按用户要求保留 `before`、`after`、`match`、`match_number`、`captures`、`error`。
+模式与分组在匹配前冻结，内部 Pattern 为私有 Data；修正 Result 构造与 callable 日志的 RBS，并补强 API 门禁。
+
+本轮最终本地 `bash script/ci` 结果：
+
+| 环境 | Ruby | 测试 | 风格及安装 |
+|---|---|---|---|
+| macOS arm64 | 3.4.11 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+| macOS arm64 | 4.0.7 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+| Linux aarch64，Docker bookworm | 3.4.11 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+| Linux aarch64，Docker bookworm | 4.0.7 | 403 runs / 7140 assertions，零失败、错误及跳过 | 71 Ruby 文件零 offense；普通/Bundler 隔离安装通过 |
+
+四组均通过 API 文档/签名覆盖检查、RBS validate、示例对话、五组基准 smoke、Gem 构建和安装后的真实本地 PTY 对话。
+新增回归证明模块方法遗漏文档或签名、Result 构造签名缺失会使门禁失败；同时验证结果便捷读取、谓词配置、
+回调内及等待后的规则冻结、callable 日志对象、Data 构造/复制和单字符串 shell/多参数 argv 行为。
+日志位于本地忽略目录 `tmp/interface-review/ci-{macos34,macos40,linux34,linux40}-final.log`。
+
+验证过程修正了本地快照携带 AppleDouble 文件及复制目录被 RuboCop 排除的环境问题，以上只统计修正后的最终运行。
+测试替换 Process 方法产生既有重定义警告；部分环境的 RubyGems 构建产生 RDoc 重定义警告，均未影响退出状态或安装验证。
+这是本地矩阵，未运行远程 GitHub Actions、真实 SSH/网络设备或完整性能评估；没有提交、推送、打标签或发布。
+后续 CHANGELOG 仅合并 Unreleased 段落，验证记录仅追加本节，运行源码与最终矩阵一致。
+
+## 2026-09-30：Ruby 3.4+ 现代化与 Session 内核
+
+本轮基于 0.5.3 工作树，保留开始时 CHANGELOG、README、gemspec、expect.rb、script/ci 的依赖清理改动。
+改造覆盖不可变 Result、独立 Session、Logging/Terminal/Interaction 模块、Cleanup 作用域、配置声明、类型文档和精简包。
+版本保持 0.5.3，变更记录于 Unreleased；构建包仅供本地验收，没有提交、标签、推送或发布。
+
+### 最终检查
+
+| 环境 | 完整 `bash script/ci` |
+|---|---|
+| macOS arm64，Ruby 4.0.7 | 394 测试 / 7,026 断言；70 文件 lint；API 文档/RBS 覆盖与签名验证；五组 benchmark smoke；Gem 构建及普通 Ruby/Bundler 隔离安装，全部通过 |
+| macOS arm64，Ruby 3.4.11 | 同上，在 `/tmp/expect-modernization-macos34-final` 独立副本执行，70 文件确实参与 lint |
+| Linux aarch64，Ruby 4.0.7 | 同上，现有 `ruby:4.0-bookworm` 容器独立源码副本及依赖 |
+| Linux aarch64，Ruby 3.4.11 | 同上，在上述 Linux 容器中从官方 Ruby 3.4.11 源码构建独立运行时 |
+
+Linux Ruby 3.4.11 源码包 SHA256：`5c22be44524312b3d433d68739bcc530633b1da5ef8ba0afa0a37680da17d3de`，构建前已校验。
+macOS 安装了 Homebrew ruby@3.4，未切换默认 Ruby；测试 Gem 依赖放在忽略目录下。
+四种环境的 Ctrl-C 专项各重复 50 次通过；处理器退出码验证信号，不依赖可被终端刷新丢弃的输出。
+第一次 macOS 3.4 副本位于仓库 tmp，RuboCop 因继承排除规则扫描 0 文件，因此该轮 lint **不计作证明**；上表采用移至 `/tmp` 后的完整复验。
+
+最终日志：`tmp/modernization/ci-{macos40,macos34,linux40,linux34}-final.log`。
+公开 Expect 实例方法与改前快照比较无新增/缺失；Result 的破坏性调整另见 MIGRATION。
+YARD 的公开源码入口统计 100% 文档覆盖；额外门禁检查 Forwardable、布尔宏、Data 生成的实际公开方法。
+RBS 验证只证明声明有效且覆盖公开方法，不代表全库方法体已经完成静态类型检查。
+测试包含 GC 回收、初始化中断、原异常保留、短写恢复、嵌套匹配、转接重入拒绝、二进制/UTF-8 和脱敏。
+
+### 性能与分配
+
+同一 macOS Ruby 4.0.7，改前/后均 10 次迭代、3 个样本，表中使用中位数；耗时比小于 1 表示本次样本更快。
+采样较小，耗时不作为稳定性能提升的结论。拆分中发现临时目标数组可避免，已合并遍历；多目标转接分配比基线减少约 4.5%。
+
+| 工作负载 | 改后/改前耗时 | 分配对象数（改前 → 改后） |
+|---|---|---|
+| `stream/1048576/literal` | 0.958 | 4,441 → 4,481 |
+| `stream/1048576/regexp` | 1.038 | 14,691 → 14,731 |
+| `groups/32` | 0.985 | 2,891 → 2,891 |
+| `ready/32` | 1.055 | 1,661 → 1,671 |
+| `escape/none` | 0.981 | 151 → 161 |
+| `escape/literal` | 1.044 | 191 → 201 |
+| `escape/regexps` | 1.029 | 811 → 821 |
+| `mixed_targets` | 1.045 | 849,301 → 810,821 |
+
+JSON 证据为 `tmp/modernization/{matching,relay}-{before,after}.json`；基线源码和原始差异同目录保存。
+
+未执行远程 GitHub Actions、x86_64、真实 SSH/网络设备或发布。上述 Linux 容器不等同于 GitHub Ubuntu runner。
+
+
 ## v0.5.2 改进计划 T00–T07（2026-09-27，本地实施阶段）
 
 以下是版本归档前的本地验证记录，对应改动随后归入 0.5.3。发布状态以 GitHub Release、对应 CI 和 RubyGems 为准。

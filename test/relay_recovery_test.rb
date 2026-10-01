@@ -7,7 +7,7 @@ class RelayRecoveryTest < ExpectTest
     reader, peer = IO.pipe
     sink, writer = IO.pipe
     @ios.push(reader, peer, sink, writer)
-    session = Expect.open(reader, writer: writer, **)
+    session = Expect.open(reader, writer:, **)
     @sessions << session
     [session, sink, peer]
   end
@@ -112,8 +112,8 @@ class RelayRecoveryTest < ExpectTest
     input, keyboard = IO.pipe
     @ios.push(input, keyboard)
     keyboard.write("one!two!")
-    first = session.interact(input: input, output: StringIO.new, escape: "!", timeout: 0.05)
-    second = session.interact(input: input, output: StringIO.new, escape: "!", timeout: 0.05)
+    first = session.interact(input:, output: StringIO.new, escape: "!", timeout: 0.05)
+    second = session.interact(input:, output: StringIO.new, escape: "!", timeout: 0.05)
     assert_same first, second
     assert_equal "onetwo", drain(sink)
     refute input.closed?
@@ -169,9 +169,9 @@ class RelayRecoveryTest < ExpectTest
     session, writer = pipe_session
     writer.write("\xe4".b)
     writer.close
-    assert_raises(EncodingError) { session.expect(/中/u, timeout: 1) }
+    assert_raises(EncodingError) { session.expect(/中/u, timeout: 1).number }
     assert_equal "\xe4".b, session.buffer
-    assert_equal 1, session.expect("\xe4".b, timeout: 0)
+    assert_equal 1, session.expect("\xe4".b, timeout: 0).number
   end
 
   def test_blocked_target_does_not_starve_another_source
@@ -349,8 +349,8 @@ class RelayRecoveryTest < ExpectTest
     assert_same(source, bounded { Expect.interconnect(source, timeout: 2) })
     refute source.pending_output?
     assert_empty source.buffer
-    assert_equal 1, target.expect("ready", timeout: 1)
-    assert_equal 1, target.expect("reply", timeout: 1)
+    assert_equal 1, target.expect("ready", timeout: 1).number
+    assert_equal 1, target.expect("reply", timeout: 1).number
   end
 
   def test_eof_validates_truncated_utf8_in_escape_regex
@@ -366,7 +366,7 @@ class RelayRecoveryTest < ExpectTest
     source.buffer = "#{"a" * 30}!"
     regexp = Regexp.new('\\A(a+)+\\1\\z', timeout: 0.01)
     global_timeout = Regexp.timeout
-    assert_raises(Regexp::TimeoutError) { bounded { source.expect(regexp, timeout: 0) } }
+    assert_raises(Regexp::TimeoutError) { bounded { source.expect(regexp, timeout: 0).number } }
     assert_equal "#{"a" * 30}!", source.buffer
     assert Regexp.timeout == global_timeout, "matching must not change the process regexp timeout"
     assert_equal 0.01, regexp.timeout
@@ -377,10 +377,10 @@ class RelayRecoveryTest < ExpectTest
     input, keyboard = IO.pipe
     @ios.push(input, keyboard)
     keyboard.write("one!")
-    source = session.interact(input: input, output: StringIO.new, escape: "!", timeout: 0.1)
+    source = session.interact(input:, output: StringIO.new, escape: "!", timeout: 0.1)
     source.close
     keyboard.write("two!")
-    resumed = session.interact(input: input, output: StringIO.new, escape: "!", timeout: 0.1)
+    resumed = session.interact(input:, output: StringIO.new, escape: "!", timeout: 0.1)
     refute_same source, resumed
     assert_equal "onetwo", drain(sink)
     resumed.graceful_close = true

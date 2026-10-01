@@ -7,7 +7,7 @@ class CleanupTest < ExpectTest
     reader, writer = IO.pipe
     @ios.push(reader, writer)
     reader.stub(:close, -> { raise IOError, "reader close failed" }) do
-      error = assert_raises(ArgumentError) { Expect.open(reader, writer: writer, own: true, unknown: true) }
+      error = assert_raises(ArgumentError) { Expect.open(reader, writer:, own: true, unknown: true) }
       assert_match(/unknown/, error.message)
       assert writer.closed?
     end
@@ -44,7 +44,7 @@ class CleanupTest < ExpectTest
       @ios.push(reader, writer)
       reader.stub(:close, -> { raise IOError, "reader close failed" }) do
         error = assert_raises(failure.class) do
-          Expect.open(reader, writer: writer, own: true) { raise failure }
+          Expect.open(reader, writer:, own: true) { raise failure }
         end
         assert_same failure, error
         assert writer.closed?
@@ -57,7 +57,7 @@ class CleanupTest < ExpectTest
     @ios.push(reader, writer)
     failure = IOError.new("reader close failed")
     reader.stub(:close, -> { raise failure }) do
-      error = assert_raises(IOError) { Expect.open(reader, writer: writer, own: true) { break :done } }
+      error = assert_raises(IOError) { Expect.open(reader, writer:, own: true) { break :done } }
       assert_same failure, error
       assert writer.closed?
     end
@@ -95,7 +95,7 @@ class CleanupTest < ExpectTest
     reader, writer = IO.pipe
     extra, peer = IO.pipe
     @ios.push(reader, writer, extra, peer)
-    resources = Expect::SessionResources.new(reader, writer: writer, slave: extra, own: true)
+    resources = Expect::SessionResources.new(reader, writer:, slave: extra, own: true)
     failure = IOError.new("reader close failed")
     reader.stub(:close, -> { raise failure }) do
       assert_same failure, assert_raises(IOError) { resources.close_handles }
@@ -112,7 +112,8 @@ class CleanupTest < ExpectTest
     pid = session.pid
     first, = pipe_session
     second, = pipe_session
-    session.instance_variable_set(:@interact_inputs, { first.to_io => first, second.to_io => second })
+    session.__send__(:session).instance_variable_set(:@interact_inputs,
+                                                     { first.to_io => first, second.to_io => second })
     Dir.mktmpdir do |dir|
       log = session.log_to(File.join(dir, "owned.log"))
       failure = IOError.new("handle close failed")
@@ -168,7 +169,7 @@ class CleanupTest < ExpectTest
     session = stubborn_child
     failure = RuntimeError.new("process wait failed")
     session.to_io.stub(:close, -> { raise IOError, "close failed" }) do
-      session.stub(:wait, ->(**) { raise failure }) do
+      session.__send__(:session).stub(:wait, ->(**) { raise failure }) do
         assert_same failure, assert_raises(RuntimeError) { session.hard_close(timeout: 0) }
       end
     end
@@ -198,7 +199,7 @@ class CleanupTest < ExpectTest
   def test_finalizer_reaps_after_both_handle_and_log_close_fail
     session = stubborn_child
     pid = session.pid
-    resources = session.instance_variable_get(:@resources)
+    resources = session.__send__(:session).instance_variable_get(:@resources)
     log_attempted = false
     Dir.mktmpdir do |dir|
       log = session.log_to(File.join(dir, "owned.log"))
@@ -227,7 +228,7 @@ class CleanupTest < ExpectTest
 
   def test_non_owner_cleanup_never_signals_and_finalizer_leaves_handles_alone
     session = stubborn_child
-    resources = session.instance_variable_get(:@resources)
+    resources = session.__send__(:session).instance_variable_get(:@resources)
     Process.stub(:pid, -1) do
       Process.stub(:kill, ->(*) { flunk "non-owner sent a signal" }) do
         resources.finalize
@@ -245,7 +246,7 @@ class CleanupTest < ExpectTest
   def stubborn_child
     session = child('Signal.trap("HUP", "IGNORE"); Signal.trap("TERM", "IGNORE"); puts "ready"; sleep 60',
                     raw_pty: true)
-    assert_equal 1, session.expect("ready", timeout: 2)
+    assert_equal 1, session.expect("ready", timeout: 2).number
     session
   end
 end

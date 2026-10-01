@@ -8,7 +8,7 @@ class MultiSessionTest < ExpectTest
     second, second_writer = pipe_session
     first_writer.write("irrelevant")
     second_writer.write("second:42")
-    result = Expect.expect_result(timeout: 1) do
+    result = Expect.expect(timeout: 1) do
       on("first", from: first)
       on(/second:(\d+)/, from: second)
     end
@@ -22,7 +22,7 @@ class MultiSessionTest < ExpectTest
     first, = pipe_session
     second, writer = pipe_session
     writer.write("ready")
-    assert_equal 1, Expect.expect("ready", from: [first, second], timeout: 1)
+    assert_equal 1, Expect.expect("ready", from: [first, second], timeout: 1).number
     assert_equal "ready", second.match
   end
 
@@ -31,7 +31,7 @@ class MultiSessionTest < ExpectTest
     second, second_writer = pipe_session
     first_writer.close
     ended = []
-    result = Expect.expect_result(timeout: 1) do
+    result = Expect.expect(timeout: 1) do
       eof(from: first) do |connection|
         ended << connection
         second_writer.write("done")
@@ -47,7 +47,7 @@ class MultiSessionTest < ExpectTest
   def test_all_eof_continuation_returns_without_waiting_forever
     first, writer = pipe_session
     writer.close
-    result = bounded { first.expect_result(timeout: nil) { eof { Expect.continue } } }
+    result = bounded { first.expect(timeout: nil) { eof { Expect.continue } } }
     assert result.eof?
   end
 
@@ -55,7 +55,7 @@ class MultiSessionTest < ExpectTest
     session, writer = pipe_session
     writer.write("right")
     other, = pipe_session
-    result = Expect.expect_result(timeout: 1) do
+    result = Expect.expect(timeout: 1) do
       on("wrong", from: session)
       on("missing", from: other)
       on("right", from: session)

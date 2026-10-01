@@ -1,6 +1,6 @@
 # SSH 多脚本和日志验证
 
-在仓库根目录运行，要求 Ruby 3.2+、SSH 服务，以及能运行 POSIX `/bin/sh` 的目标账户：
+在仓库根目录运行，要求 Ruby 3.4+、SSH 服务，以及能运行 POSIX `/bin/sh` 的目标账户：
 
 ```sh
 SSH_HOST=127.0.0.1 SSH_USER=crate ruby test/integration/ssh_scripts.rb

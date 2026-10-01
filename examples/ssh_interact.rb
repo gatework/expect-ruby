@@ -50,7 +50,7 @@ FileUtils.mkdir_p(base)
 directory = Dir.mktmpdir("#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}-", base)
 log_path = File.join(directory, "session.log")
 report_path = File.join(directory, "report.json")
-report = { mode: automatic ? "automatic" : "manual", host: host, port: port, user: user,
+report = { mode: automatic ? "automatic" : "manual", host:, port:, user:,
            started_at: Time.now.utc.iso8601, passed: false, cases: [], checks: [] }
 session = nil
 local_terminal = nil
@@ -66,7 +66,7 @@ begin
             "-l", user, host, "env ENV= PS1=#{Shellwords.escape(ScriptProbe::PROMPT)} /bin/sh -i"]
     session = Expect.spawn(*args, raw_pty: true, log_stdout: false, log_listeners: false,
                                   debug_level: 0, write_timeout: 5)
-    login = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10)
+    login = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).number
     ScriptProbe.check(login == 1, "SSH password prompt missing (#{session.error || "authentication rejected"})")
     session.write(password, "\n")
     runner = ScriptProbe::Runner.new(session, timeout: 10).ready!
@@ -76,7 +76,7 @@ begin
 
     remote_exit = false
     if automatic
-      report.merge!(InteractProbe.verify(session, user: user))
+      report.merge!(InteractProbe.verify(session, user:))
     else
       local_terminal = Expect.open($stdin)
       initial_mode = InteractProbe.configuration(local_terminal)

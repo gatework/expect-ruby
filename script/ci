@@ -45,15 +45,18 @@ spec = Gem.loaded_specs.fetch("expect-pty")
 install_root = File.realpath(ENV.fetch("GEM_HOME"))
 abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
 abort "Bundler leaked into the plain gem smoke" if ARGV.first == "plain" && defined?(Bundler)
-unexpected = %w[minitest rake rubocop parallel logger].select { |name| Gem.loaded_specs.key?(name) }
+unexpected = %w[minitest rake rubocop parallel logger rbs yard].select { |name| Gem.loaded_specs.key?(name) }
 abort "development dependencies leaked into the application: #{unexpected.join(', ')}" unless unexpected.empty?
+abort "installed RBS missing" unless File.file?(File.join(spec.full_gem_path, "sig/expect.rbs"))
+forbidden = spec.files.grep(%r{\A(?:test/|benchmark/|examples/|script/|Gemfile|Rakefile|\.rubocop)})
+abort "development files leaked into gem: #{forbidden.join(', ')}" unless forbidden.empty?
 spec.runtime_dependencies.each do |dependency|
   loaded = Gem.loaded_specs.fetch(dependency.name)
   abort "incompatible dependency: #{dependency}" unless dependency.matches_spec?(loaded)
 end
 
 # 检查实际使用的标准库已在包元数据中声明，默认 gem 可加载不能代替依赖声明。
-%w[forwardable io-console io-wait shellwords stringio].each do |name|
+%w[forwardable io-console shellwords stringio].each do |name|
   abort "undeclared runtime dependency: #{name}" unless spec.runtime_dependencies.any? { |dependency| dependency.name == name }
 end
 child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'
@@ -61,13 +64,13 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_st
   session.winsize = [30, 100]
   abort "io-console terminal size failed" unless session.winsize == [30, 100]
   # BSD stty 设置模式会清空待读输出，先收取提示，使子进程停在等待输入的位置。
-  abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5)
+  abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5).matched?
   mode = session.stty
   abort "installed stty query failed" if mode.empty?
   session.stty(mode)
 
   session.puts("expect-ruby")
-  abort "installed gem PTY dialogue failed" unless session.expect("reply:expect-ruby", timeout: 5)
+  abort "installed gem PTY dialogue failed" unless session.expect("reply:expect-ruby", timeout: 5).matched?
   status = session.soft_close(timeout: 5)
   abort "installed gem child did not exit successfully" unless status&.success?
 end
@@ -86,12 +89,12 @@ begin
     session.redact("secret")
     session.log_to(transcript)
     session.buffer = "ready"
-    expired = session.expect_result("ready", deadline: Expect.monotonic)
+    expired = session.expect("ready", deadline: Expect.monotonic)
     abort "expired deadline consumed buffered text" unless expired.timeout? && session.buffer == "ready"
-    abort "zero timeout lost buffered text" unless session.expect("ready", timeout: 0) == 1
+    abort "zero timeout lost buffered text" unless session.expect("ready", timeout: 0).number == 1
     producer.write("secret!")
     producer.close
-    result = session.expect_result(:eof, deadline: Expect.monotonic + 5)
+    result = session.expect(:eof, deadline: Expect.monotonic + 5)
     abort "installed gem did not preserve capped input" unless result.eof? && result.before == "cret!"
     abort "incorrect installed buffer accounting" unless session.buffer_discarded_bytes == 2
     abort "installed redaction failed" unless transcript.string == "[FILTERED]!"

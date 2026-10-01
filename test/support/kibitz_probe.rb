@@ -16,7 +16,7 @@ module KibitzProbe
       @log_path = File.join(directory, "session.log")
       command = noproc ? ["--noproc"] : ["--", "env", "ENV=", "PS1=#{ScriptProbe::PROMPT}", "LC_ALL=C", "/bin/sh", "-i"]
       @host = spawn_cli("--timeout", "15", "--log", log_path, *host_flags, *command)
-      invitation = host.expect_result(%r{--join (/tmp/expect-kibitz-[^\r\n ]+/peer\.sock)}, timeout: 5)
+      invitation = host.expect(%r{--join (/tmp/expect-kibitz-[^\r\n ]+/peer\.sock)}, timeout: 5)
       ScriptProbe.check(invitation.matched?, "host did not print the join command")
       @socket_path = invitation.captures.first
       ScriptProbe.check(File.stat(File.dirname(socket_path)).mode & 0o777 == 0o700, "socket directory is not private")
@@ -38,7 +38,7 @@ module KibitzProbe
     end
 
     def expect(terminal, pattern)
-      result = terminal.expect_result(pattern, timeout: 5)
+      result = terminal.expect(pattern, timeout: 5)
       ScriptProbe.check(result.matched?,
                         "#{terminal.equal?(host) ? "host" : "guest"} missing #{pattern.inspect} (#{result.error})")
       result
@@ -63,7 +63,7 @@ module KibitzProbe
 
     def finish!(expected_host_status: 0)
       [host, guest].each do |terminal|
-        result = terminal.expect_result(:eof, timeout: 5)
+        result = terminal.expect(:eof, timeout: 5)
         ScriptProbe.check(result.eof?, "kibitz did not reach EOF")
         status = terminal.wait(timeout: 2)
         expected = terminal.equal?(host) ? expected_host_status : 0
@@ -124,14 +124,14 @@ module KibitzProbe
     pair = Pair.new(directory, noproc: true, host_flags: custom)
     pair.host.write("HOST_MESSAGE")
     pair.expect(pair.guest, "HOST_MESSAGE")
-    ScriptProbe.check(pair.host.expect("HOST_MESSAGE", timeout: 0.02).nil?, "noproc echoed the sender's input")
+    ScriptProbe.check(pair.host.expect("HOST_MESSAGE", timeout: 0.02).timeout?, "noproc echoed the sender's input")
     pair.guest.write("中文回信")
     pair.expect(pair.host, "中文回信")
-    ScriptProbe.check(pair.guest.expect("中文回信", timeout: 0.02).nil?, "noproc echoed the guest's input")
+    ScriptProbe.check(pair.guest.expect("中文回信", timeout: 0.02).timeout?, "noproc echoed the guest's input")
     if ending == :host
       pair.host.write("prefixST")
       pair.expect(pair.guest, "prefix")
-      ScriptProbe.check(pair.guest.expect("ST", timeout: 0.02).nil?, "split escape prefix leaked to peer")
+      ScriptProbe.check(pair.guest.expect("ST", timeout: 0.02).timeout?, "split escape prefix leaked to peer")
       pair.host.write("OPLOCAL_TAIL")
     else
       pair.guest.write(InteractProbe::ESCAPE)

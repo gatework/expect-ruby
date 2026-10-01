@@ -5,7 +5,7 @@ require_relative "test_helper"
 class LifecycleContractTest < ExpectTest
   def test_external_reaping_releases_pid_without_fabricating_process_status
     session = child('puts "ready"; exit 7', raw_pty: true)
-    assert_equal 1, session.expect("ready", timeout: 2)
+    assert_equal 1, session.expect("ready", timeout: 2).number
     pid = session.pid
     assert_equal(7, bounded { Process.waitpid2(pid).last.exitstatus })
     refute session.alive?
@@ -22,7 +22,7 @@ class LifecycleContractTest < ExpectTest
     reader, producer = IO.pipe
     consumer, writer = IO.pipe
     @ios.push(reader, producer, consumer, writer)
-    session = Expect.open(reader, writer: writer)
+    session = Expect.open(reader, writer:)
     @sessions << session
     session.buffer = "tail"
     reader.close
@@ -40,7 +40,7 @@ class LifecycleContractTest < ExpectTest
   def test_failed_handle_close_can_be_retried_without_losing_other_owned_handles
     reader, writer = IO.pipe
     @ios.push(reader, writer)
-    session = Expect.open(reader, writer: writer, own: true)
+    session = Expect.open(reader, writer:, own: true)
     @sessions << session
     failure = IOError.new("close failed")
     reader.stub(:close, -> { raise failure }) do
@@ -56,11 +56,11 @@ class LifecycleContractTest < ExpectTest
 
   def test_timeout_and_eof_remain_events_and_write_errors_remain_io_errors
     session, writer = pipe_session
-    timeout = session.expect_result("missing", timeout: 0)
+    timeout = session.expect("missing", timeout: 0)
     assert timeout.timeout?
     assert_equal :timeout, timeout.error
     writer.close
-    eof = session.expect_result(:eof, timeout: 1)
+    eof = session.expect(:eof, timeout: 1)
     assert eof.eof?
     assert_equal :eof, eof.error
     failure = Expect::WriteTimeout.new(bytes_written: 3)

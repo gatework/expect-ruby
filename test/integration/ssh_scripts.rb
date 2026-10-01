@@ -33,7 +33,7 @@ FileUtils.mkdir_p(base)
 directory = Dir.mktmpdir("#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}-", base)
 log_path = File.join(directory, "session.log")
 report_path = File.join(directory, "report.json")
-report = { host: host, port: port, user: user, started_at: Time.now.utc.iso8601, passed: false }
+report = { host:, port:, user:, started_at: Time.now.utc.iso8601, passed: false }
 runner = nil
 session = nil
 
@@ -50,12 +50,12 @@ begin
     # cannot accidentally turn on debug or console logging for this check.
     session = Expect.spawn(*args, raw_pty: true, log_stdout: false, log_listeners: false,
                                   debug_level: 0, write_timeout: 5)
-    authentication = session.expect_result(/password:\s*\z/i, /Permission denied/i, timeout: 10)
+    authentication = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10)
     ScriptProbe.check(authentication.number == 1,
                       "SSH password prompt not received (#{authentication.error || "authentication rejected"})")
     session.write(password, "\n")
     runner = ScriptProbe::Runner.new(session, timeout: 10).ready!
-    report.merge!(ScriptProbe.verify_file_session(runner, log_path, user: user))
+    report.merge!(ScriptProbe.verify_file_session(runner, log_path, user:))
     report[:ssh_exit_code] = session.exit_code
     ScriptProbe.check(!File.binread(log_path).include?(password.b), "password detected in session log")
     report[:checks] << "password_absent"

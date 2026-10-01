@@ -15,15 +15,16 @@ module InteractProbe
   end
 
   def self.settings(session)
-    [session.listeners, session.log_stdout, session.log_listeners, session.raw_terminal?,
-     session.instance_variable_get(:@sequences).dup]
+    [session.listeners, session.log_stdout?, session.log_listeners?, session.raw_terminal?,
+     session.__send__(:session).instance_variable_get(:@sequences).dup]
   end
 
   def self.prepare(session, echo: false)
     # The remote tty needs ISIG for Ctrl-C to reach its foreground process.
     # Manual interaction needs remote echo because the local input is raw.
     session.write("stty sane #{echo ? "echo" : "-echo"}; set +o emacs; set +o vi\n")
-    ScriptProbe.check(session.expect(ScriptProbe::PROMPT, timeout: 5), "terminal setup did not return to shell")
+    ScriptProbe.check(session.expect(ScriptProbe::PROMPT, timeout: 5).matched?,
+                      "terminal setup did not return to shell")
     session.clear_buffer
   end
 
@@ -48,9 +49,9 @@ module InteractProbe
       marker = "HANDOFF_#{nonce}"
       session.write("printf '\\n%s%s\\n' 'HANDOFF_' '#{nonce}'\n")
       worker = Thread.new do
-        ScriptProbe.check(screen.expect(/#{Regexp.escape(marker)}\r?\n/, timeout: 5),
+        ScriptProbe.check(screen.expect(/#{Regexp.escape(marker)}\r?\n/, timeout: 5).matched?,
                           "handoff output did not reach local terminal")
-        ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 5), "handoff prompt missing")
+        ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 5).matched?, "handoff prompt missing")
         ScriptProbe.check(!slave.echo?, "local input terminal did not disable echo")
         runner = ScriptProbe::Runner.new(screen)
         actions.call(runner)
@@ -97,11 +98,12 @@ module InteractProbe
       script = "trap 'printf \"INT_HANDLED_#{nonce}\\n\"; exit 0' INT; " \
                "printf 'INT_READY_#{nonce}\\n'; while :; do sleep 1; done"
       screen.write("/bin/sh -c #{Shellwords.escape(script)}\n")
-      ScriptProbe.check(screen.expect(/INT_READY_#{nonce}\r?\n/, timeout: 5), "foreground command did not become ready")
+      ScriptProbe.check(screen.expect(/INT_READY_#{nonce}\r?\n/, timeout: 5).matched?,
+                        "foreground command did not become ready")
       screen.write("\x03")
-      ScriptProbe.check(screen.expect(/INT_HANDLED_#{nonce}\r?\n/, timeout: 5),
+      ScriptProbe.check(screen.expect(/INT_HANDLED_#{nonce}\r?\n/, timeout: 5).matched?,
                         "Ctrl-C did not reach remote foreground process")
-      ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 5), "shell did not recover after Ctrl-C")
+      ScriptProbe.check(screen.expect(ScriptProbe::PROMPT, timeout: 5).matched?, "shell did not recover after Ctrl-C")
       checks << "ctrl_c_forwarded_to_remote"
     end
 
@@ -115,7 +117,7 @@ module InteractProbe
     end
     checks.push("keyboard_to_remote", "remote_to_screen", "utf8_stdout_stderr",
                 "raw_mode_during_interact", "expect_resume", "reenter_interact")
-    { cases: results, checks: checks,
+    { cases: results, checks:,
       local_tty: slave.path, local_terminal_restored: true, transport_terminal_restored: true }
   ensure
     source&.close

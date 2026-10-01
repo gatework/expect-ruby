@@ -13,7 +13,7 @@ program = <<~'RUBY'
 RUBY
 
 Expect.spawn(RbConfig.ruby, "-e", program, raw_pty: true, log_stdout: false) do |session|
-  matched = session.expect(timeout: 3) do
+  result = session.expect(timeout: 3) do
     on("Name: ") do |connection|
       connection.puts("Ruby")
       connection.continue
@@ -24,7 +24,7 @@ Expect.spawn(RbConfig.ruby, "-e", program, raw_pty: true, log_stdout: false) do 
     end
     on(/Hello (\w+), code=(\d+)/)
   end
-  abort(session.error) unless matched
+  abort(result.error.to_s) unless result.matched?
   puts session.match
   session.soft_close(timeout: 1)
 end

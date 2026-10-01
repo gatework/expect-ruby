@@ -6,7 +6,7 @@
 IO、同时监听多个会话和转接人工交互。交互能力参考 [Expect.pm](https://github.com/jacoby/expect.pm)，接口采用 Ruby
 的属性、关键字参数和代码块。
 
-要求 **Ruby 3.2+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由
+要求 **Ruby 3.4+、POSIX 系统（Linux/macOS）**。运行时仅使用 Ruby 标准库，其中可独立安装的 gem 已在 gemspec 中声明，由
 RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提供独立的 `Expect` 类，不修改标准库的 `IO#expect`。
 
 源码中的解释性注释主要使用中文；欢迎用中文或英文提交 issue 和 PR，参与方式见 [贡献指南](CONTRIBUTING.md)。
@@ -16,7 +16,7 @@ RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.5.2", require: "expect/pty"
+gem "expect-pty", "~> 0.6.0", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -29,8 +29,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.5.2.gem
-gem install ./tmp/expect-pty-0.5.2.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.6.0.gem
+gem install ./tmp/expect-pty-0.6.0.gem
 ```
 
 ```ruby
@@ -38,7 +38,7 @@ require "expect/pty"
 
 Expect.spawn("/bin/sh", "-i") do |shell|
   shell.puts("printf 'hello ruby\\n'")
-  if shell.expect(/^hello ruby\r?$/, timeout: 3)
+  if shell.expect(/^hello ruby\r?$/, timeout: 3).matched?
     puts shell.match
   else
     warn shell.error
@@ -94,7 +94,7 @@ end
 | `reset_timeout_on_read` | `false` | 每次收到数据时重置匹配期限                                      |
 | `graceful_close`        | `false` | `close` 先尝试软关闭，再完成强制清理                            |
 
-布尔属性均提供 `name`、`name?` 和 `name=`，按 Ruby 真值规则转换：仅 `nil` / `false` 为假，`0` 为真。超时必须有限且非负，`nil`
+布尔属性只提供 `name?` 和 `name=`，按 Ruby 真值规则转换：仅 `nil` / `false` 为假，`0` 为真。超时必须有限且非负，`nil`
 表示无限；无效赋值不改变原值。`debug_level` 仅接受整数 `0..3`。
 
 ## 等待和匹配
@@ -109,11 +109,11 @@ session.expect(timeout: 1)             # 仅收集输出，直到超时或 EOF
 ```
 
 字符串始终按字面匹配，包括 `"-i"`、`"-re"`、`"timeout"` 和 `"eof"`；正则直接使用 Ruby `Regexp`
-。按声明顺序选择第一个能匹配的模式，不按它们在文本中的位置排序。返回模式的 **1 起始序号**，超时、EOF 或 IO 错误返回 `nil`
-。超时使用单调时钟。
+。按声明顺序选择第一个能匹配的模式，不按它们在文本中的位置排序。返回不可变 `Expect::Result`，`number` 为模式的 **1 起始序号**；超时、EOF 或 IO 错误时 `number` 为 `nil`。
+判断成功使用 `matched?`，不能直接判断 Result 对象的真值。超时使用单调时钟。
 
 ```ruby
-result = session.expect_result(/value=(\d+)/, timeout: 3)
+result = session.expect(/value=(\d+)/, timeout: 3)
 result.matched?
 result.timeout?
 result.eof?
@@ -122,17 +122,18 @@ result.captures
 result.session
 result.error # nil、:timeout、:eof 或原始 IOError / SystemCallError 对象
 
-number, error, match, before, after, session, captures = result.to_a
+result => { number:, match:, captures: }
 ```
 
-`Result` 使用原生 Ruby `Struct`，支持 `to_a`、`to_h`、模式解构；没有隐式 `to_ary`。会话提供 `last_result`，以及 `match`、
+`Result` 使用原生 Ruby `Data`，支持 `to_h`、位置和键模式解构。结果、文本和捕获数组均为不可变快照；
+来源会话与原始异常保持原对象。不提供字段写入、`to_a` 或隐式 `to_ary`。会话提供 `last_result`，以及 `match`、
 `before`、`after`、`match_number`、`captures`、`error` 快捷读取方法。
 
 成功匹配后删除匹配内容及其之前的内容，尾部留给下次匹配；超时保留缓冲，EOF 将未匹配内容放入 `before` 并清空缓冲。EOF
 与子进程退出是不同事件，使用 `wait` / `process_status` 判断进程结果。底层 IO 错误保留原始异常，回调中的普通异常直接抛出。
 
 接收缓冲、匹配和捕获值为 `ASCII-8BIT` 字节串，保留控制字符、NUL 和无效 UTF-8。固定 UTF-8
-正则会等待读取末尾拆开的字符收齐后再匹配，以免尾部锚点提前命中；显示捕获内容时可 `.force_encoding("UTF-8")`
+正则会等待读取末尾拆开的字符收齐后再匹配，以免尾部锚点提前命中；显示捕获内容时可 `.dup.force_encoding("UTF-8")`
 。任意二进制流请用字面字符串或二进制正则 `/.../n`。固定 UTF-8 正则遇到无效数据抛出 `EncodingError`；EOF
 时仍未收齐的字符也属于无效编码，匹配缓冲保留原字节供诊断或二进制匹配。缓冲上限按字节截断，应为文本设置足够的上限。
 
@@ -167,14 +168,13 @@ end
 ```
 
 回调通过闭包访问局部变量。无参数声明块在模式构建器中执行；希望保留调用方 `self` 时使用 `do |patterns|`，调用
-`patterns.on(...)`。所有模式注册完成后才读取 IO；注册异常或 `break` 不消费输入。块和位置模式不能混用。`expect_result`
-支持同样的声明方式。
+`patterns.on(...)`。所有模式注册完成后才读取 IO；注册异常或 `break` 不消费输入。块和位置模式不能混用。注册完成后规则冻结，回调不能再向本次等待追加模式。
 
 `continue` 继续等待并重新计时；`continue(reset_timeout: false)`
 保留原期限，类和实例均可调用。回调返回后若保留的期限已过，不再扫描新的文本匹配，未消费的输入留给下一次等待。无回调或返回其他值时结束本次匹配。超时回调只有返回重置计时的
 `continue` 才再次等待。EOF 回调继续时移除该源并等待其余会话；已知的 EOF 仍依次派发，全部 EOF 时直接返回，期限已过时仅对剩余活跃源触发超时。
 
-`expect` / `expect_result` 另接受 `deadline:`，值为 `Expect.monotonic` 时钟上的绝对秒数，`nil` 表示不设总期限。总期限与普通
+`expect` 另接受 `deadline:`，值为 `Expect.monotonic` 时钟上的绝对秒数，`nil` 表示不设总期限。总期限与普通
 `timeout` 取较早者，接收重置、文本/EOF 继续及超时回调均不能延长它。同一个 deadline 可用于连续多次等待：
 
 ```ruby
@@ -343,7 +343,7 @@ IO 期限不会强行中断这些代码。普通 `expect` 的同步日志和监�
 `ArgumentError`。日志包括被转接过滤的转义，显式启用 `redact` 时遮盖注册秘密；在 `expect` / `interconnect` 之间切换不会重复记录。
 
 一次转接尚未返回时，递归 `interconnect` 的来源若与活跃来源重叠，会在移动缓冲和修改发送游标前抛出
-`Expect::ReentrancyError`。完全独立的来源仍可嵌套转接；`on_sequence` 中的嵌套 `expect/expect_result` 及返回后再次转接仍受支持。
+`Expect::ReentrancyError`。完全独立的来源仍可嵌套转接；`on_sequence` 中的嵌套 `expect` 及返回后再次转接仍受支持。
 自定义 `write` 若已产生副作用却抛错、未返回计数，库无法推断已接受的字节数，此时不能保证恢复交付恰好一次。
 这一保护不代表所有会话 API 都可以跨线程并发调用。
 
@@ -404,7 +404,7 @@ ruby examples/ssh_interact.rb --auto
 的双终端示例与验证见 [examples/kibitz/](examples/kibitz/README.md)。
 
 [GitHub Actions](https://github.com/gatework/expect-ruby/actions/workflows/ci.yml) 在推送 `main`、推送 `v*` 标签、提交到
-`main` 的 Pull Request 或手动触发时运行。流水线覆盖 Ubuntu 24.04 / macOS 15 与 Ruby 3.2、3.3、3.4、4.0 的 8 种组合；每个环境执行
+`main` 的 Pull Request 或手动触发时运行。流水线覆盖 Ubuntu 24.04 / macOS 15 与 Ruby 3.4、4.0 的 4 种组合；每个环境执行
 `script/ci`，包括真实 PTY 测试和构建包的隔离安装验证。Ubuntu / Ruby 4.0 作业保留已验证的 Gem 构建产物 14 天，可从该次工作流的
 Artifacts 下载。
 
@@ -420,7 +420,7 @@ Minitest、Rake、RuboCop 及发布工具的依赖。
 |---------------|---------------|--------------------------|
 | `forwardable` | `forwardable` | 会话配置委托             |
 | `io/console`  | `io-console`  | 终端模式和窗口大小       |
-| `io/wait`     | `io-wait`     | IO 可读等待              |
+| `IO#wait_readable` | Ruby 3.2 内置 | IO 可读等待，无独立 gem |
 | `shellwords`  | `shellwords`  | `stty` 参数拆分          |
 | `stringio`    | `stringio`    | Ruby `puts` 语义         |
 | `pty`         | Ruby 自带扩展 | POSIX 伪终端，无独立 gem |
@@ -435,6 +435,15 @@ known_hosts 文件。`ssh_auto.rb` 顶部 `COMMANDS` 可直接修改，日志写
 多脚本验证入口为 `test/integration/ssh_scripts.rb`，人工/自动接管入口为 `examples/ssh_interact.rb`
 ，详细配置及日志检查见 [SSH 测试说明](test/integration/README.md)。
 
-当前接口迁移表见 [接口说明](docs/COMPATIBILITY.md)，本次与历史验证分列在 [验证记录](docs/VERIFICATION.md)
+当前行为边界见 [接口说明](docs/COMPATIBILITY.md)，本次与历史验证分列在 [验证记录](docs/VERIFICATION.md)
 。此次重构直接移除了旧入口，不提供兼容别名。
 防火墙连接器已迁移到相邻的 `algosec` 项目；本库只保留 `Expect` 与 `expect-pty` 通用传输能力。
+
+## 类型、文档与 0.6.0 接口变更
+
+0.6.0 最低支持 Ruby 3.4，包含不可变 `Result` 和内部 Session 重组。完整接口见 [API 文档](docs/API.md)，从 0.5.x 升级前请阅读
+[迁移说明](docs/MIGRATION.md)。类型签名随 Gem 发布在 `sig/expect.rbs`。
+
+发布包仅包含运行源码、类型签名和使用文档。测试、基准、示例及维护脚本请从仓库取得；
+运行 `bundle exec rake api` 验证文档覆盖与 RBS 声明，运行 `bundle exec yard doc --output-dir tmp/yard`
+生成 HTML 文档。签名验证不代表全库已经通过静态类型检查。

@@ -23,7 +23,7 @@ class InitializationFailureTest < ExpectTest
       reader, writer = IO.pipe
       @ios.push(reader, writer)
       without_ledger(failure) do
-        assert_same failure, assert_raises(failure.class) { Expect.open(reader, writer: writer, own: own) }
+        assert_same failure, assert_raises(failure.class) { Expect.open(reader, writer:, own:) }
         assert_equal own, reader.closed?
         assert_equal own, writer.closed?
       end
@@ -51,7 +51,7 @@ class InitializationFailureTest < ExpectTest
       @ios.push(reader, writer)
       reader.stub(:close, -> { raise Errno::EIO }) do
         without_ledger(failure) do
-          assert_same failure, assert_raises(failure.class) { Expect.open(reader, writer: writer, own: true) }
+          assert_same failure, assert_raises(failure.class) { Expect.open(reader, writer:, own: true) }
           assert writer.closed?
         end
       end
@@ -77,7 +77,7 @@ class InitializationFailureTest < ExpectTest
     invalid = Object.new
     invalid.define_singleton_method(:close) { raise "must not close non-IO objects" }
     without_ledger(failure = Interrupt.new) do
-      assert_same failure, assert_raises(Interrupt) { Expect.open(invalid, writer: writer, own: true) }
+      assert_same failure, assert_raises(Interrupt) { Expect.open(invalid, writer:, own: true) }
       assert writer.closed?
     end
   end

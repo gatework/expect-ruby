@@ -12,9 +12,9 @@ class IOTest < ExpectTest
       server.write("prompt>")
       server.write(server.gets.upcase)
     end
-    assert_equal 1, session.expect("prompt>", timeout: 1)
+    assert_equal 1, session.expect("prompt>", timeout: 1).number
     assert_equal 6, session.write("hello\n")
-    assert_equal 1, session.expect("HELLO\n", timeout: 1)
+    assert_equal 1, session.expect("HELLO\n", timeout: 1).number
   end
 
   def test_log_file_append_truncate_disable_and_manual_output
@@ -56,11 +56,11 @@ class IOTest < ExpectTest
       begin
         %w[a w].each do |mode|
           path = File.join(directory, "session-#{mode}.log")
-          session.log_to(path, mode: mode)
+          session.log_to(path, mode:)
           assert_equal 0o600, File.stat(path).mode & 0o777
           session.log_output = nil
           File.chmod(0o640, path)
-          session.log_to(path, mode: mode)
+          session.log_to(path, mode:)
           assert_equal 0o640, File.stat(path).mode & 0o777
         end
       ensure
@@ -80,7 +80,7 @@ class IOTest < ExpectTest
     session.log_stdout = true
     output, = capture_io do
       writer.write("two")
-      session.expect("two", timeout: 1)
+      session.expect("two", timeout: 1).number
     end
     assert_equal "two", output
     assert_equal "one", listener.string
@@ -93,14 +93,14 @@ class IOTest < ExpectTest
     session.debug_level = 1
     _, diagnostics = capture_io do
       writer.write("ready")
-      session.expect("ready", timeout: 1)
+      session.expect("ready", timeout: 1).number
     end
     assert_match(/matched pattern 1/, diagnostics)
     refute_match(/received/, diagnostics)
     session.debug_level = 2
     _, diagnostics = capture_io do
       writer.write("more")
-      session.expect("more", timeout: 1)
+      session.expect("more", timeout: 1).number
     end
     assert_match(/received "more"/, diagnostics)
   end
@@ -118,7 +118,7 @@ class IOTest < ExpectTest
     probe.enable do
       connection.write("hello")
       peer.write("reply")
-      connection.expect("reply", timeout: 1)
+      connection.expect("reply", timeout: 1).number
     end
 
     assert_equal 0, inspected
@@ -130,7 +130,7 @@ class IOTest < ExpectTest
     start = Expect.monotonic
     assert_equal 3, session.send_slow("abc", delay: 0.02)
     assert_operator Expect.monotonic - start, :>=, 0.06
-    assert_equal 1, session.expect("ABC", timeout: 1)
+    assert_equal 1, session.expect("ABC", timeout: 1).number
   end
 
   def test_send_slow_zero_delay_only_polls_and_later_reply_remains_readable
@@ -149,7 +149,7 @@ class IOTest < ExpectTest
     assert_equal [0, 0, 0], waits
     assert_equal("a中😀".b, bounded { peer.read(8) })
     peer.write("late reply")
-    assert_equal 1, session.expect("late reply", timeout: 1)
+    assert_equal 1, session.expect("late reply", timeout: 1).number
     assert_empty session.buffer
   end
 
@@ -157,8 +157,8 @@ class IOTest < ExpectTest
     session, = pipe_session
     calls = []
     failure = Expect::WriteTimeout.new(bytes_written: 0)
-    session.stub(:sleep, ->(duration) { calls << [:sleep, duration] }) do
-      session.stub(:write, lambda { |data|
+    session.__send__(:session).stub(:sleep, ->(duration) { calls << [:sleep, duration] }) do
+      session.__send__(:session).stub(:write, lambda { |data|
         calls << [:write, data]
         raise failure
       }) do
@@ -174,7 +174,7 @@ class IOTest < ExpectTest
     payload = (0..255).to_a.pack("C*") * 1024
     bounded do
       assert_equal payload.bytesize, session.write(payload)
-      assert_equal 1, session.expect(payload, timeout: 3)
+      assert_equal 1, session.expect(payload, timeout: 3).number
     end
     assert_equal payload, session.match
   end
@@ -266,7 +266,7 @@ class IOTest < ExpectTest
       writer.write("ready")
     end
     assert_equal([second], bounded { Expect.readable_sessions(first, second, timeout: 1) })
-    assert_equal 1, second.expect("ready", timeout: 0)
+    assert_equal 1, second.expect("ready", timeout: 0).number
     assert_empty Expect.readable_sessions(first, second, timeout: 0)
   end
 
@@ -298,7 +298,7 @@ class IOTest < ExpectTest
       File.open(file.path, "w") do |writer|
         session = Expect.open(writer)
         @sessions << session
-        result = session.expect_result("x", timeout: 1)
+        result = session.expect("x", timeout: 1)
         assert_instance_of IOError, result.error
       end
     end
@@ -306,16 +306,16 @@ class IOTest < ExpectTest
 
   def test_log_io_failure_does_not_masquerade_as_child_eof
     session = child('puts "ready"; STDIN.gets; puts "response"; sleep 30', raw_pty: true)
-    assert_equal 1, session.expect("ready\n", timeout: 2)
+    assert_equal 1, session.expect("ready\n", timeout: 2).number
     session.log_to(->(_) { raise Errno::EIO, "log failed" })
     session.write("continue\n")
-    result = session.expect_result("response", timeout: 2)
+    result = session.expect("response", timeout: 2)
     assert_instance_of Errno::EIO, result.error
     refute result.eof?
     refute session.eof?
     assert session.alive?
     assert_includes result.before, "response\n"
     session.log_output = nil
-    assert_equal 1, session.expect("response", timeout: 0)
+    assert_equal 1, session.expect("response", timeout: 0).number
   end
 end

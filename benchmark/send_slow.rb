@@ -11,8 +11,8 @@ payload = "x" * size
     ExpectBenchmark.check(count == size && received == payload && reply == (echo ? payload : nil))
   end
   runner.measure("send/#{echo ? "echo" : "silent"}/#{delay}", bytes: size,
-                                                              inputs: { size: size, echo: echo, delay: delay },
-                                                              iterations: 1, verify: verify) do
+                                                              inputs: { size:, echo:, delay: },
+                                                              iterations: 1, verify:) do
     client, peer = Socket.pair(:UNIX, :STREAM, 0)
     session = Expect.open(client, log_stdout: false)
     consumer = Thread.new do
@@ -26,8 +26,8 @@ payload = "x" * size
     end
     begin
       Timeout.timeout(10) do
-        count = session.send_slow(payload, delay: delay)
-        reply = session.expect_result(payload, timeout: 2).match if echo
+        count = session.send_slow(payload, delay:)
+        reply = session.expect(payload, timeout: 2).match if echo
         [count, consumer.value, reply]
       end
     ensure

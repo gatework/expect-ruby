@@ -5,9 +5,12 @@ gemspec
 
 group :development, :test do
   gem "minitest", "~> 5.0", require: false
-  # RuboCop 的依赖也必须支持最低 Ruby 版本。
+  # 开发工具与最低 Ruby 3.4 同步验证。
+  gem "irb", require: false # YARD 使用 irb/notifier，Ruby 4 不再默认提供。
   gem "parallel", "~> 1.27", require: false
   gem "rake", "~> 13.0", require: false
+  gem "rbs", "~> 4.0", require: false
+  gem "yard", "~> 0.9", require: false
   # 固定已审阅的规则集，避免不同 CI 环境自动启用新 cop 改变发布门槛。
   gem "rubocop", "= 1.89.0", require: false
 

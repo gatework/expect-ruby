@@ -3,11 +3,13 @@
 class Expect
   # 驱动一次单会话或多会话匹配，管理模式优先级、EOF 和共享期限，不接管 IO 所有权。
   # 调度只在扫描、回调和 IO 操作之间检查期限，不强行中断用户代码或单次正则计算。
+  # @api private
   class Matcher
     # 固定本次参与的会话及初始期限；已处理 EOF 的会话仅从本次等待中移除。
     def initialize(patterns, timeout, deadline: nil)
-      @patterns = patterns
-      @sessions = patterns.sessions
+      @patterns = patterns.finalize!
+      @sessions = patterns.sessions.map { |connection| Session.for(connection) }
+      @groups = patterns.groups.map { |connections, entries| [connections.map { |c| Session.for(c) }, entries] }
       @timeout = Expect.duration(timeout)
       # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
       @hard_deadline = deadline
@@ -22,15 +24,15 @@ class Expect
     def run
       @relay_buffers = {}
       @sessions.each do |session|
-        buffer = session.__send__(:interaction_buffer)
+        buffer = session.interaction_buffer
         if buffer
           # 转义回调中的显式匹配临时接管读取，先消费转接已经预读的尾部。
           @relay_buffers[session] = buffer
-          session.__send__(:interaction_buffer=, nil)
-          session.__send__(:restore_relay_buffer, buffer)
+          session.interaction_buffer = nil
+          session.restore_relay_buffer(buffer)
           buffer.clear
         end
-        session.__send__(:reset_result)
+        session.reset_result
       end
       loop do
         # 先消费已缓冲的匹配，再处理 EOF，最后读取；避免进程退出时丢失最后一个匹配。
@@ -49,7 +51,7 @@ class Expect
       # 嵌套 expect 即使异常退出，也要把未消费尾部还给原 Relay 的同一个缓冲对象。
       @relay_buffers.each do |session, buffer|
         buffer.replace(session.clear_buffer)
-        session.__send__(:interaction_buffer=, buffer)
+        session.interaction_buffer = buffer
       end
     end
 
@@ -59,7 +61,7 @@ class Expect
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮快照须在同一次扫描保持一致。
     def find_match
       # 单组且来源不重复时无需缓存；重复来源才为本轮扫描建立快照表。
-      groups = @patterns.groups
+      groups = @groups
       if groups.size > 1 || (groups.first && groups.first.first.size > @sessions.size)
         snapshots = {}.compare_by_identity
       end
@@ -99,23 +101,22 @@ class Expect
       @literal_misses ||= {}.compare_by_identity
       misses = (@literal_misses[session] ||= {}.compare_by_identity)
       previous = misses[pattern]
-      generation = session.__send__(:buffer_generation)
-      # 缓冲代次未变意味着只有尾部追加；模式对象的 value 被替换时也不能沿用旧扫描位置。
-      offset = if previous && previous[0] == generation && previous[2].equal?(pattern.value)
+      generation = session.buffer_generation
+      # 模式已冻结；缓冲代次未变意味着只有尾部追加。
+      offset = if previous && previous[0] == generation
                  return nil if previous[1] == buffer.bytesize
 
                  [previous[1] - pattern.value.bytesize + 1, 0].max
                else
                  0
                end
-      position = pattern.locate(buffer, offset: offset)
+      position = pattern.locate(buffer, offset:)
       if position
         misses.delete(pattern)
       else
         entry = (misses[pattern] ||= [])
         entry[0] = generation
         entry[1] = buffer.bytesize
-        entry[2] = pattern.value
       end
       position
     end
@@ -123,8 +124,8 @@ class Expect
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。
     def handle_match(session, pattern, position)
       previous_buffer = session.buffer
-      result = session.__send__(:record_match, pattern, position)
-      action = pattern.call(session)
+      result = session.record_match(pattern, position)
+      action = pattern.call(session.connection)
       return result unless continuing?(action)
 
       # 回调未改变缓冲时暂停当前模式，等待缓冲变化后再匹配，避免原地空转。
@@ -146,9 +147,9 @@ class Expect
 
     # 将剩余字节交给 EOF 回调；需要继续时等待其他源，全部结束则立即返回。
     def handle_eof(session)
-      result = session.__send__(:record_eof)
+      result = session.record_eof
       @handled_eof << session
-      actions = @patterns.eof_patterns_for(session).map { |pattern| pattern.call(session) }
+      actions = @patterns.eof_patterns_for(session.connection).map { |pattern| pattern.call(session.connection) }
       return result unless actions.any? { |action| continuing?(action) }
 
       @deadline = next_deadline if actions.include?(CONTINUE)
@@ -192,11 +193,11 @@ class Expect
         session = by_io ? by_io.fetch(io) : sessions.find { |candidate| candidate.to_io.equal?(io) }
         begin
           # 转接回调消费匹配内容，余下字节交回 Relay，不能在这里提前转发两次。
-          data = session.__send__(:read_available, propagate: !@relay_buffers.key?(session))
+          data = session.read_available(propagate: !@relay_buffers.key?(session))
         rescue Errno::EINTR
           next
         rescue IOError, SystemCallError => error
-          return session.__send__(:record_error, error)
+          return session.record_error(error)
         end
         @stalled_matches.delete(session) if data
         @deadline = next_deadline if data && session.reset_timeout_on_read?
@@ -231,14 +232,14 @@ class Expect
 
     # select 失败时无法归属单个源，为本次会话记录同一原始异常并返回首个结果。
     def record_error(error)
-      @sessions.map { |session| session.__send__(:record_error, error) }.first
+      @sessions.map { |session| session.record_error(error) }.first
     end
 
     # 为活跃会话记录超时，回调接收全部活跃源；只有重置计时的继续符号能重新等待。
     # 已到总期限仍通知超时回调，但不接受继续请求，且不消费尚未匹配的字节。
     def handle_timeout
-      results = active_sessions.map { |session| session.__send__(:record_error, :timeout) }
-      action = @patterns.timeout_pattern&.call(active_sessions)
+      results = active_sessions.map { |session| session.record_error(:timeout) }
+      action = @patterns.timeout_pattern&.call(active_sessions.map(&:connection))
       return results.first unless action == CONTINUE && !hard_expired?
 
       @deadline = next_deadline

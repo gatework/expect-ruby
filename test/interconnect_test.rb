@@ -10,7 +10,7 @@ class InterconnectTest < ExpectTest
     result = nil
     session.on_sequence("!") do
       writer.write("ready tail")
-      result = session.expect("ready", timeout: 0.05)
+      result = session.expect("ready", timeout: 0.05).number
       false
     end
     session.buffer = "!"
@@ -27,7 +27,7 @@ class InterconnectTest < ExpectTest
     session, = pipe_session
     result = nil
     session.on_sequence("!") do
-      result = session.expect("ready", timeout: 0)
+      result = session.expect("ready", timeout: 0).number
       false
     end
     session.buffer = "!ready tail"
@@ -41,13 +41,13 @@ class InterconnectTest < ExpectTest
     session, writer = pipe_session
     session.on_sequence("!") do
       writer.write("\xff".b)
-      session.expect(/ready/u, timeout: 0.05)
+      session.expect(/ready/u, timeout: 0.05).number
     end
     session.buffer = "!prefix"
 
     assert_raises(EncodingError) { bounded { Expect.interconnect(session, timeout: 1) } }
     assert_equal "prefix\xff".b, session.buffer
-    assert_nil session.__send__(:interaction_buffer)
+    assert_nil session.__send__(:session).__send__(:interaction_buffer)
   end
 
   def test_timeout_flush_leaves_blocked_output_pending_without_reading_after_deadline
@@ -77,7 +77,7 @@ class InterconnectTest < ExpectTest
     assert session.pending_output?
     assert_empty session.buffer
     session.listeners = []
-    assert_equal 1, session.expect("tail", timeout: 0)
+    assert_equal 1, session.expect("tail", timeout: 0).number
   end
 
   def test_backpressure_reads_still_apply_escape_sequences
@@ -106,7 +106,7 @@ class InterconnectTest < ExpectTest
     assert_equal "tail", target.buffer
     target.log_output = nil
     writer.write("ready")
-    assert_equal 1, target.expect("ready", timeout: 1)
+    assert_equal 1, target.expect("ready", timeout: 1).number
     assert_equal "tail", target.before
   end
 
@@ -205,8 +205,8 @@ class InterconnectTest < ExpectTest
     assert_equal "reply:hello\n", sink.string
     assert_equal "tail", source.buffer
     assert_equal [listener], session.listeners
-    refute session.log_listeners
-    assert_equal ["original"], source.instance_variable_get(:@sequences).keys
+    refute session.log_listeners?
+    assert_equal ["original"], source.__send__(:session).instance_variable_get(:@sequences).keys
   end
 
   def test_interconnect_leaves_terminal_modes_to_the_caller
@@ -330,10 +330,11 @@ class InterconnectTest < ExpectTest
 
     5.times do
       buffers[session] << ("x" * 16_384)
-      Expect.send(:relay_buffer, session, buffers)
+      Expect::Interaction.relay_buffer(session.__send__(:session),
+                                       { session.__send__(:session) => buffers.fetch(session) })
     end
 
-    assert_operator session.__send__(:relay_history).bytesize, :<=, 65_536
+    assert_operator session.__send__(:session).__send__(:relay_history).bytesize, :<=, 65_536
     assert_empty buffers.fetch(session)
   end
 
@@ -344,13 +345,15 @@ class InterconnectTest < ExpectTest
 
     6.times do
       buffers[session] << ("中" * 5461).b
-      assert Expect.send(:relay_buffer, session, buffers)
+      assert Expect::Interaction.relay_buffer(session.__send__(:session),
+                                              { session.__send__(:session) => buffers.fetch(session) })
     end
 
-    assert_operator session.__send__(:relay_history).bytesize, :<=, 65_536
-    assert session.__send__(:relay_history).dup.force_encoding(Encoding::UTF_8).valid_encoding?
+    assert_operator session.__send__(:session).__send__(:relay_history).bytesize, :<=, 65_536
+    assert session.__send__(:session).__send__(:relay_history).dup.force_encoding(Encoding::UTF_8).valid_encoding?
     buffers[session] << "终止".b
-    refute Expect.send(:relay_buffer, session, buffers)
+    refute Expect::Interaction.relay_buffer(session.__send__(:session),
+                                            { session.__send__(:session) => buffers.fetch(session) })
   end
 
   def test_regexp_escape_continuation_does_not_rematch_history
@@ -389,7 +392,7 @@ class InterconnectTest < ExpectTest
     refute session.eof?
 
     session.log_output = nil
-    assert_equal 1, session.expect("before!", timeout: 0)
+    assert_equal 1, session.expect("before!", timeout: 0).number
     assert_equal "tail", session.buffer
   end
 
@@ -419,7 +422,7 @@ class InterconnectTest < ExpectTest
     Expect.interconnect(session, timeout: 1)
     assert_equal "before", output.string
     assert_equal "before!tail", log.string
-    assert_equal 1, session.expect("tail", timeout: 0)
+    assert_equal 1, session.expect("tail", timeout: 0).number
     assert_equal "before!tail", log.string
   end
 end

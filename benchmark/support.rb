@@ -56,10 +56,10 @@ module ExpectBenchmark
         {
           seconds: elapsed, allocated_objects: after[:total_allocated_objects] - before[:total_allocated_objects],
           gc_count: after[:count] - before[:count], processed_bytes: bytes * iterations,
-          resources_before: resources_before, resources_after: resources
+          resources_before:, resources_after: resources
         }
       end
-      @results << { name: name, inputs: inputs, iterations: iterations, samples: measurements }
+      @results << { name:, inputs:, iterations:, samples: measurements }
       puts "#{name}: #{format("%.6f", measurements.map { |row| row[:seconds] }.sort[samples / 2])}s"
     end
 
@@ -77,7 +77,7 @@ module ExpectBenchmark
       report = {
         ruby: RUBY_DESCRIPTION, platform: RUBY_PLATFORM, revision: sha&.strip,
         fd_limit: Process.getrlimit(:NOFILE).first,
-        dirty: dirty.nil? ? nil : !dirty.empty?, library_sha256: digest.hexdigest, smoke: smoke, results: @results
+        dirty: dirty.nil? ? nil : !dirty.empty?, library_sha256: digest.hexdigest, smoke:, results: @results
       }
       FileUtils.mkdir_p(File.dirname(@output))
       File.write(@output, "#{JSON.pretty_generate(report)}\n")
@@ -96,7 +96,7 @@ module ExpectBenchmark
               output, _, status = Open3.capture3("ps", "-o", "rss=", "-p", Process.pid.to_s)
               output.to_i if status.success?
             end
-      { rss_bytes: rss && (rss * 1024), descriptors: descriptors }
+      { rss_bytes: rss && (rss * 1024), descriptors: }
     end
 
     # 安装包和源码归档可能没有 Git；未知状态记录为 nil，不误报为干净提交。
