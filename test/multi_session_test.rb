@@ -186,15 +186,4 @@ class MultiSessionTest < ExpectTest
     assert_same first, seen[0][1]
     assert_same second, seen[1][1]
   end
-
-  private
-
-  # 会话可定义业务相等性，但不同来源仍须各自读取、消费和派发 EOF。
-  def equalize_sessions(*sessions)
-    sessions.each do |session|
-      session.define_singleton_method(:hash) { 0 }
-      session.define_singleton_method(:eql?) { |other| other.is_a?(Expect) }
-      session.define_singleton_method(:==) { |other| other.is_a?(Expect) }
-    end
-  end
 end

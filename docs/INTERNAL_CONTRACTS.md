@@ -1,30 +1,40 @@
 # 内部状态与数据归属
 
-这些状态供 Matcher、Relay 和会话生命周期协作使用，不是公共接口。
+Expect::Session 本身是公开接口；本文所列状态与标为 `@api private` 的方法供 Matcher、Relay 和生命周期协作使用，不是用户契约。
 
 ## 模块职责
 
 | 模块                                            | 职责                                               |
 |-------------------------------------------------|----------------------------------------------------|
-| `expect.rb`                                     | 用户门面、配置发布与 DSL 构建       |
-| `session.rb` | PTY 生命周期、缓冲、直接读写和结果状态；组合日志、终端及交互模块 |
+| `expect.rb`                                     | 无状态模块工厂、来源就绪查询与 DSL 构建 |
+| `session.rb` | PTY 生命周期、缓冲、直接读写和结果状态；组合记录、诊断及交互模块 |
 | `cleanup.rb` | 异常优先级与始终/失败清理作用域 |
-| `configuration.rb`                              | 配置校验与可复制的默认快照                         |
 | `pattern.rb`、`pattern_list.rb`、`result.rb`    | 字节定位、声明顺序及原生结果值                     |
 | `matcher.rb`                                    | 一次等待的匹配、事件派发和期限                     |
-| `session_resources.rb`                          | IO、日志与直属子进程的所有权账本和 GC 兜底         |
-| `logging.rb`                                    | 日志目标、监听器及同步输出；不持有第二份资源所有权 |
-| `terminal.rb`                                   | `stty` 和窗口尺寸的会话终端接口                    |
+| `session_resources.rb`                          | 所属 IO 与直属子进程的所有权账本和 GC 兜底         |
+| `logging.rb`                                    | 借用 logger/transcript/outputs 及同步输出；不拥有目标 |
 | `interaction.rb`、`relay.rb`、`relay_writer.rb` | 人工接管、转义处理、共同调度和各目标发送游标       |
 
 `redactor.rb` 提供公共 `Expect::Redactor` 字节过滤接口，供会话日志、各方向诊断及上层库共用，不持有 IO，也不接管协议缓冲。
 
-`Expect` 通过明确的委托保留用户接口，内部 `Session` 组合 `Logging`、`Terminal`、`Interaction`。
-Matcher 和 Relay 直接调用 Session 协议；只有门面到内核的转换在 `Session.for` 中访问私有 reader。
-不添加公开的内部钩子包装。回调、链式返回值、`Result#session` 始终使用外层 Expect。
+## 标准库与专用实现的边界
 
-运行状态只属于 Session；SessionResources 不引用 Session、Expect、监听器或用户回调。
-终结器注册在 Session 上，只捕获资源账本，允许外层会话、内核及捕获它们的回调循环一同回收。
+诊断复用 Ruby Logger 的级别、格式和输出协议，终端设置复用 io/console，文件打开与关闭交给调用方的 File.open，结果值复用 Data。
+这些能力不再由本库维护配置门面、日志文件所有权或 stty 命令包装。
+
+PTY 控制终端建立、exec 错误管道握手和有限期限的子进程回收继续由 Session 与 SessionResources 负责：会话需要在启动前设置 slave 的 raw 模式，
+父进程需要在交付会话前确认 exec 是否成功，关闭时还需保留直属子进程归属及分阶段回收策略。Open3 的普通管道不能替代这些终端语义。
+Redactor 则处理分片原始字节中的秘密、跨块前缀和重叠区间；它与 ActiveSupport::ParameterFilter 的参数键值过滤职责不同，不相互替代。
+
+## 会话与协作协议
+
+`Expect` 是模块，工厂返回真实的公开 `Session`，没有门面、连接转换、全局配置或默认值继承。
+Session 组合 Logging 与 Interaction；timeout、write_timeout、buffer_limit、logger、transcript、outputs 是显式实例设置。
+Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自持有 raw/graceful 参数，不把操作策略保存成配置层。
+回调、链式返回与 Result.session 始终是该 Session 本身。终端操作直接使用 Ruby io/console，不启动 stty。
+
+运行状态只属于 Session；SessionResources 不引用 Session、输出目标或用户回调。
+终结器通过 `@resources.method(:finalize)` 注册在 Session 上，绑定方法仅持有资源账本，允许会话和捕获它的回调循环一起回收。
 `Result` 使用 Data，复制冻结文本与捕获值，但不冻结来源或异常对象。
 
 下列入口是内部协议，不属于用户接口；变更时同时检查调用方与失败恢复路径：
@@ -35,20 +45,20 @@ Matcher 和 Relay 直接调用 Session 协议；只有门面到内核的转换�
 | `read_available`                                             | Matcher、Relay、写入背压 | 转接缓冲交接时禁止直接传播和裁剪；普通匹配缓冲需要裁剪 |
 | `interaction_buffer`、`restore_relay_buffer`                 | Matcher、Relay           | 嵌套匹配及转接退出时把未消费字节交还原所有者           |
 | `sequences`、`relay_history`、`relay_callback`               | Relay、转义扫描          | 已识别转义只回调一次，已发送前缀不重放                 |
-| `queue_output`、`relay_outputs`、`propagate`                 | Relay、转义扫描          | 每个目标独立保存短写进度；同步传播只用于普通匹配       |
+| `queue_output`、`pending_writes`、`propagate`                 | Relay、转义扫描          | 每个目标独立保存短写进度；同步传播只用于普通匹配       |
 
 | 状态                  | 所有者与修改入口                                                                      | 交接、超时与关闭                                                                                                                              |
 |-----------------------|---------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
 | `@buffer`             | 会话的未消费匹配输入；`read_available` 追加，`record_match` 消费，`clear_buffer` 移交 | Matcher 用公开 `buffer` 的副本扫描；一次扫描的重复来源复用副本，下轮重新获取。超时保留字节。关闭不清空它，便于检查尾部                        |
 | `@interaction_buffer` | Relay 当前持有的待处理输入；转接背压读取也追加到这里                                  | 转义回调内的 Matcher 临时移回 `@buffer`；Matcher 的 ensure 将余下字节交回 Relay。Relay 的 ensure 恢复上层交互状态，并把未处理字节还给普通缓冲 |
-| `@relay_outputs`      | 源会话持有的各目标发送游标；`queue_output` 创建，RelayWriter 推进                     | 超时或写失败后保留原目标和已交付位置；重入续发，不重放成功前缀。关闭放弃剩余交付并清空队列，不关闭借用目标                                    |
+| `@pending_writes`      | 源会话持有的各目标发送游标；`queue_output` 创建，RelayWriter 推进                     | 超时或写失败后保留原目标和已交付位置；重入续发，不重放成功前缀。关闭放弃剩余交付并清空队列，不关闭借用目标                                    |
 | `@relay_history`      | 源会话的正则转义历史窗口；普通转发及超时排出尾部时更新                              | 同一规则跨次转接保留，规则改变或转义消费后清空。窗口遵守 buffer_limit 或内部默认上限，固定 UTF-8 正则不保留开头的孤立续字节。关闭清空         |
-| `@relay_callback`     | 已识别转义但尚未交付完前缀时，源会话暂存的回调                                        | 所有前缀目标交付完成后执行一次；超时保留，关闭释放。不能在等待写入后重新扫描这段已识别转义                                                    |
+| `@relay_callback`     | 已识别转义但尚未交付完前缀时，源会话暂存的回调                                        | 保存可 call 对象或 nil；无回调转义使用 STOP lambda。所有前缀目标交付完成后执行一次；超时保留，关闭释放。不能在等待写入后重新扫描这段已识别转义                                                    |
 
 匹配优先级始终是“声明组 → 会话 → 模式”，不是文本位置；来源去重、相邻组比较及 EOF 归属均按会话对象身份，
 不能由自定义 `==` / `eql?` / `hash` 合并独立来源。就绪查询与转接的 IO 归属及去重同样使用对象身份。多个会话包装同一 IO
-时，就绪处理使用对象身份选择首个声明会话。回调前后用于判断缓冲是否变化的快照仍独立保留，不能换成可变内部字符串。零长度或
-preserve_buffer 的继续匹配必须遵守 stalled 保护。
+时，匹配器读取归属选择首个声明会话；就绪查询仍返回各自的会话。stalled_matches 与嵌套匹配的 relay_buffers 也按对象身份保存。回调前后用于判断缓冲是否变化的快照仍独立保留，不能换成可变内部字符串。零长度或
+consume:false 的继续匹配必须遵守 stalled 保护。
 
 文本与 EOF 回调遵守相同的继续期限：`continue(reset_timeout: false)` 返回后先检查原期限，再开始下一轮文本匹配。EOF
 继续已到期时仍依次派发已知 EOF，不读取新输入；超时仅通知仍活跃的来源，保留未消费缓冲。所有来源都已 EOF 时直接返回
@@ -66,21 +76,23 @@ Relay 在移动缓冲、恢复写入期限之前检查全部来源的 `relay_own
 
 ## 关闭与所有权
 
-SessionResources 保存所属句柄、直属子进程及其所有者 PID、所属日志。初始所有者为资源创建进程；登记新 PID 时改为实际启动它的进程，
+SessionResources 只保存所属句柄、直属子进程及其所有者 PID。初始所有者为资源创建进程；登记新 PID 时改为实际启动它的进程，
 因此父进程创建的 PTY 可以在 fork 后启动并回收新的直属子进程。仅继承已有 PID 的副本不改变所有者，不发送信号或回收父进程的孩子。借用 IO 不关闭。soft_close
 最多发送 TERM 并保留未退出 PID；hard_close 可在有限等待后发送 KILL。
 
-工厂和构造器在校验之前登记资源归属，失败时沿用同一清理流程；启动成功必须显式记录，不能用 PID 非空推断整个工厂调用已经成功。即使
+工厂和构造器进入方法体后先保留资源归属，已知设置校验失败沿用同一清理流程；未知关键字在 Ruby 调用入口拒绝，不接管 IO。启动成功必须显式记录，不能用 PID 非空推断整个工厂调用已经成功。即使
 exec 成功后诊断输出失败，也要立即回收未交付给调用方的子进程。
 启动错误管道的两个端点均须尝试关闭；fork/exec 的原始失败先于常规清理错误传播，不能被管道或 PTY 关闭失败覆盖。
 
-资源账本构造本身也可能被中断。账本尚未发布时，`cleanup_session` 仅按局部 `own` 关闭真实 IO，按对象身份去重，
+Session.allocate 或资源账本构造本身也可能被中断。会话未建立时，open 按局部 own 关闭输入端点；账本尚未发布时，`cleanup_session` 仅按局部 `own` 关闭真实 IO，按对象身份去重，
 一端失败仍尝试其他端；借用 IO 保持打开。账本存在后仍调用统一的 `close`，不维护第二份生命周期状态。
-`Cleanup.always` 记录本次作用域是否已有异常；只有已有主异常时才抑制常规清理错误，保留同一异常对象。
+`Cleanup.always` 记录本次作用域是否已有主异常；存在时只抑制清理中的 StandardError，保留同一主异常对象。
+这包括 transcript writer 或 Logger formatter 抛出的 RuntimeError；没有主异常时仍传播清理错误。
+清理中新发生的 Interrupt/SystemExit 等非 StandardError 不吞掉。
 内部动作使用 `close_resources`、`close_child`、`mark_eof` 等直接名称，不保留旧私有方法别名。
 
-显式关闭遇到 IOError/SystemCallError 时，继续尝试其他句柄、交互包装器、日志和子进程清理，最后传播首个清理错误；已经在传播的其他异常保留。失败资源继续持有，后续关闭可重试。GC
-终结器独立尝试句柄、日志、非阻塞回收，常规清理错误不向外传播。终结器不能强引用会话本身。
+显式关闭遇到 IOError/SystemCallError 时，继续尝试其他句柄、交互包装器、过滤尾部和子进程清理，最后传播首个清理错误；外围 Cleanup 仍按上述主异常规则处理。失败资源继续持有，后续关闭可重试。GC
+终结器独立尝试句柄关闭和非阻塞回收，常规清理错误不向外传播。终结器不能强引用会话本身。
 
 `SessionResources#reap` 只做一次非阻塞系统调用，EINTR 交给所属流程决定：主会话 `process_status` 返回当前未知/缓存状态，
 `wait_for_child` 沿用阶段开始时的绝对期限，并在重试间休眠。自然等待、TERM 等待分别使用调用方预算，硬关闭的 KILL 阶段保留 1 秒预算；
@@ -90,16 +102,6 @@ detach 成功才移交 PID，失败则保留未知 PID/status。每个操作仍�
 
 是否保留原始异常由当前构造、块或关闭作用域显式记录，不能直接读取调用者 rescue 中的 `$!`。`Interrupt` 和 `SystemExit`
 同样先清理再传播；`break` / `throw` 不是异常，此时清理失败仍应抛出。
-
-`stty` 为辅助管道和 PID 创建独立的 SessionResources，不写入主会话的 PID/status，不关闭主会话。
-账本构造被中断时仍关闭局部变量中已经创建的管道；fork 后的副本只关闭本地管道，不向父进程的辅助 PID 发信号或 detach，等待途中也重新核对归属。
-正常路径读取输出并阻塞回收，EINTR 只重试 wait，不再次启动命令，也不增加固定等待。
-异常路径先尝试关闭两个管道，再依次等待自然退出、发送 TERM、发送 KILL；每阶段使用固定的 50ms 单调时钟预算，
-非阻塞 wait 或 signal 的 EINTR 不延长期限。ECHILD 立即释放该 PID 的归属，不向可能复用的 PID 发信号；
-ESRCH 后仍尝试回收。三个阶段结束或系统调用失败后仍有 PID 时交给 `Process.detach` 异步回收，不保证返回前退出，
-也不伪造退出状态。预算约束进程轮询，不是任意同步 IO 或系统调度的硬实时保证。
-本次主异常（包括 Interrupt/SystemExit）保持对象身份；没有主异常时传播首个 IOError/SystemCallError 清理失败。
-永久失败的 close 只保证被尝试，不能报告成句柄已关闭；缺失 stty 仍为 IOError 并保留 ENOENT cause。
 
 ## 缓冲裁剪与字面扫描
 
@@ -111,7 +113,7 @@ ESRCH 后仍尝试回收。三个阶段结束或系统调用失败后仍有 PID 
 
 公共 `deadline:` 使用 `Expect.monotonic` 的有限绝对秒数，`nil` 表示无总期限；它与 `timeout` 取较早者。`reset_timeout_on_read` 及所有继续回调只能重置相对期限，总期限固定。总期限过后不读取或消费新的文本匹配；正则计算结束后也要重查期限。已知 EOF 保留派发顺序，全部来源已 EOF 时直接返回 EOF。
 
-未设置总期限时，`timeout: 0` 保持现有缓冲匹配和首次非阻塞轮询语义。期限检查是协作式的，不强行打断单次正则、日志、同步监听器或用户回调；正则执行限时由调用方的 `Regexp` 实例控制。
+未设置总期限时，`timeout: 0` 保持现有缓冲匹配和首次非阻塞轮询语义。期限检查是协作式的，不强行打断单次正则、transcript、outputs 或用户回调；正则执行限时由调用方的 `Regexp` 实例控制。
 
 直接写入及 Relay 目标的 `write_timeout` 用于背压等待和中断重试，不是持续成功短写的总耗时限制。
 匹配 `deadline`、写入期限和 Relay 总 `timeout` 分别管理，不自动把匹配期限传给回调中的写入。
@@ -121,9 +123,14 @@ ESRCH 后仍尝试回收。三个阶段结束或系统调用失败后仍有 PID 
 
 ## 诊断与脱敏归属
 
-`logging.rb` 分开处理接收日志、诊断和协议转发。`diagnostic_output` 借用 Logger、可写对象或回调，不进入资源账本；默认沿用 stderr。回调接收冻结的事件 Hash 和 message 字符串，不含会话对象。诊断失败与其他同步 IO 错误同样保留已读取的原始输入。
+`logging.rb` 分开处理 transcript、logger 和 outputs，全部借用且不进入资源账本。默认 transcript/logger 为 nil，outputs 为空。
+logger 使用标准 `add` / `debug?` 协议，级别与格式由 Logger 控制；INFO 为生命周期和匹配，DEBUG 为原始收发内容。
+传给 add 的冻结事件 Hash 包含 event/pid/fd/message，message 字符串也冻结，不含会话对象。
+ActiveSupport 兼容对象可直接注入，不引入框架依赖，也不再包装 IO、callable 或 stderr 默认分支。
+诊断失败与其他同步 IO 错误一样保留已读入的原始数据。
 
-`redactor.rb` 是无 IO 的公共字节过滤器。会话复制并追加注册秘密，每个接收日志流以及发送、接收诊断方向各自持有过滤器。暂存最长秘密长度减一的尾部，重叠秘密合并为隐藏区间，过滤发生在 `inspect` 转义之前。缓冲快照可能只剩秘密中间字节，启用脱敏时整体隐藏，不重复展示其内容。
+`redactor.rb` 是无 IO 的公共字节过滤器。会话复制并追加注册秘密，transcript 以及发送、接收诊断各自持有过滤器。
+暂存最长秘密长度减一的尾部，重叠秘密合并为隐藏区间，过滤发生在 inspect 转义之前；不生成会因消费或裁剪而失去上下文的 buffer 诊断。
 
 公共构造器及 `patterns=` 会校验并复制秘密；空模式列表直接交付字节，更新规则不清除已经建立的掩码。
 同一模式的命中按字节偏移递增枚举，相交或相邻区间合并后才写入掩码；不能通过跳过整个秘密长度省略重叠命中。
@@ -131,11 +138,13 @@ ESRCH 后仍尝试回收。三个阶段结束或系统调用失败后仍有 PID 
 默认替换标记为 `[FILTERED]`，上层库可显式指定自己的标记。类方法 `redact` 使用独立流并以 `finish(partial: false)` 结束完整文本；
 `append`/`finish` 的默认流策略仍隐藏末尾疑似秘密前缀。作用域所有权、终端渲染和异常字段选择由调用方负责。
 
-EOF 结束接收流，日志或诊断目标替换先冲刷旧流，显式关闭结束所有方向；尾部疑似秘密前缀保守隐藏。GC 只清理所属资源，不执行用户回调或过滤尾部输出。调用方需显式关闭以交付尾部；借用日志和诊断目标不关闭，库打开的日志文件仍由 SessionResources 管理。
+EOF 结束接收流，日志或诊断目标替换先冲刷旧流，显式关闭结束所有方向；尾部疑似秘密前缀保守隐藏。GC 只清理所属资源，不执行用户回调或过滤尾部输出。调用方需显式关闭以交付尾部；借用 transcript、logger 和 outputs 不关闭，文件权限、打开与关闭全部由调用方负责。
 
-日志路径以覆盖模式重新打开前先结束旧流，冲刷失败不能提前截断目标文件。尾部回调重入并轮换日志时，外层重新读取当前目标及所有权；诊断冲刷对方向取快照并排空回调产生的尾部，交接前的发送和接收仍归旧目标。匹配诊断中的嵌套等待可消费缓冲，但不能替换外层已记录的 Result 或正式模式回调所见结果。
+transcript/logger 替换前先冲刷旧过滤流，失败保留旧目标。冲刷循环排空回调新追加的尾部；诊断对方向快照遍历，交接前的发送和接收仍归旧目标。
+匹配诊断中的嵌套等待可消费缓冲，但不能替换外层已记录的 Result 或正式模式回调所见结果。
 
-过滤不修改匹配缓冲、Result、stdout 或 listeners，不推断编码、转义等变换后的秘密，也不能追溯删除已交付日志。同步目标须及时返回；自定义回调抛出的非 IO 异常原样传播。
+过滤不修改匹配缓冲、Result 或 outputs，不推断编码、转义等变换后的秘密，也不能追溯删除已交付记录。
+同步目标须及时返回；自定义回调抛出的非 IO 异常原样传播。
 
 ## 生命周期与错误边界
 
@@ -147,11 +156,13 @@ EOF 结束接收流，日志或诊断目标替换先冲刷旧流，显式关闭�
 
 | 不变量 | 测试 |
 | --- | --- |
-| stty 主错误优先、辅助进程回收、EINTR 预算、ECHILD/ESRCH、detach 和主会话隔离 | terminal_cleanup_test |
+| 原生 io/console 模式、窗口尺寸及人工接管恢复 | terminal_test、interact_test |
+| 明确会话设置、每轮策略、公开类型和初始化失败所有权 | session_options_test、interface_contract_test |
+| 值相等的独立来源、stalled 保护和嵌套转接缓冲归还 | session_identity_test、relay_identity_test、multi_session_test |
 | 裁剪计数、正常消费、转接交接与日志错误 | buffer_accounting_test |
 | 外部回收、借用 IO、关闭失败重试、原生错误分类 | lifecycle_contract_test |
 | 绝对期限、接收和回调重置、过期文本、EOF、EINTR、零轮询 | deadline_test |
-| Logger/IO/回调、分片与重叠秘密、二进制、流尾部、关闭失败、覆盖与重入 | diagnostics_test |
+| 标准 Logger、借用 transcript、分片秘密、二进制、流尾部与重入 | diagnostics_test |
 | 公共过滤器独立加载、完整文本与分块、空规则、规则更新、输入复制、安全摘要及固定种子字节区间差分 | redactor_test |
 | 字面跨读取命中、声明优先级、缓存失效、操作序列与全量扫描对照 | literal_scan_test |
 

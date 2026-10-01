@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 一次转接的共同读写循环；发送游标留在源会话中，调用结束后仍可继续。
   # 本对象只暂借未处理输入；读缓冲、发送进度与转义回调分开保存，避免重入时重复交付。
   # @api private
@@ -10,20 +10,20 @@ class Expect
 
     # 这里只校验参数；run 取得所有来源后才转移缓冲，不关闭或接管任何外部 IO。
     def initialize(sessions, timeout)
-      @sessions = sessions.uniq
+      @sessions = sessions.uniq(&:object_id)
       @active = @sessions.dup
       period = Expect.duration(timeout)
       @deadline = period && (Expect.monotonic + period)
       @token = Object.new
-      @buffers = {}
-      @previous = {}
+      @buffers = {}.compare_by_identity
+      @previous = {}.compare_by_identity
     end
 
     # 每轮先处理转义和已排队输出，再共同选择读写；停止返回来源会话，总期限到达返回 nil。
     # 真实 IO 的写入由非阻塞游标推进，用户日志和回调仍同步执行，须由调用方保证及时返回。
     def run
       prepare_sources
-      outputs.each(&:restart_timeout)
+      pending_writes.each(&:restart_timeout)
       polled = false
       loop do
         stopped, idle, queued = dispatch_sources
@@ -53,15 +53,13 @@ class Expect
 
         if (callback = session.relay_callback)
           session.relay_callback = nil
-          return [session, idle, queued] unless callback.first&.call
+          return [session, idle, queued] unless callback.call
         end
 
-        result = Interaction.relay_buffer(session, @buffers, final: session.eof?) do |data|
-          session.queue_output(data)
-        end
-        return [session, idle, queued] unless result
+        result = Interaction.queue_input(session, @buffers.fetch(session), final: session.eof?)
+        return [session, idle, queued] if result == :stopped
 
-        if result == :pending
+        if result == :queued
           queued = true
           next
         end
@@ -72,14 +70,14 @@ class Expect
         callback = session.sequences[:eof]
         return [session, idle, queued] unless callback&.call
 
-        @active.delete(session)
+        @active.delete_if { |active| active.equal?(session) }
       end
       [nil, idle, queued]
     end
 
     # 共同等待来源与目标，每轮读每个就绪来源一次；EINTR 返回原期限循环。
     def select_and_read(progress)
-      pending = outputs
+      pending = pending_writes
       readers = read_sources(pending)
       deadlines = [@deadline, *pending.map(&:deadline)].compact
       remaining = deadlines.empty? ? nil : [deadlines.min - Expect.monotonic, 0].max
@@ -150,13 +148,13 @@ class Expect
     end
 
     # 只收集尚未完成的目标，供共同 select 以及最早写入期限计算使用。
-    def outputs = @sessions.flat_map(&:relay_outputs).reject(&:done?)
+    def pending_writes = @sessions.flat_map(&:pending_writes).reject(&:done?)
 
     # 每个目标每轮最多推进一个片段；移除已完成游标，并告知主循环是否值得立即继续轮询。
     def advance_outputs(check_timeout: true)
       progress = false
       @sessions.each do |session|
-        pending = session.relay_outputs
+        pending = session.pending_writes
         pending.each { |output| progress = output.advance(check_timeout:) || progress }
         pending.reject!(&:done?)
       end
@@ -170,9 +168,11 @@ class Expect
     def read_sources(pending)
       # 输出目标可能也在等待我们读取；这些来源即使有待发送数据也必须继续排空。
       targets = pending.filter_map do |output|
-        Session.for(output.target) if output.target.is_a?(Expect)
+        output.target if output.target.is_a?(Session)
       end
-      sources = @active.reject { |session| session.pending_output? && !targets.include?(session) }
+      sources = @active.reject do |session|
+        session.pending_output? && targets.none? { |target| target.equal?(session) }
+      end
       (sources + targets).uniq { |session| session.to_io.object_id }.reject(&:eof?)
     end
 
@@ -180,7 +180,7 @@ class Expect
     # 目标的写期限更早到达时保留 WriteTimeout 语义，不能被转接的普通超时掩盖。
     def finish_timeout(idle)
       # 调度延迟可能让两种期限均已到达，仍按先到的期限决定结果。
-      outputs.each { |output| output.check_timeout! if output.deadline && output.deadline < @deadline }
+      pending_writes.each { |output| output.check_timeout! if output.deadline && output.deadline < @deadline }
       idle.each do |session|
         next if session.pending_output?
 

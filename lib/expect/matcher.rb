@@ -1,28 +1,30 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 驱动一次单会话或多会话匹配，管理模式优先级、EOF 和共享期限，不接管 IO 所有权。
   # 调度只在扫描、回调和 IO 操作之间检查期限，不强行中断用户代码或单次正则计算。
   # @api private
   class Matcher
     # 固定本次参与的会话及初始期限；已处理 EOF 的会话仅从本次等待中移除。
-    def initialize(patterns, timeout, deadline: nil)
+    def initialize(patterns, timeout, deadline: nil, consume: true, reset_timeout_on_read: false)
       @patterns = patterns.finalize!
-      @sessions = patterns.sessions.map { |connection| Session.for(connection) }
-      @groups = patterns.groups.map { |connections, entries| [connections.map { |c| Session.for(c) }, entries] }
+      @sessions = patterns.sessions
+      @groups = patterns.groups
+      @consume = consume
+      @reset_timeout_on_read = reset_timeout_on_read
       @timeout = Expect.duration(timeout)
       # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
       @hard_deadline = deadline
       @deadline = next_deadline
       @handled_eof = {}.compare_by_identity
-      @stalled_matches = {}
+      @stalled_matches = {}.compare_by_identity
       @polled = false
       @expired_eof_continuation = false
     end
 
     # 运行匹配状态机；内部 :retry 表示继续循环，最终返回一个 Result。
     def run
-      @relay_buffers = {}
+      @relay_buffers = {}.compare_by_identity
       @sessions.each do |session|
         buffer = session.interaction_buffer
         if buffer
@@ -124,8 +126,8 @@ class Expect
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。
     def handle_match(session, pattern, position)
       previous_buffer = session.buffer
-      result = session.record_match(pattern, position)
-      action = pattern.call(session.connection)
+      result = session.record_match(pattern, position, consume: @consume)
+      action = pattern.call(session)
       return result unless continuing?(action)
 
       # 回调未改变缓冲时暂停当前模式，等待缓冲变化后再匹配，避免原地空转。
@@ -149,7 +151,7 @@ class Expect
     def handle_eof(session)
       result = session.record_eof
       @handled_eof[session] = true
-      actions = @patterns.eof_patterns_for(session.connection).map { |pattern| pattern.call(session.connection) }
+      actions = @patterns.eof_patterns_for(session).map { |pattern| pattern.call(session) }
       return result unless actions.any? { |action| continuing?(action) }
 
       @deadline = next_deadline if actions.include?(CONTINUE)
@@ -200,7 +202,7 @@ class Expect
           return session.record_error(error)
         end
         @stalled_matches.delete(session) if data
-        @deadline = next_deadline if data && session.reset_timeout_on_read?
+        @deadline = next_deadline if data && @reset_timeout_on_read
       end
       :retry
     end
@@ -239,7 +241,7 @@ class Expect
     # 已到总期限仍通知超时回调，但不接受继续请求，且不消费尚未匹配的字节。
     def handle_timeout
       results = active_sessions.map { |session| session.record_error(:timeout) }
-      action = @patterns.timeout_pattern&.call(active_sessions.map(&:connection))
+      action = @patterns.timeout_pattern&.call(active_sessions)
       return results.first unless action == CONTINUE && !hard_expired?
 
       @deadline = next_deadline

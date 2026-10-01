@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 一次等待的不可变快照；session 与 error 只引用来源和原始异常，不取得其所有权。
   # 文本和捕获值单独复制冻结，后续读取或调用者修改输入不会改变结果。
   # @!method self.new(**fields)

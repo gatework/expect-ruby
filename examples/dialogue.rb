@@ -12,15 +12,15 @@ program = <<~'RUBY'
   puts "Hello #{name}, code=#{code}"
 RUBY
 
-Expect.spawn(RbConfig.ruby, "-e", program, raw_pty: true, log_stdout: false) do |session|
+Expect.spawn(RbConfig.ruby, "-e", program, raw: true) do |session|
   result = session.expect(timeout: 3) do
     on("Name: ") do |connection|
       connection.puts("Ruby")
-      connection.continue
+      Expect.continue
     end
     on("Code: ") do |connection|
       connection.puts("1234")
-      connection.continue
+      Expect.continue
     end
     on(/Hello (\w+), code=(\d+)/)
   end

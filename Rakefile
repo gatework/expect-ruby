@@ -13,7 +13,7 @@ task :lint do
   ruby "-S", "rubocop"
 end
 
-desc "Validate public API documentation, README versions and RBS signatures"
+desc "Validate public API documentation and RBS signatures"
 task :api do
   ruby "script/check_api.rb"
   ruby "-S", "rbs", "-I", "sig", "validate"

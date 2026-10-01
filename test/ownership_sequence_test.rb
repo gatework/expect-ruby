@@ -44,7 +44,7 @@ class OwnershipSequenceTest < ExpectTest
       first = StringIO.new
       replacement = StringIO.new
       payload = Random.new(seed).bytes(9)
-      source.listeners = [first, target]
+      source.outputs = [first, target]
       source.buffer = payload
       accepted = 2
       attempts = 0
@@ -70,7 +70,7 @@ class OwnershipSequenceTest < ExpectTest
       assert_equal payload, first.string.b, "seed=#{seed} first target"
       assert_empty source.buffer
       assert source.pending_output?
-      source.listeners = [replacement]
+      source.outputs = [replacement]
       source.buffer = "new"
       Expect.interconnect(source, timeout: 0)
       suffix = bounded { sink.read(payload.bytesize - accepted) }
@@ -89,8 +89,8 @@ class OwnershipSequenceTest < ExpectTest
       payload = "#{prefix}!consumetail".b
       log = StringIO.new
       sink = StringIO.new
-      source.log_to(log)
-      source.listeners = [sink]
+      source.transcript = log
+      source.outputs = [sink]
       calls = 0
       source.on_sequence("!") do
         calls += 1
@@ -128,7 +128,7 @@ class OwnershipSequenceTest < ExpectTest
         end
         count
       end
-      source.listeners = [sink]
+      source.outputs = [sink]
       2.times do |index|
         source.buffer = payload
         Expect.interconnect(source, timeout: 0)
@@ -154,7 +154,7 @@ class OwnershipSequenceTest < ExpectTest
       sleep 60
     RUBY
     pid = Process.spawn(RbConfig.ruby, "--disable-gems", "-e", script, in: File::NULL, out: writer, err: File::NULL)
-    session.__send__(:session).instance_variable_get(:@resources).pid = pid
+    session.instance_variable_get(:@resources).pid = pid
     writer.close
     result = session.expect(:eof, timeout: 2)
     assert result.eof?

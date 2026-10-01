@@ -1,5 +1,47 @@
 # 验证记录
 
+## 2026-10-01：0.7.0 标准库与会话接口重构
+
+以 `4ab73da` 为基线，按明确允许不兼容变更的要求审查全库逻辑、资源生命周期、命名、重复实现、测试与打包。
+删除外层会话门面、全局 Configuration、日志路径所有权和 stty 辅助进程；公开真实 Session，使用显式操作参数、标准 Logger、File.open 与 io-console。
+匹配、原始字节、流式秘密过滤、背压游标和有限进程回收仍由各自的业务合同约束；本轮不把代码减少直接宣称为吞吐提升。
+
+复审中用回归先观察到失败，再修复以下边界：
+
+- 公开 Session 定义值相等时，Matcher 的暂停状态、嵌套转接缓冲以及 Relay 的来源、活跃集合和背压目标仍须按对象身份归属。
+- `Expect.open(own: true)` 在 Session 分配前被中断时也关闭所属 IO；借用 IO 保持打开，原异常身份保留。
+- 块已有主异常时，关闭冲刷中的 transcript writer 或 Logger formatter StandardError 不覆盖它；无主异常仍抛清理错误，新发生的 Interrupt/SystemExit 不被吞掉。
+- SSH 示例的 known_hosts 路径同时遵守 argv 和 ssh_config 两层解析，含空格、引号和反斜杠时仍是一个原路径。
+
+移除的测试对应已删除的门面、配置和辅助进程接口；PID、GC、EINTR、原始字节、错误归属、终端恢复和短写恢复继续验收。
+API 门禁按具体方法的 YARD 标注识别内部协议，保留缺文档/缺签名的负向检查；测试替身恢复原生 Class 方法查找链，避免随机执行顺序污染 API 检查。
+
+### 独立环境验收
+
+从基线创建 detached worktree，应用完整差异和 7 个新增文件，并逐文件核对与主工作区一致。
+最低 Ruby 与 Linux 使用同一份 101 文件源码归档；Linux 容器禁用网络，从本地 Gem 缓存安装依赖。
+四组最终 `bash script/ci` 均退出 0：
+
+| 环境 | Minitest | 其余门禁 |
+| --- | --- | --- |
+| macOS arm64 / Ruby 3.4.11 | 428 runs / 7,170 assertions；零失败、错误、跳过 | 74 文件 RuboCop、API/RBS、示例对话、五组 benchmark smoke、Gem 构建与两种隔离安装 |
+| macOS arm64 / Ruby 4.0.7 | 同上 | 同上 |
+| Linux aarch64 / Ruby 3.4.11（bookworm） | 同上 | 同上 |
+| Linux aarch64 / Ruby 4.0.7（bookworm） | 同上 | 同上 |
+
+两种安装分别为普通 RubyGems 和仅声明 expect-pty 的 Bundler 应用，验证实际加载路径、包清单、运行依赖、终端模式/尺寸、真实本地 PTY 对话、过滤与缓冲合同。
+首次 Ruby 4.0 离线安装因目录未携带新运行依赖 Logger 而失败；代码测试已通过。修正 script/ci 仅复制本次解析的非默认运行依赖缓存后，四组完整重跑均通过。
+没有通过宿主 GEM_PATH 或开发依赖绕过安装边界。
+
+额外实际验证 Ruby 4.0.7 / Logger 1.7.0 / ActiveSupport 8.1.4 的 Logger、TaggedLogging 与 BroadcastLogger 注入，
+包括不可变事件、原始匹配、transcript 脱敏和借用目标不关闭。未将 ActiveSupport 加入 Gem 依赖。
+macOS OpenSSH 10.2p1 与 Linux OpenSSH 9.2p1 的 `ssh -G` 对五类特殊字符路径均返回原路径；这些检查不建立连接。
+
+对已构建的 `expect-pty-0.7.0.gem` 执行 `script/release.rb --dry-run --rubygems-only --artifact ...`，核对版本、说明、包内容和权限；不查询或上传远端。
+完整 CI 与 dry-run 日志在本地忽略目录 `tmp/conventions-review/`，源码清单为其中的 `manifest.json`。
+
+本次仅提交本地 Git，不推送、不打标签、不发布 RubyGems。未运行远端 GitHub Actions、真实 SSH 登录、网络设备或生产持续负载；本地 PTY 与离线配置解析不代替这些证据。
+
 ## 2026-09-30：0.6.1 本地提交准备
 
 将两轮审查的兼容性修复和性能优化归入 0.6.1，同步版本常量、README 安装示例和发布文档；0.6.0 迁移说明及历史证据保持原记录。

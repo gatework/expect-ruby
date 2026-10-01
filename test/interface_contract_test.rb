@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "logger"
 
 class InterfaceContractTest < ExpectTest
   def test_expect_returns_results_and_keeps_convenient_snapshot_readers
@@ -25,21 +26,16 @@ class InterfaceContractTest < ExpectTest
     refute_respond_to Expect, :expect_result
   end
 
-  def test_boolean_configuration_uses_only_predicates_and_setters
+  def test_sessions_are_the_actual_io_objects_without_a_facade
     session, = pipe_session
-    booleans = %i[raw_pty preserve_buffer log_stdout log_listeners raw_terminal reset_timeout_on_read graceful_close]
-    booleans.each do |name|
-      config = Expect::Configuration.new(**{ name => 0 })
-      [config, session].each do |target|
-        refute_respond_to target, name
-        target.public_send(:"#{name}=", 0)
-        assert target.public_send(:"#{name}?")
-        target.public_send(:"#{name}=", nil)
-        refute target.public_send(:"#{name}?")
-      end
-      assert_equal false, config.to_h.fetch(name)
-      assert_raises(FrozenError) { config.freeze.public_send(:"#{name}=", true) }
-    end
+    assert_instance_of Expect::Session, session
+    refute_respond_to session, :session
+    refute_respond_to session, :connection
+    refute_respond_to session, :continue
+    refute_respond_to session, :stty
+    refute_respond_to session, :winsize
+    refute_respond_to session, :log_to
+    refute_respond_to session, :debug_level
   end
 
   def test_callback_cannot_change_finalized_rules
@@ -71,30 +67,24 @@ class InterfaceContractTest < ExpectTest
     assert_raises(NameError) { Expect::Pattern }
   end
 
-  def test_callable_objects_work_for_both_log_targets
-    receiver = Class.new do
-      attr_reader :values
-
-      def initialize = @values = []
-      def call(value) = @values << value
-    end
-    log = receiver.new
-    diagnostics = receiver.new
-    session, = pipe_session(debug_level: 2, diagnostic_output: diagnostics)
-    session.log_output = log
-    session.write_log("hello")
+  def test_transcript_and_logger_have_distinct_standard_protocols
+    transcript = StringIO.new
+    diagnostics = StringIO.new
+    logger = Logger.new(diagnostics)
+    session, = pipe_session(logger:, transcript:)
+    assert_nil session.write_transcript("hello")
     session.buffer = "ready"
     session.expect("ready", timeout: 0)
-    assert_equal ["hello"], log.values
-    assert(diagnostics.values.any? { |event| event[:event] == :matched })
+    assert_equal "hello", transcript.string
+    assert_includes diagnostics.string, "matched pattern 1"
   end
 
   def test_spawn_preserves_single_string_shell_and_literal_argv_semantics
-    Expect.spawn("printf FIRST; printf SECOND", raw_pty: true) do |session|
+    Expect.spawn("printf FIRST; printf SECOND", raw: true) do |session|
       assert session.expect("FIRSTSECOND", timeout: 2).matched?
     end
     text = "FIRST; printf SECOND"
-    Expect.spawn(RbConfig.ruby, "-e", "print ARGV.fetch(0)", text, raw_pty: true) do |session|
+    Expect.spawn(RbConfig.ruby, "-e", "print ARGV.fetch(0)", text, raw: true) do |session|
       assert_equal text, session.expect(text, timeout: 2).match
     end
   end

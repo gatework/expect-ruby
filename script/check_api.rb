@@ -4,22 +4,18 @@ require "yard"
 require "rbs"
 require "pathname"
 require_relative "../lib/expect"
-require_relative "release"
 
-# 从真实方法查找链校验接口；显式列出的内部协议不属于发布契约。
+# 从真实方法查找链校验接口；YARD 标记的内部协议不属于发布契约。
 module APICheck
   ROOT = Pathname(__dir__).parent.freeze
-  CLASSES = [Expect, Expect::Configuration, Expect::Result, Expect::PatternList,
-             Expect::Redactor, Expect::WriteTimeout].freeze
-  INTERNAL_METHODS = { Expect::PatternList => %i[groups timeout_pattern sessions eof_patterns_for validate!
-                                                 finalize!] }.freeze
+  TYPES = [Expect, Expect::Session, Expect::Result, Expect::PatternList,
+           Expect::Redactor, Expect::WriteTimeout].freeze
   DATA_METHODS = %i[members with to_h deconstruct deconstruct_keys].freeze
 
   def self.run
     builder = prepare
-    CLASSES.each { |type| validate_type!(type, builder) }
-    Release.validate_readme!(ROOT.join("README.md").read, Expect::VERSION)
-    puts "Public API documentation, RBS coverage and README version references passed"
+    TYPES.each { |type| validate_type!(type, builder) }
+    puts "Public API documentation and RBS coverage passed"
   end
 
   def self.prepare
@@ -32,14 +28,15 @@ module APICheck
 
   def self.validate_type!(type, builder)
     name = RBS::TypeName.parse("::#{type}")
-    inherited = type.superclass.ancestors
-    methods = type.public_instance_methods.reject { |method| inherited.include?(type.instance_method(method).owner) }
-    methods |= DATA_METHODS if type == Expect::Result
-    methods |= [:initialize]
-    methods -= INTERNAL_METHODS.fetch(type, [])
-    validate_methods!(type, methods, "#", builder.build_instance(name))
+    if type.is_a?(Class)
+      inherited = type.superclass.ancestors
+      methods = type.public_instance_methods.reject { |method| inherited.include?(type.instance_method(method).owner) }
+      methods |= DATA_METHODS if type == Expect::Result
+      methods |= [:initialize]
+      validate_methods!(type, methods, "#", builder.build_instance(name))
+    end
 
-    inherited = type.superclass.singleton_class.ancestors + [Forwardable]
+    inherited = type.is_a?(Class) ? type.superclass.singleton_class.ancestors : Module.ancestors
     methods = type.singleton_class.public_instance_methods.reject do |method|
       inherited.include?(type.method(method).owner)
     end
@@ -51,6 +48,8 @@ module APICheck
       path = "#{type}#{separator}#{method}"
       owner = separator == "#" ? type.instance_method(method).owner : type.method(method).owner
       object = YARD::Registry.at(path) || YARD::Registry.at("#{owner.name}#{separator}#{method}")
+      next if object&.tag(:api)&.text == "private"
+
       raise "Undocumented public API: #{path}" unless object && !object.docstring.empty?
 
       validate_signature!(type, method, path, owner, definition)

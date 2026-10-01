@@ -11,31 +11,32 @@ runner = ExpectBenchmark::Runner.new("relay") do |options|
   end
 end
 reader, writer = IO.pipe
-session = Expect.open(reader, log_stdout: false)
+session = Expect.open(reader)
 begin
   size = runner.smoke ? 4096 : 65_536
   payload = "x" * size
+  writer.close
   %i[none literal regexps].each do |kind|
-    session.__send__(:session).__send__(:sequences=, {})
+    session.__send__(:sequences=, {})
     session.on_sequence("STOP") if kind == :literal
     16.times { |index| session.on_sequence(/missing#{index}/) } if kind == :regexps
     output = StringIO.new("".b)
-    session.listeners = [output]
-    verify = ->(result) { ExpectBenchmark.check(result == true && output.string == payload) }
+    session.outputs = [output]
+    verify = ->(result) { ExpectBenchmark.check(result.equal?(session) && output.string == payload) }
     runner.measure("escape/#{kind}", bytes: size, inputs: { size:, regexps: kind == :regexps ? 16 : 0 },
                                      verify:) do
       output.string = "".b
-      session.__send__(:session).__send__(:relay_history).clear
-      Expect::Interaction.relay_buffer(session.__send__(:session), { session.__send__(:session) => payload.b })
+      session.__send__(:relay_history).clear
+      session.buffer = payload
+      Timeout.timeout(10) { Expect.interconnect(session, timeout: 5) }
     end
   end
 
-  session.__send__(:session).__send__(:sequences=, {})
-  writer.close
+  session.__send__(:sequences=, {})
   normal = StringIO.new("".b)
   slow = StringIO.new("".b)
   slow.define_singleton_method(:write) { |data| super(data.byteslice(0, 17)) }
-  session.listeners = [normal, slow]
+  session.outputs = [normal, slow]
   verify = lambda do |result|
     ExpectBenchmark.check(result.equal?(session) && normal.string == payload && slow.string == payload)
     ExpectBenchmark.check(!session.pending_output? && session.buffer.empty?)
@@ -65,8 +66,8 @@ end
     outputs = Array.new(count) { StringIO.new("".b) }
     count.times do |index|
       pipes << IO.pipe
-      source = Expect.open(pipes.last.first, log_stdout: false)
-      source.listeners = [outputs[index]]
+      source = Expect.open(pipes.last.first)
+      source.outputs = [outputs[index]]
       sessions << source
     end
     %i[all last].each do |ready|

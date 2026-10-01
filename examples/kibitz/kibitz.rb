@@ -7,26 +7,23 @@ require "shellwords"
 require_relative "../../lib/expect/pty"
 
 # Local counterpart of jacoby/expect.pm examples/kibitz: both keyboards feed
-# one process, whose output is broadcast to both terminals using listeners.
+# one process, whose output is broadcast to both terminals using outputs.
 module Kibitz
   ESCAPE = "\x1d".b.freeze
 
   def self.relay(input:, output:, peer:, shell: nil, escape: ESCAPE, timeout: nil, log: nil)
-    Expect.open(input, log_stdout: false, write_timeout: 5) do |keyboard|
-      Expect.open(peer, log_stdout: false, write_timeout: 5) do |partner|
+    Expect.open(input, write_timeout: 5) do |keyboard|
+      Expect.open(peer, write_timeout: 5) do |partner|
         keyboard.on_sequence(escape) if escape
         if shell
-          keyboard.listeners = [shell]
-          partner.listeners = [shell]
-          shell.listeners = [output, partner]
-          shell.log_stdout = false
-          shell.log_output = log if log
-          # Keep canonical input, echo and ISIG on the process's own terminal.
-          shell.raw_terminal = false
+          keyboard.outputs = [shell]
+          partner.outputs = [shell]
+          shell.outputs = [output, partner]
+          shell.transcript = log if log
         else
-          keyboard.listeners = [partner]
-          partner.listeners = [output]
-          partner.log_output = log if log
+          keyboard.outputs = [partner]
+          partner.outputs = [output]
+          partner.transcript = log if log
         end
         stopped = Expect.interconnect(*[keyboard, partner, shell].compact, timeout:)
         reason = if stopped.nil?
@@ -104,8 +101,9 @@ module Kibitz
       File.unlink(socket_path)
       unless options[:noproc]
         command = argv.empty? ? [ENV.fetch("SHELL", "/bin/sh")] : argv
-        shell = Expect.spawn(*command, log_stdout: false, raw_terminal: false, write_timeout: 5)
-        shell.winsize = input.winsize
+        # The process keeps canonical input, echo and ISIG on its own terminal.
+        shell = Expect.spawn(*command, write_timeout: 5)
+        shell.to_io.winsize = input.winsize
       end
     end
     # Announce readiness only after local echo/canonical input are disabled.

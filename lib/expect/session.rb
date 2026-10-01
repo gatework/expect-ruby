@@ -1,39 +1,59 @@
 # frozen_string_literal: true
 
 require_relative "logging"
-require_relative "terminal"
 require_relative "interaction"
 
-class Expect
-  # 会话运行内核；Matcher 与 Relay 直接使用其协议，用户仅接触外层 Expect。
-  # @api private
+module Expect
+  # 一个真实 PTY 或 IO 会话；缓冲、最近结果和所属进程都保存在本对象中。
   class Session
     include Logging
-    include Terminal
     include Interaction
 
-    attr_reader :connection, :command, :last_result, :slave, :tty_name, :buffer_discarded_bytes
+    # 启动命令、最近结果及 PTY 端点的只读状态；文本结果属于不可变快照。
+    attr_reader :command, :last_result, :slave, :tty_name, :buffer_discarded_bytes
+    # 会话的默认等待期限、写入背压期限及缓冲上限。
+    attr_reader :timeout, :write_timeout, :buffer_limit
 
-    # 唯一的门面到内核转换边界；内核不作为公开会话属性暴露。
-    def self.for(connection) = connection.__send__(:session)
+    # 预建 PTY；命令、env、chdir 与 raw 模式由 spawn 显式设置。
+    def initialize(timeout: nil, write_timeout: nil, buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
+      master = slave = nil
+      Cleanup.on_failure(-> { cleanup_session(master, writer: master, slave:, own: true) }) do
+        master, slave = PTY.open
+        initialize_io(master, writer: master, slave:, own: true, timeout:, write_timeout:, buffer_limit:,
+                              logger:, transcript:, outputs:)
+      end
+    end
 
-    extend Forwardable
+    # 设置本会话后续 expect 默认使用的相对秒数，nil 表示无限等待。
+    def timeout=(value)
+      @timeout = Expect.duration(value)
+    end
 
-    # 普通属性委托给会话独立配置；缓冲上限的 setter 还需立即裁剪现有缓冲。
-    def_delegators :@configuration, *Configuration::READERS.values
-    def_delegators :@configuration, *(Configuration::ATTRIBUTES - [:buffer_limit]).map { |name| :"#{name}=" }
+    # 设置写入遇到背压或 EINTR 时的等待秒数；成功短写不受总耗时限制。
+    def write_timeout=(value)
+      @write_timeout = Expect.duration(value)
+    end
 
-    # 校验并更新缓冲上限后，立即裁剪已接收的内容；校验失败不改变旧缓冲。
+    # 校验并更新缓冲上限，立即裁剪现有尾部；非法值不改变配置和内容。
     def buffer_limit=(value)
-      @configuration.buffer_limit = value
+      unless value.nil? || (value.is_a?(Integer) && value.positive?)
+        raise ArgumentError, "buffer_limit must be a positive Integer or nil"
+      end
+
+      @buffer_limit = value
       trim_buffer
     end
 
+    # 等待自身输入，返回 Result；匹配消费和接收重置策略只对本轮有效。
+    def expect(*patterns, timeout: self.timeout, deadline: nil, consume: true, reset_timeout_on_read: false, &)
+      Expect.__send__(:run_expect, [self], patterns, timeout, deadline:, consume:, reset_timeout_on_read:, &)
+    end
+
     # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
-    def spawn(*command, env: {}, chdir: nil)
+    def spawn(*command, env: {}, chdir: nil, raw: false)
       validate_spawn!(command)
 
-      @slave.raw! if raw_pty?
+      @slave.raw! if raw
       from_child = to_parent = nil
       Cleanup.always(-> { SessionResources.close_handles(from_child, to_parent) }) do
         # 错误管道的写端在 exec 成功时自动关闭；父进程据此区分成功启动与 exec 前失败。
@@ -47,22 +67,26 @@ class Expect
         failure = from_child.read
         Cleanup.always(-> { hard_close }) { raise SpawnError, failure } unless failure.empty?
         trace("spawned pid=#{child}", event: :spawned)
-        connection
+        self
       end
     end
 
     # 暴露底层读写 IO 与终端属性，供 select、终端设置及 IO 适配使用。
     def to_io = @resources.reader
 
+    # 实际写入端点，可能不同于 to_io 返回的读端。
     def writer = @resources.writer
 
+    # 当前读端描述符；会话关闭后为 nil。
     def fileno = closed? ? nil : to_io.fileno
 
+    # 读端仍打开且属于终端时为 true。
     def tty? = !closed? && to_io.tty?
 
     # 诊断时仅显示进程和描述符状态，避免默认对象展开泄露缓冲或日志内容。
-    def inspect = "#<#{connection.class} pid=#{pid.inspect} fd=#{fileno.inspect} closed=#{closed?}>"
+    def inspect = "#<#{self.class} pid=#{pid.inspect} fd=#{fileno.inspect} closed=#{closed?}>"
 
+    # 尚未完成回收的直属子进程 PID；已有 IO 会话为 nil。
     def pid = @resources.pid
 
     # 非阻塞回收并缓存子进程状态；未退出或仅适配 IO 时返回 nil。
@@ -73,6 +97,7 @@ class Expect
       @resources.status
     end
 
+    # 已知进程退出码；尚未回收或信号退出时为 nil。
     def exit_code = process_status&.exitstatus
 
     # 先刷新回收状态，再判断是否仍有未回收的子进程；不以 IO 是否关闭代替进程状态。
@@ -84,19 +109,25 @@ class Expect
     # 区分会话关闭和输入结束，已关闭会话也不能继续读取。
     def closed? = @closed || to_io.closed?
 
+    # 输入已结束或会话已关闭时为 true。
     def eof? = @eof || closed?
 
     # 以下访问器读取最近一次等待结果；未发生匹配时捕获组返回空数组。
     def before = @last_result&.before
 
+    # 最近一次匹配之后的不可变字节快照。
     def after = @last_result&.after
 
+    # 最近一次匹配命中的不可变字节快照。
     def match = @last_result&.match
 
+    # 最近命中的模式序号；EOF、超时或尚无结果时为 nil。
     def match_number = @last_result&.number
 
+    # 最近捕获值的不可变数组；未参与的捕获为 nil。
     def captures = @last_result&.captures || []
 
+    # 最近的 EOF、超时事件或原始 IO 异常。
     def error = @last_result&.error
 
     # 返回缓冲副本，防止调用方原地修改绕过裁剪规则。
@@ -125,7 +156,7 @@ class Expect
 
       begin
         data = objects.map { |object| object.to_s.b }.join
-        trace_data(:sending, data, level: 2) if debug_level >= 2
+        trace_data(:sending, data)
       rescue WriteTimeout
         # 转换或诊断中的嵌套写入不属于当前命令；此时尚未向 writer 发送任何字节。
         raise WriteTimeout.new("write interrupted before sending data", bytes_written: 0)
@@ -150,7 +181,7 @@ class Expect
     # 链式写入单个对象，返回当前会话。
     def <<(object)
       write(object)
-      connection
+      self
     end
 
     # 委托 StringIO 处理换行、nil 和递归数组，再统一写入；返回 nil，与 Ruby puts 一致。
@@ -209,7 +240,7 @@ class Expect
     end
 
     # 通用生命周期清理：可先软关闭，ensure 中硬关闭兜底；正常完成返回 nil。
-    def close(graceful: graceful_close?)
+    def close(graceful: false)
       Cleanup.always(-> { hard_close }) do
         soft_close if graceful
         nil
@@ -217,6 +248,7 @@ class Expect
     end
 
     # 账本发布前只按局部所有权清理；发布后沿用完整关闭流程，避免两套生命周期状态。
+    # @api private
     def cleanup_session(reader, writer:, own:, slave: nil, graceful: false)
       if @resources
         close(graceful:)
@@ -225,50 +257,21 @@ class Expect
       end
     end
 
-    # 统一初始化 PTY 与已有 IO 会话，复制配置并注册不直接捕获会话的资源终结器。
-    def initialize_connection(connection, reader, writer:, slave: nil, own: false, diagnostic_output: nil, **)
-      # 先登记所有权，后续校验失败也使用同一个资源对象逐个清理所属 IO。
-      @connection = connection
-      @resources = SessionResources.new(reader, writer:, slave:, own:)
-      raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
-      raise ArgumentError, "writer must be a real IO" unless writer.is_a?(IO) && !writer.closed?
-
-      @pty = reader.tty?
-      @slave = slave
-      @tty_name = slave.path if slave
-      @configuration = Configuration.new(**connection.class.configuration.to_h, **)
-      @buffer = "".b
-      @buffer_generation = 0
-      @buffer_discarded_bytes = 0
-      @listeners = []
-      @sequences = {}
-      @relay_outputs = []
-      @interact_inputs = {}.compare_by_identity
-      @interact_output = nil
-      @interaction_buffer = @relay_owner = @relay_callback = nil
-      @relay_history = "".b
-      @relay_history_sequences = {}
-      @secrets = @log_redactor = nil
-      @diagnostic_redactors = {}
-      @last_result = @command = nil
-      @closed = @eof = false
-      self.diagnostic_output = diagnostic_output
-      ObjectSpace.define_finalizer(self, SessionResources.finalizer(@resources))
-    end
-
     # 开始新一轮等待时清除旧结果并应用缓冲上限，尚未消费的输入继续保留。
+    # @api private
     def reset_result
       @last_result = nil
       trim_buffer
     end
 
-    # 按字节偏移生成 before/match/after；通常只保留 after，preserve_buffer 开启时不消费。
-    def record_match(pattern, position)
+    # 按字节偏移生成 before/match/after；通常只保留 after，consume 为 false 时不消费。
+    # @api private
+    def record_match(pattern, position, consume: true)
       offset, length, captures = position
       @last_result = Result.new(number: pattern.number, before: @buffer.byteslice(0, offset),
                                 match: @buffer.byteslice(offset, length), after: @buffer.byteslice((offset + length)..),
-                                session: connection, captures:)
-      unless preserve_buffer?
+                                session: self, captures:)
+      if consume
         @buffer = @last_result.after.dup
         @buffer_generation += 1
       end
@@ -279,11 +282,13 @@ class Expect
     end
 
     # 记录超时、EOF 或原始 IO 异常，保留当前缓冲快照并清除旧匹配及捕获组。
+    # @api private
     def record_error(error)
-      @last_result = Result.new(error:, before: buffer, session: connection, captures: [])
+      @last_result = Result.new(error:, before: buffer, session: self, captures: [])
     end
 
     # 输入结束时将剩余缓冲放入 before 并清空，尝试回收但不终止仍活跃的子进程。
+    # @api private
     def record_eof
       process_status
       record_error(:eof)
@@ -292,6 +297,7 @@ class Expect
     end
 
     # 先将读取字节交给匹配或转接缓冲，再记录日志；日志失败也能恢复输入。
+    # @api private
     def read_available(propagate: true, buffer: @buffer, trim: true)
       return nil if eof?
 
@@ -319,15 +325,49 @@ class Expect
       data = data.b
       buffer << data
       trim_buffer if trim
-      trace_data(:received, data, level: 2) if debug_level >= 2
-      trace_data(:buffer, @buffer, level: 3) if debug_level >= 3
+      trace_data(:received, data)
       # 仅在真实读取时记录日志，后续匹配或人工转接重用缓冲时不会重复记录。
-      write_log(data)
+      write_transcript(data)
       propagate(data) if propagate
       data
     end
 
     private
+
+    # 初始化前先登记所有权；参数校验失败也能释放已取得的端点。
+    def initialize_io(reader, writer:, slave: nil, own: false, timeout: nil, write_timeout: nil,
+                      buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
+      @resources = SessionResources.new(reader, writer:, slave:, own:)
+      raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
+      raise ArgumentError, "writer must be a real IO" unless writer.is_a?(IO) && !writer.closed?
+
+      @pty = reader.tty?
+      @slave = slave
+      @tty_name = slave.path if slave
+      @buffer = "".b
+      @buffer_generation = 0
+      @buffer_discarded_bytes = 0
+      @outputs = []
+      @sequences = {}
+      @pending_writes = []
+      @interact_inputs = {}.compare_by_identity
+      @interact_output = nil
+      @interaction_buffer = @relay_owner = @relay_callback = nil
+      @relay_history = "".b
+      @relay_history_sequences = {}
+      @secrets = @transcript_redactor = nil
+      @diagnostic_redactors = {}
+      @logger = @transcript = nil
+      @last_result = @command = nil
+      @closed = @eof = false
+      self.timeout = timeout
+      self.write_timeout = write_timeout
+      self.buffer_limit = buffer_limit
+      self.logger = logger
+      self.transcript = transcript
+      self.outputs = outputs
+      ObjectSpace.define_finalizer(self, @resources.method(:finalize))
+    end
 
     # 参数校验先于任何进程和终端修改。
     def validate_spawn!(command)
@@ -422,7 +462,7 @@ class Expect
         end
       end
       @interact_output = nil
-      @relay_outputs&.clear
+      @pending_writes&.clear
       @relay_history&.clear
       @relay_callback = nil
       status = close_child(timeout:, term_timeout:, force:)
@@ -432,7 +472,7 @@ class Expect
       begin
         cleanup.call { flush_diagnostics }
       ensure
-        cleanup.call { self.log_output = nil }
+        cleanup.call { self.transcript = nil }
       end
       # 用本次流程的完成状态判断异常传播，不能误把调用者 rescue 中的异常当成当前错误。
       raise failure if failure && completed
@@ -478,7 +518,7 @@ class Expect
 
     def mark_eof
       @eof = true
-      flush_log
+      flush_transcript
       flush_diagnostics(:received)
       nil
     end
@@ -503,6 +543,4 @@ class Expect
       @resources.reap
     end
   end
-
-  private_constant :Session
 end

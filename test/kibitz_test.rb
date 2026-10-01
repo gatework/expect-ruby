@@ -29,7 +29,7 @@ class KibitzTest < ExpectTest
   end
 
   def test_missing_partner_times_out_and_removes_socket
-    session = Expect.new(log_stdout: false)
+    session = Expect::Session.new
     @sessions << session
     saved = InteractProbe.configuration(session)
     session.spawn(RbConfig.ruby, KibitzProbe::EXAMPLE, "--timeout", "0.2")

@@ -58,7 +58,7 @@ module ScriptProbe
       quoted_script = "'#{script.gsub("'", %q('"'"'))}'"
       # Inputs are logged deliberately as metadata: Expect's automatic log
       # records received bytes, not sends. Never include authentication here.
-      session.write_log("\n[SEND] #{name} sha256=#{digest}\n")
+      session.write_transcript("\n[SEND] #{name} sha256=#{digest}\n")
       command = "printf '\\n%s%s\\n' 'PROBE_BEGIN_' '#{nonce}'; " \
                 "/bin/sh -c #{quoted_script}; probe_status=$?; " \
                 "printf '\\n%s%s:%s\\n' 'PROBE_END_' '#{nonce}' \"$probe_status\"\n"
@@ -73,7 +73,7 @@ module ScriptProbe
       # prior script exited nonzero. Each script runs in its own subshell.
       prompt = session.expect(PROMPT, timeout: @timeout)
       ScriptProbe.check(prompt.matched?, "#{name}: shell did not recover (#{prompt.error})")
-      session.write_log("\n[EXIT] #{name} status=#{status}\n")
+      session.write_transcript("\n[EXIT] #{name} status=#{status}\n")
       passed = status == expected_status && output == expected_output.b
       result = { name:, sha256: digest, status:, expected_status:,
                  output: output.dup.force_encoding(Encoding::UTF_8), passed: }
@@ -107,7 +107,6 @@ module ScriptProbe
     # The caller allocates a fresh private directory; exercise truncation only
     # on this new test file, never on an existing user's log.
     File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write("OLD_TEST_CONTENT\n") }
-    log = session.log_to(path, mode: "w")
     cases = [
       ["01_identity.sh", 0, "USER=#{user}\nTTY=#{terminal}\nIDENTITY_OK\n"],
       ["02_output.sh", 0, "STDOUT_FIRST\nSTDERR_SECOND\n中文输出：日志验证\nSTDOUT_LAST\n"],
@@ -115,25 +114,34 @@ module ScriptProbe
       ["04_failure.sh", 7, "EXPECTED_FAILURE\n"],
       ["05_recovery.sh", 0, "RECOVERY_OK\nVALUE=42\n"]
     ]
-    cases.each do |name, status, output|
-      runner.run_file(File.join(FIXTURES, name), expected_status: status, expected_output: output)
-      # Read while the logger is open to prove writes are immediately visible.
-      live = normalize(File.binread(path))
-      check(live.include?(output.b), "#{name}: live log is missing output")
-      check(live.include?("[EXIT] #{name} status=#{status}\n"), "#{name}: live exit annotation missing")
+    File.open(path, "wb") do |transcript|
+      session.transcript = transcript
+      cases.each do |name, status, output|
+        runner.run_file(File.join(FIXTURES, name), expected_status: status, expected_output: output)
+        # Read while the writer is open to prove writes are immediately visible.
+        live = normalize(File.binread(path))
+        check(live.include?(output.b), "#{name}: live log is missing output")
+        check(live.include?("[EXIT] #{name} status=#{status}\n"), "#{name}: live exit annotation missing")
+      end
+      session.transcript = nil
+      check(!transcript.closed?, "disabling transcript closed the caller's file")
+    ensure
+      session.transcript = nil
     end
-    session.log_output = nil
-    check(log.closed?, "owned log was not closed")
     before_disabled = File.binread(path)
     runner.run("logging_disabled", "printf 'UNLOGGED_OUTPUT\\n'\n", expected_status: 0,
                                                                     expected_output: "UNLOGGED_OUTPUT\n")
     check(File.binread(path) == before_disabled, "disabled logger still wrote data")
 
-    # The default mode must append, retaining every preceding command.
-    appended = session.log_to(path)
-    runner.run("logging_resumed", "printf 'APPEND_OK\\n'\n", expected_status: 0, expected_output: "APPEND_OK\n")
-    runner.finish!
-    check(appended.closed?, "close did not close the owned log")
+    # The caller chooses append mode, retaining every preceding command.
+    File.open(path, "ab") do |transcript|
+      session.transcript = transcript
+      runner.run("logging_resumed", "printf 'APPEND_OK\\n'\n", expected_status: 0, expected_output: "APPEND_OK\n")
+      runner.finish!
+      check(!transcript.closed?, "closing the session closed the caller's file")
+    ensure
+      session.transcript = nil
+    end
     bytes = File.binread(path)
     check(bytes.start_with?(before_disabled), "append mode overwrote previous log bytes")
     text = normalize(bytes)

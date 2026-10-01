@@ -7,13 +7,12 @@ require "etc"
 class InteractTest < ExpectTest
   def shell_session
     session = Expect.spawn("/bin/sh", "-i", env: { "PS1" => ScriptProbe::PROMPT, "ENV" => nil, "LC_ALL" => "C" },
-                                            raw_pty: true, log_stdout: false, write_timeout: 3)
+                                            raw: true, write_timeout: 3)
     @sessions << session
     ScriptProbe::Runner.new(session).ready!
     InteractProbe.prepare(session)
     # Unlike SSH, the simulated remote shell shares the transport's PTY.
-    # Keep its canonical/ISIG settings while interact raws the local keyboard.
-    session.raw_terminal = false
+    # Only the local input terminal is changed by interact.
     session
   end
 
@@ -93,7 +92,7 @@ class InteractTest < ExpectTest
   def test_real_terminal_handoff_ctrl_c_escape_and_resume
     session = shell_session
     log = StringIO.new
-    session.log_to(log)
+    session.transcript = log
     report = bounded(20) { InteractProbe.verify(session, user: Etc.getpwuid.name) }
     assert_equal 4, report[:cases].length
     assert(report[:cases].all? { |result| result[:passed] })
@@ -156,7 +155,7 @@ class InteractTest < ExpectTest
     assert_equal saved, InteractProbe.configuration(source)
     InteractProbe.prepare(session)
     log = StringIO.new
-    session.log_to(log)
+    session.transcript = log
     result = ScriptProbe::Runner.new(session).run("manual_resume", "printf 'RESUMED_WITHOUT_ECHO\\n'",
                                                   expected_status: 0, expected_output: "RESUMED_WITHOUT_ECHO\n")
     assert result[:passed]
@@ -166,7 +165,7 @@ class InteractTest < ExpectTest
   end
 
   def test_interact_preserves_newline_processing_on_the_shared_local_terminal
-    session = child(<<~'RUBY', raw_pty: true)
+    session = child(<<~'RUBY', raw: true)
       STDOUT.sync = true
       while STDIN.gets
         STDOUT.write("first\nsecond\r")
@@ -203,7 +202,7 @@ class InteractTest < ExpectTest
   end
 
   def test_remote_eof_restores_input_terminal_and_keeps_borrowed_io_open
-    session = child('STDIN.gets; print "FINAL_REMOTE_OUTPUT"', raw_pty: true)
+    session = child('STDIN.gets; print "FINAL_REMOTE_OUTPUT"', raw: true)
     _, slave, source = local_terminal
     saved = InteractProbe.configuration(source)
     output = StringIO.new
@@ -225,19 +224,35 @@ class InteractTest < ExpectTest
     assert_equal 1, session.expect(/AFTER_LOCAL_EOF\r?\n/, timeout: 2).number
   end
 
+  def test_raw_false_preserves_input_terminal_during_interaction
+    session, = socket_session
+    _, slave, source = local_terminal
+    original = InteractProbe.configuration(source)
+    observed = nil
+    session.on_sequence("STOP") do
+      observed = InteractProbe.configuration(source)
+      false
+    end
+    session.buffer = "STOP"
+
+    assert_same session, session.interact(input: source, output: slave, raw: false, timeout: 1)
+    assert_equal original, observed
+    assert_equal original, InteractProbe.configuration(source)
+  end
+
   def test_remote_callback_exception_restores_both_terminals
     session = shell_session
     _, slave, source = local_terminal
     local_mode = InteractProbe.configuration(source)
     remote_mode = InteractProbe.configuration(session)
-    old_settings = InteractProbe.settings(session)
     session.on_sequence("CALLBACK_FAILURE") { raise "test callback failed" }
+    old_settings = InteractProbe.settings(session)
     session.write("printf 'CALLBACK_FAILURE\\n'\n")
     error = assert_raises(RuntimeError) { session.interact(input: source, escape: "\x1d", output: slave, timeout: 2) }
     assert_equal "test callback failed", error.message
     assert_equal local_mode, InteractProbe.configuration(source)
     assert_equal remote_mode, InteractProbe.configuration(session)
-    assert_equal old_settings[0..3], InteractProbe.settings(session)[0..3]
+    assert_equal old_settings, InteractProbe.settings(session)
     assert session.alive?
   end
 

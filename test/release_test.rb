@@ -5,6 +5,11 @@ require "minitest/mock"
 require_relative "../script/release"
 
 class ReleaseTest < Minitest::Test
+  def test_current_readme_installation_examples_use_the_current_version
+    readme = File.read(File.expand_path("../README.md", __dir__))
+    assert_nil Release.validate_readme!(readme, Expect::VERSION)
+  end
+
   def test_readme_version_validation_rejects_stale_installation_examples
     Release.validate_readme!(%(gem "expect-pty", "~> 0.5.3"), "0.5.3")
     Release.validate_readme!("gem build --output tmp/expect-pty-0.5.3.gem", "0.5.3")

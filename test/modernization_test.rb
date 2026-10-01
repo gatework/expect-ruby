@@ -32,7 +32,7 @@ class ModernizationTest < ExpectTest
     assert_equal "bytes", result.before
   end
 
-  def test_public_results_and_fluent_methods_keep_the_user_connection
+  def test_public_results_and_fluent_methods_keep_the_same_session
     session, writer = pipe_session
     assert_same session, session.on_sequence("stop")
     assert_same session, session.redact("secret")
@@ -41,29 +41,27 @@ class ModernizationTest < ExpectTest
       patterns.on("ready") { |connection| assert_same session, connection }
     end
     assert_same session, result.session
-    %i[session resources read_available relay_outputs interaction_buffer record_match].each do |name|
+    %i[session connection resources].each do |name|
       refute_respond_to session, name
     end
   end
 
-  def test_new_log_cleanup_failure_keeps_original_flush_error
+  def test_failed_transcript_flush_preserves_both_borrowed_targets
     session, = pipe_session
-    original = RuntimeError.new("old log failed")
+    original = RuntimeError.new("old transcript failed")
     old = StringIO.new
     fresh = StringIO.new
     @ios.push(old, fresh)
-    session.log_output = old
+    session.transcript = old
     session.redact("secret")
-    session.write_log("sec")
+    session.write_transcript("sec")
     old.stub(:write, ->(*) { raise original }) do
-      fresh.stub(:close, -> { raise IOError, "new log close failed" }) do
-        error = assert_raises(RuntimeError) do
-          session.__send__(:session).__send__(:replace_log, fresh, owned: true)
-        end
-        assert_same original, error
-        assert_same old, session.log_output
-      end
+      error = assert_raises(RuntimeError) { session.transcript = fresh }
+      assert_same original, error
+      assert_same old, session.transcript
     end
+    refute old.closed?
+    refute fresh.closed?
   end
 
   def test_open_closes_owned_handles_on_throw_and_nonlocal_return

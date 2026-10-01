@@ -18,9 +18,8 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   # 显式声明可独立升级的标准库 gem，供应用的 Bundler 解析完整运行时依赖。
   # pty 是 Ruby 自带的 POSIX 扩展，不是独立 gem。
-  spec.add_dependency "forwardable", ">= 1.3"
   spec.add_dependency "io-console", ">= 0.6"
-  spec.add_dependency "shellwords", ">= 0.1"
+  spec.add_dependency "logger", ">= 1.6"
   spec.add_dependency "stringio", ">= 3.0"
   spec.metadata["rubygems_mfa_required"] = "true"
   spec.metadata["source_code_uri"] = spec.homepage

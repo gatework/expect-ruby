@@ -10,7 +10,7 @@ class InitializationFailureTest < ExpectTest
       @ios.push(master, slave)
       PTY.stub(:open, [master, slave]) do
         without_ledger(failure) do
-          assert_same failure, assert_raises(failure.class) { Expect.new }
+          assert_same failure, assert_raises(failure.class) { Expect::Session.new }
           assert master.closed?, "master leaked before test cleanup"
           assert slave.closed?, "slave leaked before test cleanup"
         end
@@ -64,7 +64,7 @@ class InitializationFailureTest < ExpectTest
     PTY.stub(:open, [master, slave]) do
       master.stub(:close, -> { raise IOError, "injected close failure" }) do
         without_ledger(failure = SystemExit.new(17)) do
-          assert_same failure, assert_raises(SystemExit) { Expect.new }
+          assert_same failure, assert_raises(SystemExit) { Expect::Session.new }
           assert slave.closed?
         end
       end

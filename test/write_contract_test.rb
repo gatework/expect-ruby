@@ -99,8 +99,7 @@ class WriteContractTest < ExpectTest
       nested_write = ->(*) { diagnostic.write("event") }
       command = "command"
       if boundary == :diagnostic
-        session.debug_level = 2
-        session.diagnostic_output = nested_write
+        session.logger = diagnostic_logger(&nested_write)
       else
         command = Object.new
         command.define_singleton_method(:to_s) do
@@ -123,7 +122,7 @@ class WriteContractTest < ExpectTest
       assert_equal 2, error.cause.bytes_written
       assert_equal "ev", diagnostic_sink.read(2)
       assert_equal :wait_readable, sink.read_nonblock(1, exception: false)
-      session.debug_level = 0
+      session.logger = nil
       assert_equal 7, session.write("command")
       assert_equal "command", sink.read(7)
     end

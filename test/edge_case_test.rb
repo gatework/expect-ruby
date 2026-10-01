@@ -94,22 +94,21 @@ class EdgeCaseTest < ExpectTest
     assert_raises(EncodingError) { session.expect(/中文/, timeout: 0).number }
   end
 
-  def test_replacing_log_with_invalid_target_preserves_current_log
+  def test_replacing_transcript_with_invalid_target_preserves_current_writer
     session, = pipe_session
     log = StringIO.new
-    session.log_to(log)
-    assert_raises(ArgumentError) { session.log_to(42) }
-    assert_same log, session.log_output
-    session.write_log("still open")
+    session.transcript = log
+    assert_raises(ArgumentError) { session.transcript = 42 }
+    assert_same log, session.transcript
+    session.write_transcript("still open")
     assert_equal "still open", log.string
   end
 
-  def test_new_session_predicates_use_ruby_truthiness
-    Expect.configure(raw_pty: 0, log_stdout: nil)
-    session = Expect.new
-    @sessions << session
-    assert session.raw_pty?
-    refute session.log_stdout?
+  def test_spawn_raw_option_uses_ruby_truthiness
+    [[0, "line\n"], [nil, "line\r\n"]].each do |raw, expected|
+      session = child('puts "line"', raw:)
+      assert session.expect(expected, timeout: 2).matched?
+    end
   end
 
   def test_read_only_regular_file
@@ -161,7 +160,7 @@ class EdgeCaseTest < ExpectTest
 
   def test_multiple_real_pty_processes
     first = child('puts "one"')
-    second = child('STDIN.gets; puts "two"', raw_pty: true)
+    second = child('STDIN.gets; puts "two"', raw: true)
     seen = []
     record_session = lambda do |session|
       seen << session
@@ -200,12 +199,12 @@ class EdgeCaseTest < ExpectTest
     assert_gc_reclaims_abandoned_child
   end
 
-  def test_gc_reclaims_abandoned_child_with_log_callback_capturing_session
-    assert_gc_reclaims_abandoned_child(log_callback: true)
+  def test_gc_reclaims_abandoned_child_with_transcript_capturing_session
+    assert_gc_reclaims_abandoned_child(transcript_cycle: true)
   end
 
   def test_invalid_options_raise_before_spawning
-    assert_raises(ArgumentError) { Expect.new(typo: true) }
+    assert_raises(ArgumentError) { Expect::Session.new(typo: true) }
     session, = pipe_session
     assert_raises(ArgumentError) { session.expect(0, "x").number }
     assert_raises(ArgumentError) { session.expect(["-unknown", "x"], timeout: 0).number }
@@ -228,13 +227,20 @@ class EdgeCaseTest < ExpectTest
 
   private
 
-  def assert_gc_reclaims_abandoned_child(log_callback: false)
+  def assert_gc_reclaims_abandoned_child(transcript_cycle: false)
     script = <<~RUBY
       require "expect"
       require "rbconfig"
       def abandoned
-        session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60", log_stdout: false)
-        session.log_to { |bytes| [session.pid, bytes] } if #{log_callback}
+        session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60")
+        if #{transcript_cycle}
+          transcript = Object.new
+          transcript.define_singleton_method(:write) do |bytes|
+            session.pid
+            bytes.bytesize
+          end
+          session.transcript = transcript
+        end
         session.pid
       end
       # Ruby 的保守 GC 可能扫描到创建线程栈上残留的引用；先结束该线程，确保会话确实不可达。
@@ -253,7 +259,7 @@ class EdgeCaseTest < ExpectTest
       Process.waitpid(pid) rescue nil
       abort "abandoned child survived GC"
     RUBY
-    output, status = Open3.capture2e(RbConfig.ruby, "--disable-gems", "-I", File.expand_path("../lib", __dir__), "-e",
+    output, status = Open3.capture2e(RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-e",
                                      script)
     assert status.success?, output
     assert_equal "reaped\n", output

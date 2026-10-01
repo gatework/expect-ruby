@@ -37,7 +37,7 @@ class RelayRecoveryTest < ExpectTest
       source, = pipe_session
       target, = sink_session
       fill(target.writer)
-      source.listeners = [wrapped ? target : target.writer]
+      source.outputs = [wrapped ? target : target.writer]
       source.buffer = "request"
       started = Expect.monotonic
       assert_nil bounded(0.5) { Expect.interconnect(source, target, timeout: 0.02) }
@@ -57,7 +57,7 @@ class RelayRecoveryTest < ExpectTest
       io.define_singleton_method(:hash) { 0 }
       io.define_singleton_method(:eql?) { |other| other.is_a?(IO) }
     end
-    source.listeners = [first.writer, second.writer]
+    source.outputs = [first.writer, second.writer]
     source.buffer = "request"
     selecting = Queue.new
     original = IO.method(:select)
@@ -85,7 +85,7 @@ class RelayRecoveryTest < ExpectTest
     source, source_writer = pipe_session
     target, sink = sink_session(write_timeout: 0.02)
     first = StringIO.new
-    source.listeners = [first, target]
+    source.outputs = [first, target]
     payload = (0..255).to_a.pack("C*") * 2048
     source.buffer = payload
     assert_raises(Expect::WriteTimeout) { bounded { Expect.interconnect(source, timeout: 1) } }
@@ -117,7 +117,7 @@ class RelayRecoveryTest < ExpectTest
       received << data.byteslice(0, count)
       count
     end
-    source.listeners = [target]
+    source.outputs = [target]
     source.buffer = "abcdef"
     Expect.interconnect(source, timeout: 0.02)
     assert_equal "abcdef", received
@@ -134,7 +134,7 @@ class RelayRecoveryTest < ExpectTest
 
       original.call(data)
     end
-    source.listeners = [first, second]
+    source.outputs = [first, second]
     source.buffer = "payload"
     assert_raises(IOError) { Expect.interconnect(source, timeout: 0.02) }
     failing = false
@@ -168,7 +168,7 @@ class RelayRecoveryTest < ExpectTest
       end
       original.call(*args, **kwargs)
     end
-    session.log_to { drain(sink) }
+    session.transcript = write_target { drain(sink) }
     assert_equal(5, bounded { session.write("hello") })
     assert interrupted
     assert_equal "reply", session.buffer
@@ -184,11 +184,11 @@ class RelayRecoveryTest < ExpectTest
   end
 
   def test_nested_output_timeout_preserves_the_callers_write_progress
-    %i[listeners log_output].each do |destination|
+    %i[outputs transcript].each do |destination|
       session, sink, peer = sink_session(write_timeout: 1)
       target, = sink_session(write_timeout: 0)
       fill(target.writer)
-      session.public_send(:"#{destination}=", destination == :listeners ? [target] : target)
+      session.public_send(:"#{destination}=", destination == :outputs ? [target] : target)
       peer.write("reply")
 
       error = assert_raises(Expect::WriteTimeout) { bounded { session.write("x" * 1_048_576) } }
@@ -215,10 +215,10 @@ class RelayRecoveryTest < ExpectTest
     fast, writer = pipe_session
     target, = sink_session
     fill(target.writer)
-    slow.listeners = [target]
+    slow.outputs = [target]
     slow.buffer = "blocked"
     output = StringIO.new
-    fast.listeners = [output]
+    fast.outputs = [output]
     writer.write("ready")
     assert_nil bounded(0.5) { Expect.interconnect(slow, fast, timeout: 0.02) }
     assert_equal "ready", output.string
@@ -229,14 +229,14 @@ class RelayRecoveryTest < ExpectTest
     source, = pipe_session
     target, sink = sink_session
     fill(target.writer)
-    source.listeners = [target.writer]
+    source.outputs = [target.writer]
     source.buffer = "request"
     Expect.interconnect(source, timeout: 0.01)
     assert source.pending_output?
     assert_empty source.buffer
     drain(sink)
     replacement = StringIO.new
-    source.listeners = [replacement]
+    source.outputs = [replacement]
     source.buffer = "new"
     Expect.interconnect(source, timeout: 0.02)
     refute source.pending_output?
@@ -259,7 +259,7 @@ class RelayRecoveryTest < ExpectTest
         received << data.byteslice(0, 1)
         1
       end
-      source.listeners = [first, target]
+      source.outputs = [first, target]
       source.buffer = "abcdef"
       assert_raises(IOError) { Expect.interconnect(source, timeout: 1) }
       assert source.pending_output?
@@ -288,7 +288,7 @@ class RelayRecoveryTest < ExpectTest
         count
       end
       callbacks = []
-      source.listeners = [fast, slow]
+      source.outputs = [fast, slow]
       source.on_sequence("STOP") do
         callbacks << [fast.string.dup, received.dup]
         false
@@ -317,7 +317,7 @@ class RelayRecoveryTest < ExpectTest
       failed = true
       raise IOError, "flush failed"
     end
-    source.listeners = [output]
+    source.outputs = [output]
     source.buffer = "once"
     assert_raises(IOError) { Expect.interconnect(source, timeout: 1) }
     Expect.interconnect(source, timeout: 0.01)
@@ -329,7 +329,7 @@ class RelayRecoveryTest < ExpectTest
     [0, nil, -1, 7, "6", :wait_writable].each do |invalid|
       source, = pipe_session
       output = StringIO.new
-      source.listeners = [output]
+      source.outputs = [output]
       source.buffer = "abcdef"
       output.stub(:write, invalid) do
         assert_raises(IOError) { bounded { Expect.interconnect(source, timeout: 1) } }
@@ -343,7 +343,7 @@ class RelayRecoveryTest < ExpectTest
     source, = pipe_session
     target, sink = sink_session
     fill(target.writer)
-    source.listeners = [target]
+    source.outputs = [target]
     called = 0
     source.on_sequence(/END\z/) do
       called += 1
@@ -364,7 +364,7 @@ class RelayRecoveryTest < ExpectTest
     source, writer = pipe_session(buffer_limit: 2)
     target, sink = sink_session
     fill(target.writer)
-    source.listeners = [target]
+    source.outputs = [target]
     source.on_sequence("!")
     writer.write("prefix!tail")
     Expect.interconnect(source, timeout: 0.01)
@@ -378,8 +378,8 @@ class RelayRecoveryTest < ExpectTest
   def test_unlisted_target_output_is_drained_without_losing_bytes
     source, writer = pipe_session
     target = child('puts "ready"; data = STDIN.read(131072); print "reply" if data.bytesize == 131072',
-                   raw_pty: true, write_timeout: 1)
-    source.listeners = [target]
+                   raw: true, write_timeout: 1)
+    source.outputs = [target]
     source.buffer = "x" * 131_072
     writer.close
     assert_same(source, bounded { Expect.interconnect(source, timeout: 2) })
@@ -419,7 +419,6 @@ class RelayRecoveryTest < ExpectTest
     resumed = session.interact(input:, output: StringIO.new, escape: "!", timeout: 0.1)
     refute_same source, resumed
     assert_equal "onetwo", drain(sink)
-    resumed.graceful_close = true
     bounded(0.5) { session.close }
     assert resumed.closed?
     refute input.closed?
@@ -446,7 +445,7 @@ class RelayRecoveryTest < ExpectTest
     target, sink = sink_session
     fill(target.writer)
     source.on_sequence("STOP")
-    source.listeners = [target]
+    source.outputs = [target]
     source.buffer = "ST"
     assert_nil bounded(0.5) { Expect.interconnect(source, timeout: 0) }
     assert source.pending_output?
@@ -461,8 +460,8 @@ class RelayRecoveryTest < ExpectTest
     output = StringIO.new
     original = output.method(:write)
     output.define_singleton_method(:write) { |data| original.call(data.byteslice(0, 1)) }
-    source.log_to(output)
-    source.write_log("complete")
+    source.transcript = output
+    source.write_transcript("complete")
     assert_equal "complete", output.string
   end
 
@@ -478,7 +477,7 @@ class RelayRecoveryTest < ExpectTest
       end
       original.call(data)
     end
-    source.listeners = [output]
+    source.outputs = [output]
     source.on_sequence("!")
     source.buffer = "ready!"
     assert_same source, bounded(0.5) { Expect.interconnect(source, timeout: 0.05) }

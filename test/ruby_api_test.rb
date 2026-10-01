@@ -32,12 +32,12 @@ class RubyAPITest < ExpectTest
   end
 
   def test_concise_expect_dsl_drives_a_dialogue_without_a_result_object
-    session = child('print "name: "; puts "hello " + gets.strip', raw_pty: true)
+    session = child('print "name: "; puts "hello " + gets.strip', raw: true)
     name = "Ruby"
     matched = session.expect(timeout: 2) do
       on("name: ") do |connection|
         connection.puts(name)
-        connection.continue
+        Expect.continue
       end
       on(/hello (\w+)/)
     end.number
@@ -56,7 +56,7 @@ class RubyAPITest < ExpectTest
     result = Expect.expect(timeout: 0.02) do
       eof(from: first) do |connection|
         ended << connection
-        connection.continue(reset_timeout: false)
+        Expect.continue(reset_timeout: false)
       end
       on("missing", from: second)
       timeout { |sessions| timed_out.concat(sessions) }
@@ -110,7 +110,7 @@ class RubyAPITest < ExpectTest
   end
 
   def test_block_patterns_drive_a_real_dialogue_with_captured_variables
-    session = child(<<~'RUBY', raw_pty: true)
+    session = child(<<~'RUBY', raw: true)
       print "name: "
       name = gets.strip
       print "code: "
@@ -120,11 +120,11 @@ class RubyAPITest < ExpectTest
     result = session.expect(timeout: 2) do |patterns|
       patterns.on("name: ") do |connection|
         connection.puts(name)
-        connection.continue
+        Expect.continue
       end
       patterns.on("code: ") do |connection|
         connection.send_slow("123\n", delay: 0)
-        connection.continue(reset_timeout: false)
+        Expect.continue(reset_timeout: false)
       end
       patterns.on(/hello (\w+):(\d+)/)
     end
@@ -327,7 +327,7 @@ class RubyAPITest < ExpectTest
       patterns.eof(from: first) do |connection|
         observed << connection
         second_writer.write("ready")
-        connection.continue(reset_timeout: false)
+        Expect.continue(reset_timeout: false)
       end
       patterns.on("ready", from: second)
     end
@@ -371,28 +371,28 @@ class RubyAPITest < ExpectTest
     assert writer.closed?
   end
 
-  def test_invalid_open_options_close_owned_io_and_preserve_borrowed_io
+  def test_unknown_open_keywords_do_not_take_ownership_of_arguments
     [false, true].each do |own|
       reader, writer = IO.pipe
       @ios.push(reader, writer)
       assert_raises(ArgumentError) do
         Expect.open(reader, writer:, own:, unknown: true) { flunk "invalid options" }
       end
-      assert_equal own, reader.closed?
-      assert_equal own, writer.closed?
+      refute reader.closed?
+      refute writer.closed?
     end
   end
 
-  def test_boolean_predicates_use_ruby_truthiness_and_have_no_write_arguments
-    session, = pipe_session
-    refute session.log_stdout?
-    session.log_stdout = true
-    assert session.log_stdout?
-    session.log_stdout = 0
-    assert session.log_stdout?
-    session.log_stdout = nil
-    refute session.log_stdout?
-    assert_raises(ArgumentError) { session.log_stdout?(true) }
+  def test_invalid_open_configuration_releases_only_owned_io
+    [false, true].each do |own|
+      reader, writer = IO.pipe
+      @ios.push(reader, writer)
+      assert_raises(ArgumentError) do
+        Expect.open(reader, writer:, own:, buffer_limit: -1) { flunk "invalid buffer limit" }
+      end
+      assert_equal own, reader.closed?
+      assert_equal own, writer.closed?
+    end
   end
 
   def test_readiness_accepts_an_empty_group_with_a_keyword_timeout
@@ -401,7 +401,7 @@ class RubyAPITest < ExpectTest
 
   def test_spawn_closes_on_nonlocal_block_exit
     connection = nil
-    result = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60", log_stdout: false) do |session|
+    result = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60") do |session|
       connection = session
       break :finished
     end
@@ -423,33 +423,36 @@ class RubyAPITest < ExpectTest
     assert_raises(ArgumentError) { session.buffer = nil }
   end
 
-  def test_listeners_setter_takes_a_snapshot_and_validates_before_replacement
+  def test_outputs_setter_takes_a_snapshot_and_validates_before_replacement
     session, writer = pipe_session
     output = StringIO.new
-    listeners = [output]
-    session.listeners = listeners
-    listeners.clear
-    session.listeners.clear
-    assert_raises(ArgumentError) { session.listeners = [Object.new] }
+    outputs = [output]
+    session.outputs = outputs
+    outputs.clear
+    session.outputs.clear
+    [nil, output, [output, Object.new]].each do |invalid|
+      assert_raises(ArgumentError) { session.outputs = invalid }
+      assert_equal [output], session.outputs
+    end
     writer.write("ready")
     session.expect("ready", timeout: 1)
     assert_equal "ready", output.string
-    session.listeners = []
-    assert_empty session.listeners
+    session.outputs = []
+    assert_empty session.outputs
   end
 
-  def test_log_block_and_setter_receive_only_read_bytes
+  def test_transcript_writer_and_setter_receive_only_read_bytes
     session, writer = pipe_session
     chunks = []
-    session.log_to { |bytes| chunks << bytes }
-    assert_raises(ArgumentError) { session.log_to(StringIO.new) { nil } }
+    session.transcript = write_target { |bytes| chunks << bytes }
+    assert_raises(ArgumentError) { session.transcript = ->(_) {} }
     writer.write("first")
     session.expect("first", timeout: 1)
     output = StringIO.new
-    session.log_output = output
+    session.transcript = output
     writer.write("second")
     session.expect("second", timeout: 1)
-    session.log_output = nil
+    session.transcript = nil
     assert_equal "first", chunks.join
     assert_equal "second", output.string
     refute output.closed?
@@ -471,13 +474,15 @@ class RubyAPITest < ExpectTest
     assert_equal(expected.string, bounded { server.read(expected.string.bytesize) })
   end
 
-  def test_assigning_the_current_log_preserves_file_ownership
+  def test_reassigning_the_transcript_never_takes_file_ownership
     session, = pipe_session
     Dir.mktmpdir do |directory|
-      log = session.log_to(File.join(directory, "session.log"))
-      session.log_output = log
-      session.close
-      assert log.closed?
+      File.open(File.join(directory, "session.log"), "wb", 0o600) do |transcript|
+        session.transcript = transcript
+        session.transcript = transcript
+        session.close
+        refute transcript.closed?
+      end
     end
   end
 
@@ -498,7 +503,7 @@ class RubyAPITest < ExpectTest
   def test_sequence_block_filters_escape_and_keeps_trailing_bytes
     session, writer = pipe_session
     output = StringIO.new
-    session.listeners = [output]
+    session.outputs = [output]
     observed = []
     value = :done
     session.on_sequence("STOP") do

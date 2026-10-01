@@ -16,7 +16,7 @@ class RelayReentrancyTest < ExpectTest
         result = original.call(*arguments)
         unless entered
           entered = true
-          cursors = source.__send__(:session).__send__(:relay_outputs)
+          cursors = source.__send__(:pending_writes)
           snapshot = -> { [source.buffer, cursors.map { |c| c.instance_variable_get(:@offset) }] }
           snapshots << snapshot.call
           begin
@@ -28,7 +28,7 @@ class RelayReentrancyTest < ExpectTest
         end
         result
       end
-      source.listeners = [output]
+      source.outputs = [output]
       source.buffer = "abc"
       bounded { Expect.interconnect(source, timeout: 0) }
       assert_equal "abc", output.string, "recursive #{entry} replayed bytes"
@@ -41,7 +41,7 @@ class RelayReentrancyTest < ExpectTest
   def test_escape_callback_cannot_enter_the_same_source_but_can_use_a_matcher
     source, = pipe_session
     output = StringIO.new
-    source.listeners = [output]
+    source.outputs = [output]
     calls = 0
     source.on_sequence("!") do
       calls += 1
@@ -64,7 +64,7 @@ class RelayReentrancyTest < ExpectTest
     other, = pipe_session
     other.buffer = "other"
     output = StringIO.new
-    other.listeners = [output]
+    other.outputs = [output]
     outer.on_sequence("!") do
       2.times do
         error = assert_raises(StandardError) { Expect.interconnect(other, outer, timeout: 0) }
@@ -84,7 +84,7 @@ class RelayReentrancyTest < ExpectTest
     outer, = pipe_session
     inner, = pipe_session
     sink = StringIO.new
-    inner.listeners = [sink]
+    inner.outputs = [sink]
     inner.buffer = "independent"
     outer.buffer = "!tail"
     outer.on_sequence("!") do
@@ -108,7 +108,7 @@ class RelayReentrancyTest < ExpectTest
       end
       original.call(data)
     end
-    source.listeners = [sink]
+    source.outputs = [sink]
     source.buffer = "once"
     error = assert_raises(StandardError) { Expect.interconnect(source, timeout: 0) }
     assert_equal "Expect::ReentrancyError", error.class.name
@@ -124,13 +124,13 @@ class RelayReentrancyTest < ExpectTest
     first.buffer = "first"
     second.buffer = "second"
     error = IOError.new("injected preparation failure")
-    second.__send__(:session).stub(:clear_buffer, -> { raise error }) do
+    second.stub(:clear_buffer, -> { raise error }) do
       assert_same error, assert_raises(IOError) { Expect.interconnect(first, second, timeout: 0) }
     end
     assert_equal "first", first.buffer
     assert_equal "second", second.buffer
     sink = StringIO.new
-    first.listeners = second.listeners = [sink]
+    first.outputs = second.outputs = [sink]
     Expect.interconnect(first, second, timeout: 0)
     assert_equal "firstsecond", sink.string
   end
@@ -152,7 +152,7 @@ class RelayReentrancyTest < ExpectTest
     assert_same failure, assert_raises(Interrupt) { Expect.interconnect(source, timeout: 1) }
     producer.close
     sink = StringIO.new
-    source.listeners = [sink]
+    source.outputs = [sink]
     2.times { assert_same source, Expect.interconnect(source, timeout: 1) }
     assert_equal "tail", sink.string
   end

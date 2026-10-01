@@ -26,6 +26,17 @@ gem_file="$(pwd)/$gem_file"
 bundler_version="$(bundle exec ruby -rbundler -e 'print Bundler::VERSION')"
 bundler_gem="$(bundle exec ruby -e 'print Gem.loaded_specs.fetch("bundler").cache_file')"
 
+# 独立安装可用本次解析的运行依赖缓存；Ruby 4 的 Logger 不再是默认 gem。
+# 只复制实际运行依赖，不让开发依赖或宿主 GEM_PATH 掩盖安装遗漏。
+bundle exec ruby -Ilib -rexpect -rfileutils -e '
+  Gem.loaded_specs.fetch("expect-pty").runtime_dependencies.each do |dependency|
+    spec = Gem.loaded_specs.fetch(dependency.name)
+    next if spec.default_gem?
+
+    FileUtils.cp(spec.cache_file, ARGV.fetch(0))
+  end
+' "$smoke_dir"
+
 (
   cd "$smoke_dir"
   # 清除 Bundler 的自动加载与路径设置；Ruby 4 还会通过 BUNDLER_SETUP 自动启用 Bundler。
@@ -45,7 +56,7 @@ spec = Gem.loaded_specs.fetch("expect-pty")
 install_root = File.realpath(ENV.fetch("GEM_HOME"))
 abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
 abort "Bundler leaked into the plain gem smoke" if ARGV.first == "plain" && defined?(Bundler)
-unexpected = %w[minitest rake rubocop parallel logger rbs yard].select { |name| Gem.loaded_specs.key?(name) }
+unexpected = %w[minitest rake rubocop parallel rbs yard].select { |name| Gem.loaded_specs.key?(name) }
 abort "development dependencies leaked into the application: #{unexpected.join(', ')}" unless unexpected.empty?
 abort "installed RBS missing" unless File.file?(File.join(spec.full_gem_path, "sig/expect.rbs"))
 forbidden = spec.files.grep(%r{\A(?:test/|benchmark/|examples/|script/|Gemfile|Rakefile|\.rubocop)})
@@ -56,18 +67,17 @@ spec.runtime_dependencies.each do |dependency|
 end
 
 # 检查实际使用的标准库已在包元数据中声明，默认 gem 可加载不能代替依赖声明。
-%w[forwardable io-console shellwords stringio].each do |name|
+%w[io-console logger stringio].each do |name|
   abort "undeclared runtime dependency: #{name}" unless spec.runtime_dependencies.any? { |dependency| dependency.name == name }
 end
 child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'
-Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_stdout: false) do |session|
-  session.winsize = [30, 100]
-  abort "io-console terminal size failed" unless session.winsize == [30, 100]
-  # BSD stty 设置模式会清空待读输出，先收取提示，使子进程停在等待输入的位置。
+Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw: true) do |session|
+  session.to_io.winsize = [30, 100]
+  abort "io-console terminal size failed" unless session.to_io.winsize == [30, 100]
+  # 先收取提示，使子进程停在等待输入的位置。
   abort "installed gem did not receive the PTY prompt" unless session.expect("ready", timeout: 5).matched?
-  mode = session.stty
-  abort "installed stty query failed" if mode.empty?
-  session.stty(mode)
+  mode = session.to_io.console_mode
+  session.to_io.console_mode = mode
 
   session.puts("expect-ruby")
   abort "installed gem PTY dialogue failed" unless session.expect("reply:expect-ruby", timeout: 5).matched?
@@ -75,7 +85,7 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw_pty: true, log_st
   abort "installed gem child did not exit successfully" unless status&.success?
 end
 
-# 使用已安装包验证公共过滤器随包分发，且结构化诊断无需加载可选的 Logger。
+# 使用已安装包验证公共过滤器随包分发，且结构化诊断使用标准 Logger。
 filter = Expect::Redactor.new(["secret"], replacement: "[REDACTED]")
 filtered = filter.append("sec") + filter.append("ret!") + filter.finish
 abort "installed public redactor failed" unless filtered == "[REDACTED]!"
@@ -83,11 +93,14 @@ abort "installed complete-text redactor failed" unless Expect::Redactor.redact("
 reader, producer = IO.pipe
 events = []
 transcript = StringIO.new
+logger = Logger.new(StringIO.new, level: Logger::DEBUG)
+logger.formatter = lambda do |_severity, _time, _name, event|
+  events << event
+  ""
+end
 begin
-  Expect.open(reader, own: true, buffer_limit: 5, debug_level: 2,
-              diagnostic_output: ->(event) { events << event }) do |session|
+  Expect.open(reader, own: true, buffer_limit: 5, logger:, transcript:) do |session|
     session.redact("secret")
-    session.log_to(transcript)
     session.buffer = "ready"
     expired = session.expect("ready", deadline: Expect.monotonic)
     abort "expired deadline consumed buffered text" unless expired.timeout? && session.buffer == "ready"

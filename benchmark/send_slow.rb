@@ -14,7 +14,7 @@ payload = "x" * size
                                                               inputs: { size:, echo:, delay: },
                                                               iterations: 1, verify:) do
     client, peer = Socket.pair(:UNIX, :STREAM, 0)
-    session = Expect.open(client, log_stdout: false)
+    session = Expect.open(client)
     consumer = Thread.new do
       received = "".b
       while received.bytesize < size

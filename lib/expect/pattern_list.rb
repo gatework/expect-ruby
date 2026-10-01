@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 将 Ruby 模式和块回调整理为有序会话组；注册阶段不读取 IO、不执行匹配回调。
   # 分组结构直接决定 Matcher 的“声明组 → 会话 → 模式”优先级，不能按匹配位置重排。
   class PatternList
@@ -113,11 +113,11 @@ class Expect
       Pattern.new(number: @number, value:, callback:)
     end
 
-    # 拒绝空来源和非 Expect 对象，在任何 IO 读取之前暴露调用错误。
+    # 拒绝空来源和非 Session 对象，在任何 IO 读取之前暴露调用错误。
     def validate_sessions!(sessions)
-      return if !sessions.empty? && sessions.all?(Expect)
+      return if !sessions.empty? && sessions.all?(Session)
 
-      raise ArgumentError, "patterns require Expect sessions; specify from: for class-level waits"
+      raise ArgumentError, "patterns require Session objects; specify from: for class-level waits"
     end
   end
 end

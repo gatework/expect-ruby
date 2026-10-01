@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 清理作用域只记录本次异常，不受调用者 rescue 中的旧 $! 影响。
   # @api private
   module Cleanup
-    # 包括非局部返回在内的所有退出均清理；常规清理错误只在没有原异常时传播。
+    # 包括非局部返回在内的所有退出均清理；StandardError 只在没有原异常时传播。
+    # 清理期间新发生的 Interrupt、SystemExit 等致命异常仍原样传播。
     def self.always(on_exit)
       yield
     rescue Exception # rubocop:disable Lint/RescueException -- 中断也必须清理，然后原样传播。
@@ -13,7 +14,7 @@ class Expect
     ensure
       begin
         on_exit.call
-      rescue IOError, SystemCallError
+      rescue StandardError
         raise unless failed
       end
     end

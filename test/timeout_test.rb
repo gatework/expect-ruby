@@ -169,9 +169,8 @@ class TimeoutTest < ExpectTest
 
   def test_restart_timeout_on_receive
     session, writer = pipe_session
-    session.reset_timeout_on_read = true
     number = with_timed_input(writer, [[6, "."], [12, "."], [18, "."], [24, ".done"]]) do
-      session.expect("done", timeout: 10).number
+      session.expect("done", timeout: 10, reset_timeout_on_read: true).number
     end
     assert_equal 1, number
   end
@@ -218,7 +217,7 @@ class TimeoutTest < ExpectTest
     number = session.expect(timeout: 1) do
       on(/[ABCD]/) do |connection|
         states << connection.match
-        connection.continue
+        Expect.continue
       end
       on("End")
     end.number
@@ -227,7 +226,7 @@ class TimeoutTest < ExpectTest
   end
 
   def test_absolute_timeout_even_with_continuous_unmatched_output
-    session = child('loop { print "x" * 16384 }', raw_pty: true, buffer_limit: 1024)
+    session = child('loop { print "x" * 16384 }', raw: true, buffer_limit: 1024)
     start = Expect.monotonic
     result = bounded(2) { session.expect("missing", timeout: 0.05) }
     assert result.timeout?

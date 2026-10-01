@@ -4,7 +4,7 @@ require_relative "test_helper"
 
 class LifecycleContractTest < ExpectTest
   def test_external_reaping_releases_pid_without_fabricating_process_status
-    session = child('puts "ready"; exit 7', raw_pty: true)
+    session = child('puts "ready"; exit 7', raw: true)
     assert_equal 1, session.expect("ready", timeout: 2).number
     pid = session.pid
     assert_equal(7, bounded { Process.waitpid2(pid).last.exitstatus })

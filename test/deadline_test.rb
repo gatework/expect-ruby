@@ -4,9 +4,9 @@ require_relative "test_helper"
 
 class DeadlineTest < ExpectTest
   def test_absolute_deadline_caps_timeout_resets_from_incoming_data
-    session, writer = pipe_session(reset_timeout_on_read: true)
+    session, writer = pipe_session
     with_clock([[4, writer, "."], [8, writer, "."], [12, writer, "done"]]) do |clock|
-      result = session.expect("done", timeout: 5, deadline: 10)
+      result = session.expect("done", timeout: 5, deadline: 10, reset_timeout_on_read: true)
       assert result.timeout?
       assert_equal 10, clock[0]
       assert_equal "..", session.buffer

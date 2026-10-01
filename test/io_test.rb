@@ -17,22 +17,26 @@ class IOTest < ExpectTest
     assert_equal 1, session.expect("HELLO\n", timeout: 1).number
   end
 
-  def test_log_file_append_truncate_disable_and_manual_output
+  def test_caller_manages_transcript_file_append_truncate_and_close
     session, writer = pipe_session
     Dir.mktmpdir do |dir|
       path = File.join(dir, "session.log")
       File.write(path, "old")
-      log = session.log_to(path)
-      writer.write("reply")
-      session.expect("reply", timeout: 1)
-      session.write_log(" annotation")
-      session.log_output = nil
-      assert log.closed?
+      File.open(path, "ab", 0o600) do |transcript|
+        session.transcript = transcript
+        writer.write("reply")
+        session.expect("reply", timeout: 1)
+        assert_nil session.write_transcript(" annotation")
+        session.transcript = nil
+        refute transcript.closed?
+      end
       assert_equal "oldreply annotation", File.binread(path)
-      session.log_to(path, mode: "w")
-      writer.write("new")
-      session.expect("new", timeout: 1)
-      session.log_output = nil
+      File.open(path, "wb", 0o600) do |transcript|
+        session.transcript = transcript
+        writer.write("new")
+        session.expect("new", timeout: 1)
+        session.transcript = nil
+      end
       assert_equal "new", File.binread(path)
       writer.write("unlogged")
       session.expect("unlogged", timeout: 1)
@@ -41,74 +45,49 @@ class IOTest < ExpectTest
   end
 
   def test_logging_matches_upstream_received_data_only
-    session = child("puts STDIN.gets.reverse", raw_pty: true)
+    session = child("puts STDIN.gets.reverse", raw: true)
     chunks = []
-    session.log_to(->(data) { chunks << data })
+    session.transcript = write_target { |data| chunks << data }
     session.write("abc\n")
     session.expect("cba", timeout: 2)
     assert_equal "\ncba\n", chunks.join
   end
 
-  def test_new_log_files_are_private_without_changing_existing_permissions
-    session, = pipe_session
-    Dir.mktmpdir do |directory|
-      previous_umask = File.umask(0o022)
-      begin
-        %w[a w].each do |mode|
-          path = File.join(directory, "session-#{mode}.log")
-          session.log_to(path, mode:)
-          assert_equal 0o600, File.stat(path).mode & 0o777
-          session.log_output = nil
-          File.chmod(0o640, path)
-          session.log_to(path, mode:)
-          assert_equal 0o640, File.stat(path).mode & 0o777
-        end
-      ensure
-        File.umask(previous_umask)
-      end
-    end
-  end
-
-  def test_group_and_stdout_logging_can_be_controlled_separately
+  def test_stdout_and_other_writers_use_the_same_output_graph
     session, writer = pipe_session
     listener = StringIO.new
-    session.listeners = [listener]
+    session.outputs = [listener]
     writer.write("one")
     session.expect("one", timeout: 1)
     assert_equal "one", listener.string
-    session.log_listeners = false
-    session.log_stdout = true
     output, = capture_io do
+      session.outputs = [$stdout]
       writer.write("two")
       session.expect("two", timeout: 1).number
     end
     assert_equal "two", output
     assert_equal "one", listener.string
-    session.listeners = []
-    assert_empty session.listeners
+    session.outputs = []
+    assert_empty session.outputs
   end
 
-  def test_debug_and_internal_output
+  def test_logger_levels_control_lifecycle_and_payload_diagnostics
     session, writer = pipe_session
-    session.debug_level = 1
-    _, diagnostics = capture_io do
-      writer.write("ready")
-      session.expect("ready", timeout: 1).number
-    end
-    assert_match(/matched pattern 1/, diagnostics)
-    refute_match(/received/, diagnostics)
-    session.debug_level = 2
-    _, diagnostics = capture_io do
-      writer.write("more")
-      session.expect("more", timeout: 1).number
-    end
-    assert_match(/received "more"/, diagnostics)
+    events = []
+    session.logger = diagnostic_logger(level: Logger::INFO) { |event| events << event }
+    writer.write("ready")
+    session.expect("ready", timeout: 1)
+    assert_equal([:matched], events.map { |event| event[:event] })
+    session.logger.level = Logger::DEBUG
+    writer.write("more")
+    session.expect("more", timeout: 1)
+    assert_equal 'received "more"', events.find { |event| event[:event] == :received }[:message]
   end
 
   def test_quiet_mode_does_not_format_byte_content_for_diagnostics
     session, peer = Socket.pair(:UNIX, :STREAM, 0)
     @ios.push(session, peer)
-    connection = Expect.open(session, debug_level: 0)
+    connection = Expect.open(session)
     @sessions << connection
     inspected = 0
     probe = TracePoint.new(:c_call) do |event|
@@ -125,8 +104,7 @@ class IOTest < ExpectTest
   end
 
   def test_send_slow_collects_replies_even_when_logging_disabled
-    session = child("loop { char = STDIN.read(1); break unless char; print char.upcase }", raw_pty: true)
-    session.log_listeners = false
+    session = child("loop { char = STDIN.read(1); break unless char; print char.upcase }", raw: true)
     start = Expect.monotonic
     assert_equal 3, session.send_slow("abc", delay: 0.02)
     assert_operator Expect.monotonic - start, :>=, 0.06
@@ -136,7 +114,7 @@ class IOTest < ExpectTest
   def test_send_slow_zero_delay_only_polls_and_later_reply_remains_readable
     client, peer = Socket.pair(:UNIX, :STREAM, 0)
     @ios.push(client, peer)
-    session = Expect.open(client, log_stdout: false)
+    session = Expect.open(client)
     @sessions << session
     waits = []
     original = client.method(:wait_readable)
@@ -157,8 +135,8 @@ class IOTest < ExpectTest
     session, = pipe_session
     calls = []
     failure = Expect::WriteTimeout.new(bytes_written: 0)
-    session.__send__(:session).stub(:sleep, ->(duration) { calls << [:sleep, duration] }) do
-      session.__send__(:session).stub(:write, lambda { |data|
+    session.stub(:sleep, ->(duration) { calls << [:sleep, duration] }) do
+      session.stub(:write, lambda { |data|
         calls << [:write, data]
         raise failure
       }) do
@@ -169,7 +147,7 @@ class IOTest < ExpectTest
   end
 
   def test_large_bidirectional_write_does_not_deadlock
-    session = child("STDIN.binmode; STDOUT.binmode; loop { print STDIN.readpartial(4096) }", raw_pty: true,
+    session = child("STDIN.binmode; STDOUT.binmode; loop { print STDIN.readpartial(4096) }", raw: true,
                                                                                              write_timeout: 3)
     payload = (0..255).to_a.pack("C*") * 1024
     bounded do
@@ -180,7 +158,7 @@ class IOTest < ExpectTest
   end
 
   def test_write_timeout_on_backpressure
-    session = child('puts "ready"; sleep 30', raw_pty: true, write_timeout: 0.05)
+    session = child('puts "ready"; sleep 30', raw: true, write_timeout: 0.05)
     session.expect("ready", timeout: 2)
     assert_raises(Expect::WriteTimeout) { bounded { session.write("x" * 1_000_000) } }
   end
@@ -196,16 +174,11 @@ class IOTest < ExpectTest
   end
 
   def test_readiness_keeps_distinct_sessions_with_equal_values
-    type = Class.new(Expect) do
-      def ==(other) = other.is_a?(self.class)
-      alias eql? ==
-      def hash = 0
-    end
     sources = Array.new(2) do
-      reader, writer = IO.pipe
-      @ios.push(reader, writer)
-      session = type.open(reader)
-      @sessions << session
+      session, writer = pipe_session
+      session.define_singleton_method(:==) { |other| other.is_a?(Expect::Session) }
+      session.define_singleton_method(:eql?) { |other| other.is_a?(Expect::Session) }
+      session.define_singleton_method(:hash) { 0 }
       [session, writer]
     end
     first, second = sources.map(&:first)
@@ -339,9 +312,9 @@ class IOTest < ExpectTest
   end
 
   def test_log_io_failure_does_not_masquerade_as_child_eof
-    session = child('puts "ready"; STDIN.gets; puts "response"; sleep 30', raw_pty: true)
+    session = child('puts "ready"; STDIN.gets; puts "response"; sleep 30', raw: true)
     assert_equal 1, session.expect("ready\n", timeout: 2).number
-    session.log_to(->(_) { raise Errno::EIO, "log failed" })
+    session.transcript = write_target { raise Errno::EIO, "transcript failed" }
     session.write("continue\n")
     result = session.expect("response", timeout: 2)
     assert_instance_of Errno::EIO, result.error
@@ -349,7 +322,7 @@ class IOTest < ExpectTest
     refute session.eof?
     assert session.alive?
     assert_includes result.before, "response\n"
-    session.log_output = nil
+    session.transcript = nil
     assert_equal 1, session.expect("response", timeout: 0).number
   end
 end

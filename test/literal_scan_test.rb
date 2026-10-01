@@ -10,7 +10,7 @@ class LiteralScanTest < ExpectTest
     session.buffer = "prefix pass"
     assert_nil matcher.__send__(:find_match)
     writer.write("word:")
-    session.__send__(:session).__send__(:read_available)
+    session.__send__(:read_available)
     result = matcher.__send__(:find_match)
     assert_equal 1, result[1].number
     assert_equal [7, 9, []], result[2]
@@ -23,7 +23,7 @@ class LiteralScanTest < ExpectTest
     session.buffer = "ready"
     assert_equal 2, matcher.__send__(:find_match)[1].number
     writer.write(" preferred")
-    session.__send__(:session).__send__(:read_available)
+    session.__send__(:read_available)
     assert_equal 1, matcher.__send__(:find_match)[1].number
   end
 
@@ -38,15 +38,15 @@ class LiteralScanTest < ExpectTest
     session.clear_buffer
     assert_nil matcher.__send__(:find_match)
     writer.write("token")
-    session.__send__(:session).__send__(:read_available)
+    session.__send__(:read_available)
     assert_equal 2, matcher.__send__(:find_match)[1].number
     session.expect("token", timeout: 0)
     session.buffer_limit = 8
     writer.write("xxxxstart")
-    session.__send__(:session).__send__(:read_available)
+    session.__send__(:read_available)
     assert_equal [3, 5, []], matcher.__send__(:find_match)[2]
     session.clear_buffer
-    session.__send__(:session).__send__(:restore_relay_buffer, "token")
+    session.__send__(:restore_relay_buffer, "token")
     assert_equal 2, matcher.__send__(:find_match)[1].number
   end
 
@@ -66,12 +66,12 @@ class LiteralScanTest < ExpectTest
       when 2
         session.buffer_limit = [nil, 2, 5, 12].sample(random:)
       when 3
-        session.__send__(:session).__send__(:restore_relay_buffer, chunks.sample(random:).b)
+        session.__send__(:restore_relay_buffer, chunks.sample(random:).b)
       when 4
         session.expect("x", timeout: 0).number
       else
         writer.write(chunks.sample(random:))
-        session.__send__(:session).__send__(:read_available)
+        session.__send__(:read_available)
       end
       expected = Expect::Matcher.new(list, nil).__send__(:find_match)
       actual = matcher.__send__(:find_match)

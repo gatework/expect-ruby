@@ -7,25 +7,24 @@ require "tempfile"
 require "tmpdir"
 require "socket"
 require_relative "../lib/expect"
+require_relative "support/terminal_probe"
 
 class ExpectTest < Minitest::Test
   def setup
     @sessions = []
     @ios = []
     @threads = []
-    @configuration = Expect.configuration
   end
 
   def teardown
     @threads.each { |thread| thread.kill.join if thread.alive? }
     @sessions.reverse_each { |session| session.hard_close(timeout: 0.03) }
     @ios.each { |io| io.close unless io.closed? }
-    Expect.configure(**@configuration.to_h)
   end
 
   def child(script, **)
-    session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "STDOUT.sync = true; STDERR.sync = true; #{script}",
-                           log_stdout: false, **)
+    session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e",
+                           "STDOUT.sync = true; STDERR.sync = true; #{script}", **)
     @sessions << session
     session
   end
@@ -48,11 +47,37 @@ class ExpectTest < Minitest::Test
   end
 
   def terminal_configuration(session)
-    state = session.stty
-    return state unless RUBY_PLATFORM.include?("darwin")
+    TerminalProbe.configuration(session.to_io)
+  end
 
-    # Darwin marks pending-input retyping after tcsetattr. PENDIN is a kernel
-    # state bit (sys/termios.h), not a changed terminal configuration.
-    state.sub(/lflag=([0-9a-f]+)/) { "lflag=#{(Regexp.last_match(1).to_i(16) & ~0x20000000).to_s(16)}" }
+  def write_target(&handler)
+    Object.new.tap do |target|
+      target.define_singleton_method(:write) do |bytes|
+        handler.call(bytes)
+        bytes.bytesize
+      end
+    end
+  end
+
+  def diagnostic_logger(level: Logger::DEBUG, &handler)
+    Logger.new(StringIO.new, level:).tap do |logger|
+      if handler
+        logger.formatter = lambda do |_severity, _time, _progname, event|
+          handler.call(event)
+          ""
+        end
+      end
+    end
+  end
+
+  private
+
+  # 业务相等不应改变来源的缓冲、匹配进展、EOF 派发和转接所有权。
+  def equalize_sessions(*sessions)
+    sessions.each do |session|
+      session.define_singleton_method(:hash) { 0 }
+      session.define_singleton_method(:eql?) { |other| other.is_a?(Expect::Session) }
+      session.define_singleton_method(:==) { |other| other.is_a?(Expect::Session) }
+    end
   end
 end

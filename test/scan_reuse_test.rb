@@ -11,14 +11,14 @@ class ScanReuseTest < ExpectTest
     list.on("missing", from: first).on("other", from: second).on("ready", from: first)
     matcher = Expect::Matcher.new(list, 0)
     snapshots = 0
-    original = first.__send__(:session).method(:buffer)
-    first.__send__(:session).stub(:buffer, lambda {
+    original = first.method(:buffer)
+    first.stub(:buffer, lambda {
       snapshots += 1
       original.call
     }) do
       2.times do
         result = matcher.__send__(:find_match)
-        assert_same first.__send__(:session), result[0]
+        assert_same first, result[0]
         assert_equal 3, result[1].number
         assert_equal [0, 5, []], result[2]
       end
@@ -37,7 +37,7 @@ class ScanReuseTest < ExpectTest
         session.buffer = "nested finish"
         session.expect("nested ", timeout: 0)
         events << session.match
-        session.continue
+        Expect.continue
       end
       on("missing", from: second)
       on("finish", from: first) { |session| events << session.match }
@@ -70,19 +70,19 @@ class ScanReuseTest < ExpectTest
 
   def test_regexps_share_one_combined_text_and_literal_only_does_not_build_it
     session, = pipe_session
-    session.listeners = [StringIO.new]
+    session.outputs = [StringIO.new]
     [0, 4].each do |count|
-      session.__send__(:session).__send__(:sequences=, {})
+      session.__send__(:sequences=, {})
       count.times { |index| session.on_sequence(/missing#{index}/) }
       session.on_sequence("STOP")
-      history = session.__send__(:session).__send__(:relay_history)
+      history = session.__send__(:relay_history)
       concatenations = 0
       original = history.method(:+)
       history.define_singleton_method(:+) do |other|
         concatenations += 1
         original.call(other)
       end
-      assert Expect::Interaction.relay_buffer(session.__send__(:session), { session.__send__(:session) => "payload".b })
+      assert_equal :queued, Expect::Interaction.queue_input(session, "payload".b)
       assert_equal count.zero? ? 0 : 1, concatenations
     end
   end
@@ -90,7 +90,7 @@ class ScanReuseTest < ExpectTest
   def test_escape_callback_can_change_rules_before_rescanning
     session, = pipe_session
     output = StringIO.new
-    session.listeners = [output]
+    session.outputs = [output]
     events = []
     session.on_sequence(/ONE/) do
       events << :one
@@ -100,11 +100,10 @@ class ScanReuseTest < ExpectTest
       end
       true
     end
-    buffers = { session => "aONEbTWOtail".b }
-    refute Expect::Interaction.relay_buffer(session.__send__(:session),
-                                            { session.__send__(:session) => buffers.fetch(session) })
+    session.buffer = "aONEbTWOtail"
+    assert_same session, Expect.interconnect(session, timeout: 1)
     assert_equal %i[one two], events
     assert_equal "ab", output.string
-    assert_equal "tail", buffers.fetch(session)
+    assert_equal "tail", session.buffer
   end
 end

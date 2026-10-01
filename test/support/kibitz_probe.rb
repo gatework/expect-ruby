@@ -30,7 +30,7 @@ module KibitzProbe
     end
 
     def spawn_cli(*)
-      terminal = Expect.new(log_stdout: false, write_timeout: 3)
+      terminal = Expect::Session.new(write_timeout: 3)
       @sessions << terminal
       @terminal_modes[terminal] = InteractProbe.configuration(terminal)
       terminal.spawn(RbConfig.ruby, EXAMPLE, *)

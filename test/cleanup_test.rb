@@ -7,8 +7,8 @@ class CleanupTest < ExpectTest
     reader, writer = IO.pipe
     @ios.push(reader, writer)
     reader.stub(:close, -> { raise IOError, "reader close failed" }) do
-      error = assert_raises(ArgumentError) { Expect.open(reader, writer:, own: true, unknown: true) }
-      assert_match(/unknown/, error.message)
+      error = assert_raises(ArgumentError) { Expect.open(reader, writer:, own: true, timeout: -1) }
+      assert_match(/duration/, error.message)
       assert writer.closed?
     end
   end
@@ -18,8 +18,8 @@ class CleanupTest < ExpectTest
     @ios.push(master, slave)
     PTY.stub(:open, [master, slave]) do
       master.stub(:close, -> { raise IOError, "master close failed" }) do
-        error = assert_raises(ArgumentError) { Expect.new(unknown: true) }
-        assert_match(/unknown/, error.message)
+        error = assert_raises(ArgumentError) { Expect::Session.new(timeout: -1) }
+        assert_match(/duration/, error.message)
         assert slave.closed?
       end
     end
@@ -63,10 +63,70 @@ class CleanupTest < ExpectTest
     end
   end
 
+  def test_spawn_preserves_the_primary_exception_when_transcript_or_logger_cleanup_fails
+    %i[transcript logger].each do |channel|
+      [ArgumentError.new("block failed"), Interrupt.new("interrupted"), SystemExit.new(17)].each do |primary|
+        session = nil
+        pid = nil
+        failure = RuntimeError.new("#{channel} cleanup failed")
+        error = assert_raises(primary.class) do
+          Expect.spawn(RbConfig.ruby, "-e", "sleep 60", raw: true) do |child|
+            session = child
+            pid = child.pid
+            prepare_cleanup_failure(child, channel, failure)
+            raise primary
+          end
+        end
+        assert_same primary, error
+        assert session.closed?
+        assert_nil session.pid
+        assert_instance_of Process::Status, session.process_status
+        assert_raises(Errno::ECHILD) { Process.waitpid(pid, Process::WNOHANG) }
+      end
+    end
+  end
+
+  def test_spawn_reports_transcript_or_logger_cleanup_failure_without_a_primary_exception
+    %i[transcript logger].each do |channel|
+      session = nil
+      pid = nil
+      failure = RuntimeError.new("#{channel} cleanup failed")
+      error = assert_raises(RuntimeError) do
+        Expect.spawn(RbConfig.ruby, "-e", "sleep 60", raw: true) do |child|
+          session = child
+          pid = child.pid
+          prepare_cleanup_failure(child, channel, failure)
+          :done
+        end
+      end
+      assert_same failure, error
+      assert session.closed?
+      assert_nil session.pid
+      assert_instance_of Process::Status, session.process_status
+      assert_raises(Errno::ECHILD) { Process.waitpid(pid, Process::WNOHANG) }
+    end
+  end
+
+  def test_spawn_does_not_suppress_fatal_cleanup_interruptions
+    session = nil
+    failure = Interrupt.new("cleanup interrupted")
+    error = assert_raises(Interrupt) do
+      Expect.spawn(RbConfig.ruby, "-e", "sleep 60", raw: true) do |child|
+        session = child
+        prepare_cleanup_failure(child, :transcript, failure)
+        raise ArgumentError, "block failed"
+      end
+    end
+    assert_same failure, error
+    assert session.closed?
+    assert_nil session.pid
+  end
+
   def test_spawn_block_error_is_preserved_and_child_reaped_when_cleanup_also_fails
+    inherited_constructor = !Expect::Session.singleton_methods(false).include?(:new)
     session = stubborn_child
     failure = ArgumentError.new("block failed")
-    Expect.stub(:new, session) do
+    Expect::Session.stub(:new, session) do
       session.stub(:spawn, session) do
         session.to_io.stub(:close, -> { raise IOError, "reader close failed" }) do
           error = assert_raises(ArgumentError) { Expect.spawn("already started") { raise failure } }
@@ -75,16 +135,20 @@ class CleanupTest < ExpectTest
         end
       end
     end
+  ensure
+    if inherited_constructor && Expect::Session.singleton_methods(false).include?(:new)
+      Expect::Session.singleton_class.remove_method(:new)
+    end
   end
 
   def test_spawn_fork_failure_preserves_original_error_and_attempts_both_pipe_closes
-    session = Expect.new(log_stdout: false)
+    session = Expect::Session.new
     @sessions << session
     reader, writer = IO.pipe
     @ios.push(reader, writer)
     failure = Errno::EAGAIN.new("fork failed")
     IO.stub(:pipe, [reader, writer]) do
-      session.__send__(:session).stub(:fork, ->(&) { raise failure }) do
+      session.stub(:fork, ->(&) { raise failure }) do
         reader.stub(:close, -> { raise IOError, "error pipe close failed" }) do
           assert_same failure, assert_raises(Errno::EAGAIN) { session.spawn("cat") }
           assert writer.closed?
@@ -95,7 +159,7 @@ class CleanupTest < ExpectTest
   end
 
   def test_spawn_exec_failure_preserves_spawn_error_when_handle_cleanup_also_fails
-    session = Expect.new(log_stdout: false)
+    session = Expect::Session.new
     @sessions << session
     owner = Process.pid
     close = session.to_io.method(:close)
@@ -115,7 +179,7 @@ class CleanupTest < ExpectTest
   def test_graceful_close_preserves_logging_error_when_handle_cleanup_also_fails
     session = stubborn_child
     failure = ArgumentError.new("log failed")
-    session.log_output = ->(_) { raise failure }
+    session.transcript = write_target { raise failure }
     session.to_io.stub(:wait_readable, true) do
       session.to_io.stub(:read_nonblock, "last output") do
         session.to_io.stub(:close, -> { raise IOError, "reader close failed" }) do
@@ -142,48 +206,46 @@ class CleanupTest < ExpectTest
     resources.close_handles
   end
 
-  def test_hard_close_finishes_wrappers_log_and_child_after_handle_failure
+  def test_hard_close_finishes_wrappers_transcript_and_child_after_handle_failure
     session = stubborn_child
     pid = session.pid
     first, = pipe_session
     second, = pipe_session
-    session.__send__(:session).instance_variable_set(:@interact_inputs,
-                                                     { first.to_io => first, second.to_io => second })
-    Dir.mktmpdir do |dir|
-      log = session.log_to(File.join(dir, "owned.log"))
-      failure = IOError.new("handle close failed")
-      session.to_io.stub(:close, -> { raise failure }) do
-        first.stub(:close, ->(**) { raise IOError, "wrapper close failed" }) do
-          error = assert_raises(IOError) { bounded { session.hard_close(timeout: 0.01) } }
-          assert_same failure, error
-          assert second.closed?
-          refute second.to_io.closed?, "borrowed wrapper IO must remain open"
-          assert log.closed?
-          assert_nil session.log_output
-          assert_nil session.pid
-          assert_equal Signal.list.fetch("KILL"), session.process_status.termsig
-          assert_raises(Errno::ECHILD) { Process.waitpid(pid, Process::WNOHANG) }
-        end
+    session.instance_variable_set(:@interact_inputs, { first.to_io => first, second.to_io => second })
+    transcript = StringIO.new
+    session.transcript = transcript
+    session.redact("secret")
+    session.write_transcript("sec")
+    failure = IOError.new("handle close failed")
+    session.to_io.stub(:close, -> { raise failure }) do
+      first.stub(:close, ->(**) { raise IOError, "wrapper close failed" }) do
+        error = assert_raises(IOError) { bounded { session.hard_close(timeout: 0.01) } }
+        assert_same failure, error
+        assert second.closed?
+        refute second.to_io.closed?, "borrowed wrapper IO must remain open"
+        assert_equal "[FILTERED]", transcript.string
+        refute transcript.closed?
+        assert_nil session.transcript
+        assert_nil session.pid
+        assert_equal Signal.list.fetch("KILL"), session.process_status.termsig
+        assert_raises(Errno::ECHILD) { Process.waitpid(pid, Process::WNOHANG) }
       end
     end
   ensure
     session&.hard_close(timeout: 0)
   end
 
-  def test_owned_log_close_failure_is_visible_after_child_reaping_and_retryable
+  def test_hard_close_never_closes_a_borrowed_transcript
     session = stubborn_child
-    Dir.mktmpdir do |dir|
-      log = session.log_to(File.join(dir, "owned.log"))
-      log.stub(:close, -> { raise IOError, "log close failed" }) do
-        assert_raises(IOError) { bounded { session.hard_close(timeout: 0.01) } }
-        assert_nil session.pid
-        assert_same log, session.log_output
-      end
-      status = session.hard_close(timeout: 0)
+    transcript = StringIO.new
+    session.transcript = transcript
+    transcript.stub(:close, -> { flunk "session must not close a borrowed transcript" }) do
+      status = bounded { session.hard_close(timeout: 0.01) }
       assert_same session.process_status, status
-      assert log.closed?
-      assert_nil session.log_output
+      assert_nil session.pid
+      assert_nil session.transcript
     end
+    refute transcript.closed?
   ensure
     session&.hard_close(timeout: 0)
   end
@@ -204,7 +266,7 @@ class CleanupTest < ExpectTest
     session = stubborn_child
     failure = RuntimeError.new("process wait failed")
     session.to_io.stub(:close, -> { raise IOError, "close failed" }) do
-      session.__send__(:session).stub(:wait, ->(**) { raise failure }) do
+      session.stub(:wait, ->(**) { raise failure }) do
         assert_same failure, assert_raises(RuntimeError) { session.hard_close(timeout: 0) }
       end
     end
@@ -231,30 +293,23 @@ class CleanupTest < ExpectTest
     session&.hard_close(timeout: 0)
   end
 
-  def test_finalizer_reaps_after_both_handle_and_log_close_fail
+  def test_finalizer_reaps_after_handle_failure_without_touching_the_transcript
     session = stubborn_child
     pid = session.pid
-    resources = session.__send__(:session).instance_variable_get(:@resources)
-    log_attempted = false
-    Dir.mktmpdir do |dir|
-      log = session.log_to(File.join(dir, "owned.log"))
-      session.to_io.stub(:close, -> { raise IOError, "handle failed" }) do
-        log.stub(:close, lambda {
-          log_attempted = true
-          raise Errno::EIO, "log failed"
-        }) do
-          bounded { resources.finalize }
-        end
-      end
-      assert log_attempted
-      assert_nil resources.pid
-      bounded do
-        loop do
-          Process.kill(0, pid)
-          sleep 0.005
-        rescue Errno::ESRCH
-          break
-        end
+    resources = session.instance_variable_get(:@resources)
+    transcript = write_target { flunk "finalizer must not invoke a borrowed transcript" }
+    transcript.define_singleton_method(:close) { flunk "finalizer must not close a borrowed transcript" }
+    session.transcript = transcript
+    session.to_io.stub(:close, -> { raise IOError, "handle failed" }) do
+      bounded { resources.finalize }
+    end
+    assert_nil resources.pid
+    bounded do
+      loop do
+        Process.kill(0, pid)
+        sleep 0.005
+      rescue Errno::ESRCH
+        break
       end
     end
   ensure
@@ -263,7 +318,7 @@ class CleanupTest < ExpectTest
 
   def test_non_owner_cleanup_never_signals_and_finalizer_leaves_handles_alone
     session = stubborn_child
-    resources = session.__send__(:session).instance_variable_get(:@resources)
+    resources = session.instance_variable_get(:@resources)
     Process.stub(:pid, -1) do
       Process.stub(:kill, ->(*) { flunk "non-owner sent a signal" }) do
         resources.finalize
@@ -278,9 +333,20 @@ class CleanupTest < ExpectTest
 
   private
 
+  def prepare_cleanup_failure(session, channel, failure)
+    session.redact("secret")
+    if channel == :transcript
+      session.transcript = write_target { raise failure }
+      session.write_transcript("sec")
+    else
+      session.logger = diagnostic_logger { raise failure }
+      session.write("sec")
+    end
+  end
+
   def stubborn_child
     session = child('Signal.trap("HUP", "IGNORE"); Signal.trap("TERM", "IGNORE"); puts "ready"; sleep 60',
-                    raw_pty: true)
+                    raw: true)
     assert_equal 1, session.expect("ready", timeout: 2).number
     session
   end

@@ -34,7 +34,7 @@ class BufferAccountingTest < ExpectTest
   def test_continuous_output_keeps_a_bounded_window_and_complete_log
     session, writer = pipe_session(buffer_limit: 64)
     logged = 0
-    session.log_to { |data| logged += data.bytesize }
+    session.transcript = write_target { |data| logged += data.bytesize }
     32.times do
       writer.write("x" * 4096)
       assert_nil session.expect("missing", timeout: 0).number
@@ -45,9 +45,9 @@ class BufferAccountingTest < ExpectTest
   end
 
   def test_preserved_match_does_not_count_as_discard
-    session, = pipe_session(buffer_limit: 4, preserve_buffer: true)
+    session, = pipe_session(buffer_limit: 4)
     session.buffer = "abcdef"
-    2.times { assert_equal 1, session.expect("ef", timeout: 0).number }
+    2.times { assert_equal 1, session.expect("ef", timeout: 0, consume: false).number }
     assert_equal "cdef", session.buffer
     assert_equal 2, session.buffer_discarded_bytes
   end
@@ -55,7 +55,7 @@ class BufferAccountingTest < ExpectTest
   def test_relay_tail_is_only_counted_when_matching_applies_the_limit
     session, writer = pipe_session(buffer_limit: 2)
     output = StringIO.new
-    session.listeners = [output]
+    session.outputs = [output]
     session.on_sequence("STOP")
     writer.write("prefixSTOPtail")
     assert_same session, Expect.interconnect(session, timeout: 1)
@@ -71,12 +71,12 @@ class BufferAccountingTest < ExpectTest
   def test_logging_failure_preserves_the_retained_input_and_discard_count
     session, writer = pipe_session(buffer_limit: 4)
     failure = IOError.new("log failed")
-    session.log_to { raise failure }
+    session.transcript = write_target { raise failure }
     writer.write("abcdef")
     assert_same failure, session.expect("ef", timeout: 1).error
     assert_equal "cdef", session.buffer
     assert_equal 2, session.buffer_discarded_bytes
-    session.log_output = nil
+    session.transcript = nil
     assert_equal 1, session.expect("ef", timeout: 0).number
     assert_equal 2, session.buffer_discarded_bytes
   end

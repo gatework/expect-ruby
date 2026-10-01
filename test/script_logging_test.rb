@@ -7,7 +7,7 @@ require "etc"
 class ScriptLoggingTest < ExpectTest
   def shell_probe
     session = Expect.spawn("/bin/sh", "-i", env: { "PS1" => ScriptProbe::PROMPT, "ENV" => nil, "LC_ALL" => "C" },
-                                            raw_pty: true, log_stdout: false, write_timeout: 3)
+                                            raw: true, write_timeout: 3)
     @sessions << session
     ScriptProbe::Runner.new(session).ready!
   end
@@ -23,10 +23,10 @@ class ScriptLoggingTest < ExpectTest
     end
   end
 
-  def test_callback_log_records_multiple_scripts_exactly_once
+  def test_transcript_writer_records_multiple_scripts_exactly_once
     runner = shell_probe
     chunks = []
-    runner.session.log_to(->(bytes) { chunks << bytes.dup })
+    runner.session.transcript = write_target { |bytes| chunks << bytes.dup }
     %w[first second].each do |value|
       runner.run(value, "printf '#{value}\\n'\n", expected_status: 0, expected_output: "#{value}\n")
     end
@@ -41,7 +41,7 @@ class ScriptLoggingTest < ExpectTest
   def test_borrowed_log_is_flushed_and_stays_open_after_multiple_scripts
     runner = shell_probe
     Tempfile.create("expect-borrowed-log") do |file|
-      runner.session.log_to(file)
+      runner.session.transcript = file
       runner.run("one", "printf 'BORROWED_ONE\\n'", expected_status: 0, expected_output: "BORROWED_ONE\n")
       assert_includes File.binread(file.path), "BORROWED_ONE\n"
       runner.run("two", "printf 'BORROWED_TWO\\n'", expected_status: 0, expected_output: "BORROWED_TWO\n")
@@ -93,11 +93,11 @@ class ScriptLoggingTest < ExpectTest
 
   def test_logger_error_is_visible_to_caller
     runner = shell_probe
-    runner.session.log_to(->(_) { raise IOError, "log destination failed" })
+    runner.session.transcript = write_target { raise IOError, "transcript destination failed" }
     error = assert_raises(IOError) do
       runner.run("logger_failure", "printf 'output\\n'", expected_status: 0, expected_output: "output\n")
     end
-    assert_equal "log destination failed", error.message
+    assert_equal "transcript destination failed", error.message
     assert_empty runner.results
   end
 
@@ -106,15 +106,18 @@ class ScriptLoggingTest < ExpectTest
     session = runner.session
     Dir.mktmpdir do |dir|
       path = File.join(dir, "timeout.log")
-      session.log_to(path, mode: "w")
-      session.write("printf 'BEFORE_TIMEOUT\\n'; sleep 0.15; printf 'AFTER_TIMEOUT\\n'\n")
-      assert_equal 1, session.expect("BEFORE_TIMEOUT\n", timeout: 2).number
-      assert_nil session.expect("AFTER_TIMEOUT", timeout: 0.02).number
-      assert_equal :timeout, session.error
-      assert_includes File.binread(path), "BEFORE_TIMEOUT\n"
-      assert_equal 1, session.expect("AFTER_TIMEOUT\n", timeout: 2).number
-      assert_equal 1, session.expect(ScriptProbe::PROMPT, timeout: 2).number
-      runner.finish!
+      File.open(path, "wb", 0o600) do |transcript|
+        session.transcript = transcript
+        session.write("printf 'BEFORE_TIMEOUT\\n'; sleep 0.15; printf 'AFTER_TIMEOUT\\n'\n")
+        assert_equal 1, session.expect("BEFORE_TIMEOUT\n", timeout: 2).number
+        assert_nil session.expect("AFTER_TIMEOUT", timeout: 0.02).number
+        assert_equal :timeout, session.error
+        assert_includes File.binread(path), "BEFORE_TIMEOUT\n"
+        assert_equal 1, session.expect("AFTER_TIMEOUT\n", timeout: 2).number
+        assert_equal 1, session.expect(ScriptProbe::PROMPT, timeout: 2).number
+        runner.finish!
+        refute transcript.closed?
+      end
       text = File.binread(path)
       assert_equal 1, text.scan("BEFORE_TIMEOUT\n").length
       assert_equal 1, text.scan("AFTER_TIMEOUT\n").length

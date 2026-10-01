@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 向单个转接目标写入数据，维护发送进度与期限；恢复时不重放已成功写出的前缀。
   # 只借用目标，不 dup 描述符，也不负责读取；所有就绪等待统一交给 Relay 调度。
   # @api private
@@ -19,13 +19,13 @@ class Expect
     # 初次排队或重新进入 interconnect 时开始新的写入预算；普通短写不会刷新期限。
     # 只有 Expect 目标提供 write_timeout，原生 IO 和自定义目标只受转接总期限约束。
     def restart_timeout
-      period = target.write_timeout if target.is_a?(Expect)
+      period = target.write_timeout if target.is_a?(Session)
       @deadline = period && (Expect.monotonic + period)
     end
 
     # 真实 IO 可参与共同 select；自定义可写对象返回 nil，沿用其同步 write/flush 协议。
     def io
-      return target.writer if target.is_a?(Expect)
+      return target.writer if target.is_a?(Session)
 
       target if target.is_a?(IO)
     end
@@ -37,7 +37,7 @@ class Expect
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 游标、短写、flush 和期限按单个目标推进。
     def advance(check_timeout: true)
       return false if done?
-      raise IOError, "closed Expect session" if target.is_a?(Expect) && target.closed?
+      raise IOError, "closed Expect session" if target.is_a?(Session) && target.closed?
 
       if @offset < @data.bytesize
         bytes = @data.byteslice(@offset, READ_SIZE)

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 一个已编号的文本模式或事件及其回调；匹配结果统一使用字节偏移，便于精确消费 IO 缓冲。
   # @api private
   Pattern = Data.define(:number, :value, :callback) do

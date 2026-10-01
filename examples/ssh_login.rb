@@ -5,36 +5,16 @@ require "io/console"
 require "tmpdir"
 require "securerandom"
 require_relative "../lib/expect/pty"
+require_relative "support/ssh"
 
-host = ENV.fetch("SSH_HOST", "127.0.0.1")
-user = ENV.fetch("SSH_USER", ENV.fetch("USER", "crate"))
-abort "invalid SSH host or user" if [host, user].any? do |value|
-  value.empty? || value.start_with?("-") || value.match?(/[\s\x00]/)
-end
-password = ENV.delete("EXPECT_PASSWORD")&.dup
-unless password
-  $stderr.print("SSH password: ")
-  password = $stdin.tty? ? $stdin.noecho(&:gets) : $stdin.gets
-  $stderr.puts
-  password = password&.chomp
-end
-abort "password is required" if password.nil? || password.empty?
+options = SSHExample.options
+host, user = options.values_at(:host, :user)
+password = SSHExample.read_password
 
 begin
   Dir.mktmpdir("expect-ssh-") do |dir|
-    # Isolated known_hosts keeps this example independent of user SSH settings.
-    # For non-loopback hosts, use an existing trusted known_hosts file.
-    known_hosts = ENV.fetch("SSH_KNOWN_HOSTS", nil)
-    abort "SSH_KNOWN_HOSTS is required for remote hosts" unless known_hosts || %w[127.0.0.1 ::1
-                                                                                  localhost].include?(host)
-    policy = known_hosts ? "yes" : "accept-new"
-    known_hosts ||= File.join(dir, "known_hosts")
-    arguments = ["ssh", "-F", "/dev/null", "-tt", "-o", "ConnectTimeout=5",
-                 "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
-                 "-o", "NumberOfPasswordPrompts=1", "-o", "StrictHostKeyChecking=#{policy}",
-                 "-o", "UserKnownHostsFile=#{known_hosts}", "-l", user, host,
-                 "env PS1='EXPECT_SHELL> ' /bin/sh -i"]
-    Expect.spawn(*arguments, log_stdout: false, raw_pty: true) do |session|
+    arguments = SSHExample.arguments(options, directory: dir, prompt: "EXPECT_SHELL> ")
+    Expect.spawn(*arguments, raw: true) do |session|
       prompt = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).number
       abort "SSH password prompt not received (#{session.error || "authentication rejected"})" unless prompt == 1
       session.write(password, "\n")

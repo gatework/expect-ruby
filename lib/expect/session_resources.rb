@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
-class Expect
-  # 独立保存句柄、PID 和日志所有权，让终结器无需直接捕获会话即可清理遗弃资源。
+module Expect
+  # 独立保存句柄和 PID 所有权，让终结器无需直接捕获会话即可清理遗弃资源。
   # IO 是否关闭与子进程是否退出分别记录；不能仅凭句柄状态清空 PID 或伪造退出状态。
   # @api private
   class SessionResources
-    # owned_log 只保存库打开的文件；借用的 IO/日志回调留在会话中，不能成为终结器的引用根。
-    attr_accessor :status, :owned_log
+    attr_accessor :status
     attr_reader :pid, :reader, :writer, :slave, :owner, :own
 
     # 记录创建资源的进程；fork 后的副本不能向父进程拥有的子进程发信号。
@@ -59,27 +58,19 @@ class Expect
       status
     end
 
-    # GC 兜底关闭所属句柄和日志，并强制终止尚存活的子进程；不执行软关闭等待。
-    def finalize
+    # GC 兜底关闭所属句柄并终止尚存活的子进程；不执行用户代码或软关闭等待。
+    # 可直接用绑定到资源对象的 Method 注册终结器，忽略 Ruby 传来的被回收对象 ID。
+    def finalize(_object_id = nil)
       return unless owner == Process.pid
 
       begin
         close_handles
       ensure
-        begin
-          owned_log.close if owned_log && !owned_log.closed?
-        ensure
-          # 每个阶段独立收尾；句柄或日志关闭失败不能跳过进程回收。
-          finalize_child
-        end
+        # 句柄关闭失败不能跳过进程回收。
+        finalize_child
       end
     rescue IOError, SystemCallError
       nil
-    end
-
-    # 构造只持有资源对象的终结回调，避免闭包中的 self 绑定到会话而妨碍回收。
-    def self.finalizer(resources)
-      proc { resources.finalize }
     end
 
     private

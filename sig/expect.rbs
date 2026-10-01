@@ -1,32 +1,18 @@
-# Public interface for Ruby 3.4+. Internal Session/Matcher/Relay are intentionally omitted.
-class Expect
+# Public Session API; internal matching and relay protocols are documented with @api private.
+module Expect
   type duration = Numeric | String
   type pattern = String | Regexp | :eof | :timeout
   type result_error = :eof | :timeout | Exception | nil
-  type log_target = _Writer | _LogCallback
-  type result_fields = { number: Integer?, error: result_error, match: String?, before: String?, after: String?, session: Expect?, captures: Array[String?] }
-  type event = { event: Symbol, level: Symbol, pid: Integer?, fd: Integer?, message: String }
-  type diagnostic_target = _Writer | _Logger | _DiagnosticCallback
-
-  interface _LogCallback
-    def call: (String) -> untyped
-  end
-
-  interface _DiagnosticCallback
-    def call: (event) -> untyped
-  end
+  type result_fields = { number: Integer?, error: result_error, match: String?, before: String?, after: String?, session: Session?, captures: Array[String?] }
+  type diagnostic_event = { event: Symbol, pid: Integer?, fd: Integer?, message: String }
 
   interface _Writer
     def write: (String) -> Integer
   end
 
-  interface _Path
-    def to_path: () -> String
-  end
-
   interface _Logger
-    def info: (String) -> untyped
-    def debug: (String) -> untyped
+    def add: (Integer, diagnostic_event, String) -> untyped
+    def debug?: () -> bool
   end
 
   VERSION: String
@@ -42,241 +28,95 @@ class Expect
     def initialize: (?String message, ?bytes_written: Integer) -> void
   end
 
-  def initialize: (
-    *String command,
-    ?env: Hash[String, String?],
-    ?chdir: String?,
-    ?diagnostic_output: diagnostic_target?,
-    ?timeout: duration?,
-    ?write_timeout: duration?,
-    ?buffer_limit: Integer?,
-    ?debug_level: Integer,
-    ?raw_pty: untyped,
-    ?preserve_buffer: untyped,
-    ?log_stdout: untyped,
-    ?log_listeners: untyped,
-    ?raw_terminal: untyped,
-    ?reset_timeout_on_read: untyped,
-    ?graceful_close: untyped
-  ) -> void
   def self.spawn: (
-    *String command,
-    ?env: Hash[String, String?],
-    ?chdir: String?,
-    ?diagnostic_output: diagnostic_target?,
-    ?timeout: duration?,
-    ?write_timeout: duration?,
-    ?buffer_limit: Integer?,
-    ?debug_level: Integer,
-    ?raw_pty: untyped,
-    ?preserve_buffer: untyped,
-    ?log_stdout: untyped,
-    ?log_listeners: untyped,
-    ?raw_terminal: untyped,
-    ?reset_timeout_on_read: untyped,
-    ?graceful_close: untyped
-  ) -> Expect
+    *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
+    ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+    ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+  ) -> Session
                 | [A] (
-                  *String command,
-                  ?env: Hash[String, String?],
-                  ?chdir: String?,
-                  ?diagnostic_output: diagnostic_target?,
-                  ?timeout: duration?,
-                  ?write_timeout: duration?,
-                  ?buffer_limit: Integer?,
-                  ?debug_level: Integer,
-                  ?raw_pty: untyped,
-                  ?preserve_buffer: untyped,
-                  ?log_stdout: untyped,
-                  ?log_listeners: untyped,
-                  ?raw_terminal: untyped,
-                  ?reset_timeout_on_read: untyped,
-                  ?graceful_close: untyped
-                ) { (Expect) -> A } -> A
+                  *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
+                  ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+                  ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+                ) { (Session) -> A } -> A
   def self.open: (
-    IO io,
-    ?writer: IO,
-    ?own: bool,
-    ?diagnostic_output: diagnostic_target?,
-    ?timeout: duration?,
-    ?write_timeout: duration?,
-    ?buffer_limit: Integer?,
-    ?debug_level: Integer,
-    ?raw_pty: untyped,
-    ?preserve_buffer: untyped,
-    ?log_stdout: untyped,
-    ?log_listeners: untyped,
-    ?raw_terminal: untyped,
-    ?reset_timeout_on_read: untyped,
-    ?graceful_close: untyped
-  ) -> Expect
+    IO io, ?writer: IO, ?own: bool, ?graceful: bool,
+    ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+    ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+  ) -> Session
                | [A] (
-                 IO io,
-                 ?writer: IO,
-                 ?own: bool,
-                 ?diagnostic_output: diagnostic_target?,
-                 ?timeout: duration?,
-                 ?write_timeout: duration?,
-                 ?buffer_limit: Integer?,
-                 ?debug_level: Integer,
-                 ?raw_pty: untyped,
-                 ?preserve_buffer: untyped,
-                 ?log_stdout: untyped,
-                 ?log_listeners: untyped,
-                 ?raw_terminal: untyped,
-                 ?reset_timeout_on_read: untyped,
-                 ?graceful_close: untyped
-               ) { (Expect) -> A } -> A
-  def self.configure: (
-    ?timeout: duration?,
-    ?write_timeout: duration?,
-    ?buffer_limit: Integer?,
-    ?debug_level: Integer,
-    ?raw_pty: untyped,
-    ?preserve_buffer: untyped,
-    ?log_stdout: untyped,
-    ?log_listeners: untyped,
-    ?raw_terminal: untyped,
-    ?reset_timeout_on_read: untyped,
-    ?graceful_close: untyped
-  ) ?{ (Configuration) -> untyped } -> Configuration
-  def self.configuration: () -> Configuration
+                 IO io, ?writer: IO, ?own: bool, ?graceful: bool,
+                 ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+                 ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
+               ) { (Session) -> A } -> A
   def self.continue: (?reset_timeout: bool) -> (:continue | :continue_without_reset)
   def self.monotonic: () -> Float
   def self.duration: (duration?) -> Float?
-  def self.readable_sessions: (*Expect sessions, ?timeout: duration?) -> Array[Expect]
-  def self.interconnect: (*Expect sessions, ?timeout: duration?) -> Expect?
+  def self.readable_sessions: (*Session sessions, ?timeout: duration?) -> Array[Session]
+  def self.interconnect: (*Session sessions, ?timeout: duration?) -> Session?
   def self.expect: (
-    *pattern patterns,
-    ?from: (Expect | Array[Expect]),
-    ?timeout: duration?,
-    ?deadline: duration?
+    *pattern patterns, ?from: (Session | Array[Session]), ?timeout: duration?, ?deadline: duration?,
+    ?consume: bool, ?reset_timeout_on_read: bool
   ) ?{ (PatternList) -> untyped } -> Result
-  def expect: (*pattern patterns, ?timeout: duration?, ?deadline: duration?) ?{ (PatternList) -> untyped } -> Result
-  def continue: (?reset_timeout: bool) -> (:continue | :continue_without_reset)
-  def after: () -> String?
-  def before: () -> String?
-  def match: () -> String?
-  def alive?: () -> bool
-  def closed?: () -> bool
-  def eof?: () -> bool
-  def tty?: () -> bool
-  def pending_output?: () -> bool
-  def buffer: () -> String
-  def clear_buffer: () -> String
-  def buffer_discarded_bytes: () -> Integer
-  def captures: () -> Array[String?]
-  def command: () -> Array[String]?
-  def diagnostic_output: () -> diagnostic_target?
-  def error: () -> result_error
-  def exit_code: () -> Integer?
-  def fileno: () -> Integer?
-  def pid: () -> Integer?
-  def match_number: () -> Integer?
-  def last_result: () -> Result?
-  def listeners: () -> Array[_Writer]
-  def log_output: () -> log_target?
-  def slave: () -> IO?
-  def tty_name: () -> String?
-  def to_io: () -> IO
-  def writer: () -> IO
-  def process_status: () -> Process::Status?
-  def winsize: () -> [Integer, Integer]
-  def inspect: () -> String
-  def close: (?graceful: bool) -> nil
-  def soft_close: (?timeout: duration?, ?term_timeout: duration) -> Process::Status?
-  def hard_close: (?timeout: duration) -> Process::Status?
-  def wait: (?timeout: duration?) -> Process::Status?
-  def write: (*untyped objects) -> Integer
-  def send_slow: (*untyped objects, delay: duration) -> Integer
-  def puts: (*untyped objects) -> nil
-  def <<: (untyped object) -> Expect
-  def spawn: (*String command, ?env: Hash[String, String?], ?chdir: String?) -> Expect
-  def on_sequence: ((String | Regexp | :eof) sequence) ?{ () -> untyped } -> Expect
-  def redact: (*String secrets) -> Expect
-  def interact: (?input: (IO | Expect), ?escape: (String | Regexp)?, ?output: _Writer?, ?timeout: duration?) -> Expect?
-  def stty: (*String modes) -> String
-  def log_to: (?(log_target | String | _Path) target, ?mode: String) ?{ (String) -> untyped } -> log_target
-  def write_log: (*untyped objects) -> untyped
-  def timeout: () -> Float?
-  def timeout=: (duration? value) -> void
-  def write_timeout: () -> Float?
-  def write_timeout=: (duration? value) -> void
-  def buffer_limit: () -> Integer?
-  def buffer_limit=: (Integer? value) -> void
-  def debug_level: () -> Integer
-  def debug_level=: (Integer value) -> void
 
-  def raw_pty=: (untyped value) -> void
-  def raw_pty?: () -> bool
-
-  def preserve_buffer=: (untyped value) -> void
-  def preserve_buffer?: () -> bool
-
-  def log_stdout=: (untyped value) -> void
-  def log_stdout?: () -> bool
-
-  def log_listeners=: (untyped value) -> void
-  def log_listeners?: () -> bool
-
-  def raw_terminal=: (untyped value) -> void
-  def raw_terminal?: () -> bool
-
-  def reset_timeout_on_read=: (untyped value) -> void
-  def reset_timeout_on_read?: () -> bool
-
-  def graceful_close=: (untyped value) -> void
-  def graceful_close?: () -> bool
-  def buffer=: (String value) -> void
-  def diagnostic_output=: (diagnostic_target? value) -> void
-  def log_output=: (log_target? value) -> void
-  def listeners=: (Array[_Writer] value) -> void
-  def winsize=: ([Integer, Integer] value) -> void
-
-  class Configuration
+  class Session
     def initialize: (
-      ?timeout: duration?,
-      ?write_timeout: duration?,
-      ?buffer_limit: Integer?,
-      ?debug_level: Integer,
-      ?raw_pty: untyped,
-      ?preserve_buffer: untyped,
-      ?log_stdout: untyped,
-      ?log_listeners: untyped,
-      ?raw_terminal: untyped,
-      ?reset_timeout_on_read: untyped,
-      ?graceful_close: untyped
+      ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
+      ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
     ) -> void
+    def spawn: (*String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool) -> Session
+    def expect: (
+      *pattern patterns, ?timeout: duration?, ?deadline: duration?, ?consume: bool, ?reset_timeout_on_read: bool
+    ) ?{ (PatternList) -> untyped } -> Result
+    def after: () -> String?
+    def before: () -> String?
+    def match: () -> String?
+    def alive?: () -> bool
+    def closed?: () -> bool
+    def eof?: () -> bool
+    def tty?: () -> bool
+    def pending_output?: () -> bool
+    def buffer: () -> String
+    def buffer=: (String value) -> void
+    def clear_buffer: () -> String
+    def buffer_discarded_bytes: () -> Integer
+    def captures: () -> Array[String?]
+    def command: () -> Array[String]?
+    def error: () -> result_error
+    def exit_code: () -> Integer?
+    def fileno: () -> Integer?
+    def pid: () -> Integer?
+    def match_number: () -> Integer?
+    def last_result: () -> Result?
+    def slave: () -> IO?
+    def tty_name: () -> String?
+    def to_io: () -> IO
+    def writer: () -> IO
+    def process_status: () -> Process::Status?
+    def inspect: () -> String
+    def close: (?graceful: bool) -> nil
+    def soft_close: (?timeout: duration?, ?term_timeout: duration) -> Process::Status?
+    def hard_close: (?timeout: duration) -> Process::Status?
+    def wait: (?timeout: duration?) -> Process::Status?
+    def write: (*untyped objects) -> Integer
+    def send_slow: (*untyped objects, delay: duration) -> Integer
+    def puts: (*untyped objects) -> nil
+    def <<: (untyped object) -> Session
+    def on_sequence: ((String | Regexp | :eof) sequence) ?{ () -> untyped } -> Session
+    def redact: (*String secrets) -> Session
+    def interact: (?input: (IO | Session), ?escape: (String | Regexp)?, ?output: _Writer?, ?timeout: duration?, ?raw: bool) -> Session?
     def timeout: () -> Float?
-    def timeout=: (duration?) -> Float?
+    def timeout=: (duration? value) -> void
     def write_timeout: () -> Float?
-    def write_timeout=: (duration?) -> Float?
+    def write_timeout=: (duration? value) -> void
     def buffer_limit: () -> Integer?
-    def buffer_limit=: (Integer?) -> Integer?
-    def debug_level: () -> Integer
-    def debug_level=: (Integer) -> Integer
-
-    def raw_pty=: (untyped) -> bool
-    def raw_pty?: () -> bool
-
-    def preserve_buffer=: (untyped) -> bool
-    def preserve_buffer?: () -> bool
-
-    def log_stdout=: (untyped) -> bool
-    def log_stdout?: () -> bool
-
-    def log_listeners=: (untyped) -> bool
-    def log_listeners?: () -> bool
-
-    def raw_terminal=: (untyped) -> bool
-    def raw_terminal?: () -> bool
-
-    def reset_timeout_on_read=: (untyped) -> bool
-    def reset_timeout_on_read?: () -> bool
-
-    def graceful_close=: (untyped) -> bool
-    def graceful_close?: () -> bool
-    def to_h: () -> Hash[Symbol, untyped]
+    def buffer_limit=: (Integer? value) -> void
+    def logger: () -> _Logger?
+    def logger=: (_Logger? value) -> void
+    def transcript: () -> _Writer?
+    def transcript=: (_Writer? value) -> void
+    def outputs: () -> Array[_Writer]
+    def outputs=: (Array[_Writer] value) -> void
+    def write_transcript: (*untyped objects) -> nil
   end
 
   class Result < Data
@@ -286,20 +126,20 @@ class Expect
       ?match: String?,
       ?before: String?,
       ?after: String?,
-      ?session: Expect?,
+      ?session: Session?,
       ?captures: Array[String?]
     ) -> Result
-                | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Expect?, ?Array[String?]) -> Result
+                | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
     def self.[]: (
       ?number: Integer?,
       ?error: result_error,
       ?match: String?,
       ?before: String?,
       ?after: String?,
-      ?session: Expect?,
+      ?session: Session?,
       ?captures: Array[String?]
     ) -> Result
-                | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Expect?, ?Array[String?]) -> Result
+                | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
     def self.members: () -> Array[Symbol]
     def self.inspect: () -> String
     def members: () -> Array[Symbol]
@@ -308,7 +148,7 @@ class Expect
     attr_reader match: String?
     attr_reader before: String?
     attr_reader after: String?
-    attr_reader session: Expect?
+    attr_reader session: Session?
     attr_reader captures: Array[String?]
     def initialize: (
       ?number: Integer?,
@@ -316,20 +156,20 @@ class Expect
       ?match: String?,
       ?before: String?,
       ?after: String?,
-      ?session: Expect?,
+      ?session: Session?,
       ?captures: Array[String?]
     ) -> void
     def matched?: () -> bool
     def timeout?: () -> bool
     def eof?: () -> bool
-    def deconstruct: () -> [Integer?, result_error, String?, String?, String?, Expect?, Array[String?]]
+    def deconstruct: () -> [Integer?, result_error, String?, String?, String?, Session?, Array[String?]]
     def with: (
       ?number: Integer?,
       ?error: result_error,
       ?match: String?,
       ?before: String?,
       ?after: String?,
-      ?session: Expect?,
+      ?session: Session?,
       ?captures: Array[String?]
     ) -> Result
     def to_h: () -> result_fields
@@ -338,10 +178,10 @@ class Expect
   end
 
   class PatternList
-    def initialize: (?(Expect | Array[Expect]) sessions, ?Array[pattern] patterns) -> void
-    def on: ((String | Regexp) value, ?from: (Expect | Array[Expect])) ?{ (Expect) -> untyped } -> PatternList
-    def eof: (?from: (Expect | Array[Expect])) ?{ (Expect) -> untyped } -> PatternList
-    def timeout: () ?{ (Array[Expect]) -> untyped } -> PatternList
+    def initialize: (?(Session | Array[Session]) sessions, ?Array[pattern] patterns) -> void
+    def on: ((String | Regexp) value, ?from: (Session | Array[Session])) ?{ (Session) -> untyped } -> PatternList
+    def eof: (?from: (Session | Array[Session])) ?{ (Session) -> untyped } -> PatternList
+    def timeout: () ?{ (Array[Session]) -> untyped } -> PatternList
   end
 
   class Redactor

@@ -88,11 +88,10 @@ class MatchingTest < ExpectTest
     assert_empty session.buffer
   end
 
-  def test_preserve_buffer_and_buffer_limit
+  def test_nonconsuming_match_and_buffer_limit
     session, = pipe_session
-    session.preserve_buffer = true
     session.buffer = "prefix token tail"
-    2.times { assert_equal 1, session.expect("token", timeout: 0).number }
+    2.times { assert_equal 1, session.expect("token", timeout: 0, consume: false).number }
     assert_equal "prefix token tail", session.buffer
     session.buffer_limit = 4
     assert_equal "tail", session.buffer
@@ -170,11 +169,10 @@ class MatchingTest < ExpectTest
   def test_native_regexp_anchors_and_flags
     session, = pipe_session
     session.buffer = "a\nb\nc"
-    session.preserve_buffer = true
     assert_nil session.expect("^b$", timeout: 0).number
     assert_nil session.expect(/\Ab\z/, timeout: 0).number
-    assert_equal 1, session.expect(/^b$/, timeout: 0).number
-    assert_equal 1, session.expect(/a.b/m, timeout: 0).number
+    assert_equal 1, session.expect(/^b$/, timeout: 0, consume: false).number
+    assert_equal 1, session.expect(/a.b/m, timeout: 0, consume: false).number
     assert_nil session.expect(/a.b/, timeout: 0).number
   end
 

@@ -4,7 +4,7 @@ require_relative "support"
 
 runner = ExpectBenchmark::Runner.new("matching")
 reader, writer = IO.pipe
-session = Expect.open(reader, log_stdout: false)
+session = Expect.open(reader)
 begin
   sizes = runner.smoke ? [4096] : [4096, 65_536, 1_048_576]
   sizes.product([1, 8, 32], %i[first last miss]).each do |size, count, hit|
@@ -17,7 +17,7 @@ begin
       valid = if hit == :miss
                 result.nil?
               else
-                result && result[0].connection.equal?(session) && result[1].number == index + 1 && result[2] == [
+                result && result[0].equal?(session) && result[1].number == index + 1 && result[2] == [
                   size - 3, 3, []
                 ]
               end
@@ -54,11 +54,11 @@ begin
       ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
       chunks.times do
         writer.write("x" * 1024)
-        session.__send__(:session).__send__(:read_available)
+        session.__send__(:read_available)
         ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
       end
       writer.write("END")
-      session.__send__(:session).__send__(:read_available)
+      session.__send__(:read_available)
       matcher.__send__(:find_match)
     end
   end
@@ -70,7 +70,7 @@ end
 
 [1, 8, 32].each do |count|
   pipes = Array.new(count) { IO.pipe }
-  sessions = pipes.map { |input, _| Expect.open(input, log_stdout: false) }
+  sessions = pipes.map { |input, _| Expect.open(input) }
   begin
     sessions.each { |source| source.buffer = "x" * 4096 }
     list = Expect::PatternList.new
@@ -90,7 +90,7 @@ end
       sessions.each(&:clear_buffer)
       pipes.each { |pipe| pipe.last.write("r") }
       ready = IO.select(pipes.map(&:first), nil, nil, 0).first
-      matcher.__send__(:read_ready, ready, sessions.map { |s| s.__send__(:session) })
+      matcher.__send__(:read_ready, ready, sessions.map { |s| s })
     end
   ensure
     sessions.each(&:close)

@@ -71,7 +71,7 @@ fast = Expect.open(pipes[1].first)
 sink = pipes[2].last
 begin
   loop { break if sink.write_nonblock("x" * 4096, exception: false) == :wait_writable }
-  slow.listeners = [sink]
+  slow.outputs = [sink]
   fast.on_sequence("PROBE")
   verify = lambda do |result|
     ExpectBenchmark.check(result.equal?(fast) && slow.pending_output? && fast.buffer.empty?)

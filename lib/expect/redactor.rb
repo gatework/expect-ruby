@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Expect
+module Expect
   # 单个日志字节流的过滤器。保留最长秘密长度减一的尾部，跨 write/read 分片仍可识别。
   # 掩码与原字节一起留存；重叠命中的区间取并集，已经输出的掩码不重复生成。
   # 不依赖会话或 IO；每个日志目标或诊断方向使用独立实例。

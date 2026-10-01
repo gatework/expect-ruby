@@ -1,7 +1,7 @@
 # 本地 Kibitz 示例与测试
 
 参考 [Expect.pm 的 kibitz](https://github.com/jacoby/expect.pm/tree/master/examples/kibitz)，使用本项目的 `Expect.open`
-块、`listeners=`、`on_sequence` 和 `Expect.interconnect` 连接两端输入与同一个交互进程。参考源码为上游提交
+块、`outputs=`、`on_sequence` 和 `Expect.interconnect` 连接两端输入与同一个交互进程。参考源码为上游提交
 `2ea0e4ce20a896c95cb4c94e781f1b1f3145150d`。
 
 需要 Ruby 3.4+ 和 macOS/Linux。示例和自动脚本只依赖标准库，不需要 SSH 服务或密码。

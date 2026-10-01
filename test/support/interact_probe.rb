@@ -1,22 +1,18 @@
 # frozen_string_literal: true
 
 require_relative "script_probe"
+require_relative "terminal_probe"
 
 module InteractProbe
   ESCAPE = "\x1d".b.freeze
   TAIL = "LOCAL_ONLY_TAIL".b.freeze
 
   def self.configuration(session)
-    state = session.stty
-    return state unless RUBY_PLATFORM.include?("darwin")
-
-    # PENDIN is a transient Darwin kernel state, not a termios configuration.
-    state.sub(/lflag=([0-9a-f]+)/) { "lflag=#{(Regexp.last_match(1).to_i(16) & ~0x20000000).to_s(16)}" }
+    TerminalProbe.configuration(session.to_io)
   end
 
   def self.settings(session)
-    [session.listeners, session.log_stdout?, session.log_listeners?, session.raw_terminal?,
-     session.__send__(:session).instance_variable_get(:@sequences).dup]
+    [session.outputs, session.logger, session.transcript, session.sequences.dup]
   end
 
   def self.prepare(session, echo: false)
@@ -35,8 +31,6 @@ module InteractProbe
     source = Expect.open(slave)
     screen = Expect.open(master, write_timeout: 3)
     source.on_sequence("ORIGINAL_ESCAPE") { false }
-    source.log_listeners = false
-    source.log_stdout = false
     terminal_state = configuration(source)
     remote_state = configuration(session)
     source_settings = settings(source)
@@ -76,8 +70,10 @@ module InteractProbe
         ScriptProbe.check(configuration(source) == terminal_state, "local terminal settings were not restored")
         ScriptProbe.check(configuration(session) == remote_state,
                           "remote transport terminal settings were not restored")
-        ScriptProbe.check(settings(source) == source_settings, "local groups/flags/escape handlers were not restored")
-        ScriptProbe.check(settings(session) == remote_settings, "remote groups/flags/escape handlers were not restored")
+        ScriptProbe.check(settings(source) == source_settings,
+                          "local outputs/logging/escape handlers were not restored")
+        ScriptProbe.check(settings(session) == remote_settings,
+                          "remote outputs/logging/escape handlers were not restored")
         checks << "cycle_#{number}_escape_tail_and_restore"
       ensure
         worker.kill.join if worker.alive?

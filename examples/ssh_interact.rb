@@ -1,13 +1,14 @@
 # frozen_string_literal: true
 
-# Run from the checkout or the unpacked gem. Test helpers use only standard
-# libraries; Minitest is not needed for this live SSH example.
+# Run from the checkout; examples and test helpers are not included in the gem.
+# Test helpers use standard libraries; Minitest is not needed for this live SSH example.
 require "io/console"
 require "json"
 require "fileutils"
 require "tmpdir"
 require "time"
 require_relative "../test/support/interact_probe"
+require_relative "support/ssh"
 
 if ARGV.delete("--help")
   puts <<~HELP
@@ -27,24 +28,10 @@ automatic = !ARGV.delete("--auto").nil?
 abort "unknown arguments: #{ARGV.join(" ")} (use --help)" unless ARGV.empty?
 abort "manual interact requires a terminal; use --auto for unattended testing" unless automatic || $stdin.tty?
 
-host = ENV.fetch("SSH_HOST", "127.0.0.1")
-user = ENV.fetch("SSH_USER", ENV.fetch("USER", "crate"))
-port = Integer(ENV.fetch("SSH_PORT", "22"), 10)
-ScriptProbe.check((1..65_535).cover?(port), "SSH_PORT must be between 1 and 65535")
-ScriptProbe.check([host, user].none? do |value|
-  value.empty? || value.start_with?("-") || value.match?(/[\s\x00]/)
-end, "invalid SSH host or user")
-known_hosts = ENV.fetch("SSH_KNOWN_HOSTS", nil)
-ScriptProbe.check(known_hosts || %w[127.0.0.1 ::1 localhost].include?(host),
-                  "SSH_KNOWN_HOSTS is required for remote hosts")
+options = SSHExample.options
+host, user, port = options.values_at(:host, :user, :port)
+password = SSHExample.read_password
 
-password = ENV.delete("EXPECT_PASSWORD")&.dup
-unless password
-  $stderr.print("SSH password: ")
-  password = ($stdin.tty? ? $stdin.noecho(&:gets) : $stdin.gets)&.chomp
-  $stderr.puts
-end
-ScriptProbe.check(password && !password.empty? && !password.match?(/[\r\n\x00]/), "a single-line password is required")
 base = File.expand_path(ENV.fetch("EXPECT_LOG_DIR", File.expand_path("../tmp/ssh-interact", __dir__)))
 FileUtils.mkdir_p(base)
 directory = Dir.mktmpdir("#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}-", base)
@@ -54,25 +41,20 @@ report = { mode: automatic ? "automatic" : "manual", host:, port:, user:,
            started_at: Time.now.utc.iso8601, passed: false, cases: [], checks: [] }
 session = nil
 local_terminal = nil
+transcript = nil
 
 begin
   Dir.mktmpdir("expect-known-hosts-") do |temporary|
-    policy = known_hosts ? "yes" : "accept-new"
-    hosts_path = known_hosts || File.join(temporary, "known_hosts")
-    args = ["ssh", "-F", "/dev/null", "-tt", "-p", port.to_s,
-            "-o", "ConnectTimeout=5", "-o", "NumberOfPasswordPrompts=1",
-            "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
-            "-o", "StrictHostKeyChecking=#{policy}", "-o", "UserKnownHostsFile=#{hosts_path}",
-            "-l", user, host, "env ENV= PS1=#{Shellwords.escape(ScriptProbe::PROMPT)} /bin/sh -i"]
-    session = Expect.spawn(*args, raw_pty: true, log_stdout: false, log_listeners: false,
-                                  debug_level: 0, write_timeout: 5)
+    args = SSHExample.arguments(options, directory: temporary, prompt: ScriptProbe::PROMPT)
+    session = Expect.spawn(*args, raw: true, write_timeout: 5)
     login = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).number
     ScriptProbe.check(login == 1, "SSH password prompt missing (#{session.error || "authentication rejected"})")
     session.write(password, "\n")
     runner = ScriptProbe::Runner.new(session, timeout: 10).ready!
     InteractProbe.prepare(session, echo: !automatic)
-    File.open(log_path, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.truncate(0) }
-    session.log_to(log_path)
+    # The ensure closes this borrowed writer after the session flushes its tail.
+    transcript = File.open(log_path, File::WRONLY | File::CREAT | File::EXCL, 0o600) # rubocop:disable Style/FileOpen
+    session.transcript = transcript
 
     remote_exit = false
     if automatic
@@ -99,7 +81,8 @@ begin
                           "SSH exited with status #{session.exit_code.inspect}")
         report[:checks] << "remote_eof"
       else
-        ScriptProbe.check(returned.is_a?(Expect) && returned.to_io.equal?($stdin), "unexpected interact termination")
+        ScriptProbe.check(returned.is_a?(Expect::Session) && returned.to_io.equal?($stdin),
+                          "unexpected interact termination")
         ScriptProbe.check(session.alive?, "remote session ended during interaction")
         report[:completion] = "local_escape"
         report[:checks] += %w[ctrl_bracket_escape remote_alive]
@@ -136,6 +119,7 @@ rescue StandardError => error
 ensure
   session&.close
   local_terminal&.close
+  transcript&.close
   if File.file?(log_path)
     bytes = File.binread(log_path)
     if bytes.include?(password.b)
