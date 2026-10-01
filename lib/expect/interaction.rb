@@ -159,6 +159,15 @@ class Expect
       [matches.min_by(&:first), !text.nil?, utf8_regexp]
     end
 
+    # 普通转发和超时排出的字面前缀都属于正则历史，跨次转接时必须接续同一字节流。
+    def self.remember_output(session, data)
+      regexps = session.sequences.keys.grep(Regexp)
+      return if regexps.empty?
+
+      utf8 = regexps.any? { |regexp| regexp.fixed_encoding? && regexp.encoding == Encoding::UTF_8 }
+      trim_history(session.relay_history, data, limit: session.buffer_limit || REGEXP_ESCAPE_HISTORY_LIMIT, utf8:)
+    end
+
     # 只暂存可能拼成完整字面转义的最长后缀。
     def self.hold_literal_prefix(buffer, sequences)
       held = 0

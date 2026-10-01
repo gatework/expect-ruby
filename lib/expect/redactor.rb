@@ -62,11 +62,18 @@ class Expect
 
     # 流关闭时无法再等待后续字节，默认隐藏与秘密开头一致的未完成尾部。
     def mark_partial_secrets
-      @patterns.each do |pattern|
-        [pattern.bytesize - 1, @pending.bytesize].min.downto(1) do |length|
-          next unless @pending.end_with?(pattern.byteslice(0, length))
+      tail = @pending.byteslice(-1, 1)
+      return unless tail
 
-          @hidden[-length, length] = "\1" * length
+      @patterns.each do |pattern|
+        length = [pattern.bytesize - 1, @pending.bytesize].min
+        # 前缀必须以当前尾字节结束；只收紧最高候选长度，密集候选仍沿用简单倒序扫描。
+        next unless length.positive? && (offset = pattern.rindex(tail, length - 1))
+
+        (offset + 1).downto(1) do |candidate|
+          next unless @pending.end_with?(pattern.byteslice(0, candidate))
+
+          @hidden[-candidate, candidate] = "\1" * candidate
           break
         end
       end

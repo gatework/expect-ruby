@@ -158,7 +158,7 @@ class Expect
       timeout = duration(timeout)
       raise ArgumentError, "readable_sessions requires Expect sessions" unless sessions.all?(Expect)
 
-      active = sessions.uniq.reject(&:closed?)
+      active = sessions.uniq(&:object_id).reject(&:closed?)
       return [] if active.empty?
 
       deadline = timeout && (monotonic + timeout)
@@ -177,10 +177,16 @@ class Expect
       end
       return [] unless ready
 
-      active.select { |session| ready.first.include?(session.to_io) }
+      select_ready_sessions(active, ready.first)
     end
 
     private
+
+    # 就绪描述符按对象身份归属会话，不能由 IO 子类的值相等规则替代。
+    def select_ready_sessions(sessions, readable)
+      by_io = readable.each_with_object({}.compare_by_identity) { |io, index| index[io] = true }
+      sessions.select { |session| by_io.key?(session.to_io) }
+    end
 
     # 先完成模式声明再启动引擎；无参数块支持简洁 DSL，有参数块保留调用方 self。
     def run_expect(sessions, patterns, timeout, deadline: nil, &block)

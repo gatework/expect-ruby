@@ -42,7 +42,7 @@ class Expect
       if @offset < @data.bytesize
         bytes = @data.byteslice(@offset, READ_SIZE)
         count = io ? io.write_nonblock(bytes, exception: false) : target.write(bytes)
-        if count == :wait_writable
+        if io && count == :wait_writable
           check_timeout! if check_timeout
           return false
         end

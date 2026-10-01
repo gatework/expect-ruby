@@ -3,6 +3,67 @@
 require_relative "test_helper"
 
 class InterconnectTest < ExpectTest
+  def test_distinct_readers_with_equal_values_remain_independent_sources
+    first, = pipe_session
+    second, writer = pipe_session
+    [first.to_io, second.to_io].each do |io|
+      io.define_singleton_method(:hash) { 0 }
+      io.define_singleton_method(:eql?) { |other| other.is_a?(IO) }
+    end
+    second.on_sequence("!")
+    writer.write("!tail")
+
+    assert_same second, Expect.interconnect(first, second, timeout: 0.05)
+    assert_equal "tail", second.buffer
+    assert_empty first.buffer
+  end
+
+  def test_ready_io_equality_does_not_read_an_unselected_source
+    first, first_writer = pipe_session
+    second, second_writer = pipe_session
+    second.to_io.define_singleton_method(:==) { |other| other.is_a?(IO) }
+    first.on_sequence("!")
+    second.on_sequence("!")
+    second_writer.write("!second")
+    original = IO.method(:select)
+    select = lambda do |*arguments|
+      ready = original.call(*arguments)
+      first_writer.write("!first")
+      ready
+    end
+
+    IO.stub(:select, select) do
+      assert_same second, Expect.interconnect(first, second, timeout: 0.05)
+    end
+    assert_equal "second", second.buffer
+    assert_equal "!first", first.to_io.read_nonblock(100)
+  end
+
+  def test_ready_batch_preserves_source_order_with_equal_io_values
+    first, first_writer = pipe_session
+    second, second_writer = pipe_session
+    order = []
+    outputs = [StringIO.new, StringIO.new]
+    [first, second].each_with_index do |session, index|
+      session.to_io.define_singleton_method(:hash) { 0 }
+      session.to_io.define_singleton_method(:eql?) { |other| other.is_a?(IO) }
+      session.log_to { order << index }
+      session.listeners = [outputs[index]]
+    end
+    first_writer.write("first")
+    second_writer.write("second")
+    original = IO.method(:select)
+    select = lambda do |*arguments|
+      ready = original.call(*arguments)
+      ready[0].reverse! if ready
+      ready
+    end
+
+    IO.stub(:select, select) { assert_nil Expect.interconnect(first, second, timeout: 0) }
+    assert_equal [0, 1], order
+    assert_equal %w[first second], outputs.map(&:string)
+  end
+
   def test_escape_callback_can_match_new_input_and_return_its_tail
     session, writer = pipe_session
     output = StringIO.new
@@ -244,6 +305,23 @@ class InterconnectTest < ExpectTest
     assert_nil Expect.interconnect(session, timeout: 0.02)
     assert_equal "helloST", listener.string
     assert_empty session.buffer
+  end
+
+  def test_timeout_keeps_flushed_literal_prefix_in_regexp_history
+    session, writer = pipe_session
+    output = StringIO.new
+    session.listeners = [output]
+    session.on_sequence("STOPS")
+    session.on_sequence(/STOP/)
+    writer.write("ST")
+
+    assert_nil Expect.interconnect(session, timeout: 0)
+    assert_equal "ST", output.string
+    writer.write("OPtail")
+
+    assert_same session, Expect.interconnect(session, timeout: 0.05)
+    assert_equal "ST", output.string
+    assert_equal "tail", session.buffer
   end
 
   def test_interconnect_retries_an_interrupted_select

@@ -45,6 +45,42 @@ class RelayRecoveryTest < ExpectTest
     end
   end
 
+  def test_distinct_writers_with_equal_values_remain_independent_wait_targets
+    source, = pipe_session
+    stopper, producer = pipe_session
+    stopper.on_sequence("!")
+    first, = sink_session
+    second, sink = sink_session
+    fill(first.writer)
+    filled = fill(second.writer)
+    [first.writer, second.writer].each do |io|
+      io.define_singleton_method(:hash) { 0 }
+      io.define_singleton_method(:eql?) { |other| other.is_a?(IO) }
+    end
+    source.listeners = [first.writer, second.writer]
+    source.buffer = "request"
+    selecting = Queue.new
+    original = IO.method(:select)
+    select = lambda do |*arguments|
+      selecting << true
+      original.call(*arguments)
+    end
+    receiver = background do
+      selecting.pop
+      sink.read(filled)
+      received = sink.read(7)
+      producer.write("!")
+      received
+    end
+
+    IO.stub(:select, select) do
+      assert_same(stopper, bounded { Expect.interconnect(source, stopper, timeout: 1) })
+    end
+    assert receiver.join(1), "receiver did not finish"
+    assert_equal "request", receiver.value
+    assert source.pending_output?
+  end
+
   def test_partial_timeout_and_retry_deliver_exactly_once_to_each_listener
     source, source_writer = pipe_session
     target, sink = sink_session(write_timeout: 0.02)
@@ -290,7 +326,7 @@ class RelayRecoveryTest < ExpectTest
   end
 
   def test_invalid_write_count_raises_and_can_recover
-    [0, nil, -1, 7, "6"].each do |invalid|
+    [0, nil, -1, 7, "6", :wait_writable].each do |invalid|
       source, = pipe_session
       output = StringIO.new
       source.listeners = [output]

@@ -195,6 +195,50 @@ class ProcessInterruptionTest < ExpectTest
     session&.hard_close(timeout: 0)
   end
 
+  def test_forked_new_session_can_reap_the_child_it_spawns
+    session = Expect.new(log_stdout: false)
+    @sessions << session
+    reader, writer = IO.pipe
+    @ios.push(reader, writer)
+    probe = fork do
+      reader.close
+      session.spawn(RbConfig.ruby, "--disable-gems", "-e", "exit 7")
+      spawned_pid = session.pid
+      status = session.wait(timeout: 2)
+      writer.write([status&.exitstatus, session.pid].inspect)
+      session.hard_close(timeout: 0)
+      # 修复前 wait 不会回收本进程启动的子进程，测试仍须自行清理，避免遗留僵尸。
+      begin
+        Process.waitpid(spawned_pid)
+      rescue Errno::ECHILD
+        nil
+      end
+      exit! 0
+    rescue Exception # rubocop:disable Lint/RescueException -- 子进程只回传验证失败，父进程负责回收。
+      exit! 1
+    end
+    writer.close
+    assert_equal("[7, nil]", bounded { reader.read })
+    status = bounded { Process.waitpid2(probe).last }
+    probe = nil
+    assert status.success?
+    assert_nil session.pid
+    refute session.closed?
+  ensure
+    if probe
+      begin
+        Process.kill("KILL", probe)
+      rescue Errno::ESRCH
+        nil
+      end
+      begin
+        Process.waitpid(probe)
+      rescue Errno::ECHILD
+        nil
+      end
+    end
+  end
+
   def test_finalizer_rechecks_ownership_before_detaching_after_a_signal
     with_fake_child do |_session, resources, calls|
       owner = resources.owner

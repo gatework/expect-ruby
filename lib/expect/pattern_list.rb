@@ -50,13 +50,17 @@ class Expect
     # 汇总并去重读取源，同一会话出现在多个模式组时仍只读取一次。
     # 这里只去重会话对象；不同会话包装同一 IO 时的读取归属由 Matcher 决定。
     # @api private
-    def sessions = groups.flat_map(&:first).uniq
+    def sessions
+      groups.flat_map(&:first).each_with_object({}.compare_by_identity) do |session, unique|
+        unique[session] = true
+      end.keys
+    end
 
     # 收集指定会话的所有 EOF 处理器，保留原注册顺序。
     # @api private
     def eof_patterns_for(session)
       groups.flat_map do |sessions, patterns|
-        sessions.include?(session) ? patterns.select(&:eof?) : []
+        sessions.any? { |candidate| candidate.equal?(session) } ? patterns.select(&:eof?) : []
       end
     end
 
@@ -89,12 +93,18 @@ class Expect
       validate_sessions!(sessions)
       pattern = build(value, callback)
       # 仅合并相邻的相同来源，保持声明顺序；跨组复用会话由引擎去重读取。
-      if groups.last&.first == sessions
+      if same_sessions?(groups.last&.first, sessions)
         groups.last.last << pattern
       else
         groups << [sessions, [pattern]]
       end
       self
+    end
+
+    # 会话的业务相等性不能合并不同读取源；来源对象及排列都必须相同。
+    def same_sessions?(previous, sessions)
+      previous && previous.size == sessions.size &&
+        previous.each_with_index.all? { |session, index| session.equal?(sessions[index]) }
     end
 
     # 按注册顺序分配从 1 开始的序号，文本模式与事件共用编号。

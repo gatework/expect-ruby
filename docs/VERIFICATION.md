@@ -1,5 +1,97 @@
 # 验证记录
 
+## 2026-09-30：0.6.1 本地提交准备
+
+将两轮审查的兼容性修复和性能优化归入 0.6.1，同步版本常量、README 安装示例和发布文档；0.6.0 迁移说明及历史证据保持原记录。
+
+以 `961c4d8` 的独立工作树应用完整待提交差异，确认与主工作区一致后，在 macOS arm64、Ruby 4.0.7、Bundler 4.0.20 执行 `bash script/ci`：
+
+- 421 tests / 7,235 assertions，零失败、错误及跳过；71 个 Ruby 文件 lint 通过。
+- API 文档/RBS 覆盖、RBS validate、示例对话和五组 benchmark smoke 通过。
+- 构建 `expect-pty-0.6.1.gem`，普通 RubyGems 与最小 Bundler 应用的隔离安装、真实本地 PTY 和核心契约检查通过。
+- 对同一构建包执行 `script/release.rb --dry-run --rubygems-only --artifact ...`，版本、发布说明、包内容和权限校验通过；该路径不调用远端查询或上传。
+
+日志位于 `tmp/local-release-0.6.1/ci-macos40.log` 与 `dry-run.log`。本次版本整理未改变运行逻辑，先前 Ruby 3.4/Linux 矩阵见下文，本次未重复执行。
+本次仅提交本地 Git，不推送 GitHub、不创建标签、不发布 RubyGems。
+
+## 2026-09-30：逻辑与性能复审
+
+在 `961c4d8` 及上一轮未提交修复上继续，使用 Waza 深度审查和 ruby-rails 契约检查。
+分别复审匹配与结果归属、转接与背压、日志与脱敏，并交叉检查发送进度、进程/句柄所有权、终端和配置边界。
+保留当前 Matcher、Relay、Session 与不可变 Result 的职责分工，无新增公共接口或运行依赖。
+
+### 可靠性修复
+
+| 问题 | 修复前证据 | 修复与回归 |
+| --- | --- | --- |
+| EOF 后继续等待，后续 select 错误覆盖已结束来源 | 故障注入后返回的来源错误地指向已结束会话，其 EOF 与尾部结果被覆盖 | 只更新活跃来源，保留原始异常及已结束来源的 Result 对象 |
+| 发送前嵌套写入的进度被算入当前命令 | 诊断回调或 `to_s` 向第二条真实管道写入 2 字节后超时，当前命令未发送却报告 `bytes_written == 2` | 当前 write 报告 0，cause 保留嵌套进度 2；确认命令管道为空，随后完整重试成功 |
+
+上述缺陷先观察到失败再修复；另补 EOF 重复来源去重/顺序、批量就绪反序下的身份/声明顺序保护。
+本轮共增加 4 个测试方法，原有随机脱敏差分断言全部保留。日志与安全复审未发现其他有充分证据的新缺陷，
+不据此声称不存在未知问题。
+
+性能修复限定在已处理 EOF 集合、Relay 就绪成员检索、脱敏流尾部的无效前缀扫描。
+增加可复现负载并测量基线/候选；撤换会使密集脱敏候选变慢的首版实现。
+最终数据、分配代价、控制负载及复杂度边界见 [PERFORMANCE](PERFORMANCE.md)。
+
+### 完整本地验证
+
+运行代码冻结后，以 detached worktree 的 `961c4d8` 加本次完整相关差异验证，另以相同源码归档验证最低 Ruby 和 Linux。
+四组 `bash script/ci` 均退出 0：
+
+| 环境 | 测试 | 其他检查 |
+| --- | --- | --- |
+| macOS arm64，Ruby 3.4.11 | 421 runs / 7,235 assertions，零失败、错误及跳过 | 71 文件 RuboCop；API/RBS；示例；五组 benchmark smoke；Gem 构建及普通/Bundler 隔离安装与真实本地 PTY |
+| macOS arm64，Ruby 4.0.7 | 同上 | 同上 |
+| Linux aarch64，Ruby 3.4.11，Docker bookworm | 同上 | 同上 |
+| Linux aarch64，Ruby 4.0.7，Docker bookworm | 同上 | 同上 |
+
+日志为 `tmp/performance-review/ci-{macos34,macos40,linux34,linux40}.log`。Linux 禁用网络，从本地 Gem 缓存安装。
+macOS 独立工作树首次命令误取系统 Ruby 2.6，未进入测试；显式指定 Homebrew Ruby 后才计入上表。
+最后仅将新增 Redactor 长尾基准的默认样本增至 100 次，四环境均补验最终 benchmark smoke，macOS 两版本补验相应 lint。
+运行库及安装包内容未因此改变；后续只补充性能、内部契约与本验证记录。
+
+未运行远端 GitHub Actions、x86_64、真实 SSH/网络设备或持续生产负载；合成基准不是设备并发容量承诺。
+版本仍为 0.6.0，修复记录于 Unreleased；没有新增提交、推送、标签或发布。
+
+## 2026-09-30：0.6.0 深度自审与边界修复
+
+以本地提交 `961c4d8` 为基线审查公开门面、Session 生命周期、匹配/转接状态机、日志脱敏、配置、RBS、CI 和包清单。
+保留公开方法、参数、Result 返回和资源所有权契约；版本仍为 0.6.0，本轮修复记入 Unreleased，未提交或发布。
+
+### 失败证据与修复
+
+| 问题 | 修复前复现 | 修复 |
+|---|---|---|
+| fork 后延迟启动子进程 | 父进程创建 PTY、fork 子进程再 spawn，wait 返回 nil 且 PID 残留；期望退出码 7 并清空 PID | 登记 PID 时记录实际启动者，继承已有 PID 的副本仍保留原归属 |
+| 启动错误被清理错误覆盖 | fork 失败遇错误管道关闭失败、exec 失败遇 master 关闭失败，均错误返回 IOError | 复用 Cleanup.always 和逐端清理，保留原始 fork 错误及 SpawnError |
+| 会话/IO 值相等混淆身份 | 独立来源漏读、模式组错并、EOF 错派、就绪查询遗漏/多报；转接遗漏可写目标或选择错误停止来源 | 去重、分组、事件与就绪归属使用对象身份，保持声明顺序 |
+| 混合转义跨次调用漏检 | 同时注册字面 STOPS 和正则 STOP，首轮 ST 超时发出，后续 OPtail 未触发正则退出 | 超时排出尾部同步补入正则历史，保留 tail 供恢复 |
+| 自定义 writer 返回非法哨兵 | listener.write 返回 :wait_writable 时未抛 IOError | 仅真实 IO.write_nonblock 接受该哨兵，自定义 writer 仍校验字节计数 |
+
+新增 13 条回归并扩展 1 条非法写入计数回归；对应缺陷均先观察修复前失败，再执行修复后验证。
+真实管道和 fork 验证来源身份及子进程归属；故障注入验证清理错误优先级。可写唤醒用 Queue 协调，避免依赖固定 sleep。
+独立复审确认日志/脱敏、不可变 Result、UTF-8 与字节窗口、期限及打包边界未出现新的可证实缺陷；不据此声称不存在其他问题。
+
+### 完整本地验证
+
+四组均执行项目 `bash script/ci`，退出码为 0：
+
+| 平台 | Ruby | Minitest | 其他门禁 |
+|---|---|---|---|
+| macOS arm64 | 3.4.11 | 417 runs / 7,206 assertions，零失败、错误及跳过 | 71 文件 RuboCop、API/RBS、示例、五组 benchmark smoke、Gem 构建及隔离安装通过 |
+| macOS arm64 | 4.0.7 | 同上 | 同上 |
+| Linux aarch64，Docker bookworm | 3.4.11 | 同上 | 同上 |
+| Linux aarch64，Docker bookworm | 4.0.7 | 同上 | 同上 |
+
+普通 RubyGems 与最小 Bundler 应用分别验证真实本地 PTY、运行时依赖、RBS 分发及开发文件未混入包。
+最低 Ruby 和 Linux 使用相同源码快照，Linux 容器禁用网络并从本地缓存安装依赖；macOS 3.4 副本位于仓库之外，确认实际扫描了 71 个 Ruby 文件。
+日志位于忽略目录 `tmp/deep-review/ci-{macos34,macos40,linux34,linux40}.log`。既有 Process 替换、宿主 RDoc 重定义及无依赖上限提示没有影响退出状态。
+
+未运行远端 GitHub Actions、x86_64、真实 SSH/网络设备或完整性能评估。benchmark smoke 只证明小规模工作负载正确，不作为性能提升结论。
+本节是本地源码与安装包验收记录，没有推送、打标签或发布 RubyGems。
+
 ## 2026-09-30：0.6.0 本地提交准备
 
 将现有改动归入 0.6.0，更新版本常量、安装示例、迁移说明及发布文档，保留历史验证记录。

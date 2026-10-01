@@ -39,6 +39,25 @@ counts.each do |count|
       pipes.each { |pipe| pipe.last.write(marker) }
       Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
     end
+
+    # 已知 EOF 逐个派发，仍须保留来源顺序、尾部快照，并在全部结束后返回 EOF。
+    sessions.each(&:close)
+    ended = []
+    list = Expect::PatternList.new(sessions)
+    list.eof do |source|
+      ended << source
+      Expect.continue(reset_timeout: false)
+    end
+    verify = lambda do |result|
+      ExpectBenchmark.check(result.eof? && ended == sessions && sessions.all? do |source|
+        source.before == "tail" && source.buffer.empty?
+      end)
+    end
+    runner.measure("all_eof/#{count}", bytes: count * 4, inputs: { sessions: count }, iterations: 10, verify:) do
+      ended.clear
+      sessions.each { |source| source.buffer = "tail" }
+      Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
+    end
   ensure
     sessions.each(&:close)
     pipes.flatten.each { |io| io.close unless io.closed? }

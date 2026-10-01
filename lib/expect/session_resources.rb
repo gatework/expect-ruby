@@ -6,8 +6,8 @@ class Expect
   # @api private
   class SessionResources
     # owned_log 只保存库打开的文件；借用的 IO/日志回调留在会话中，不能成为终结器的引用根。
-    attr_accessor :pid, :status, :owned_log
-    attr_reader :reader, :writer, :slave, :owner, :own
+    attr_accessor :status, :owned_log
+    attr_reader :pid, :reader, :writer, :slave, :owner, :own
 
     # 记录创建资源的进程；fork 后的副本不能向父进程拥有的子进程发信号。
     def initialize(reader, writer:, slave: nil, own: false)
@@ -16,6 +16,13 @@ class Expect
       @slave = slave
       @own = own
       @owner = Process.pid
+    end
+
+    # 新进程由实际启动者负责；预先建立的 PTY 可能在 fork 后才启动命令。
+    # 仅继承已有 PID 的副本仍保留原所有者，不能清理父进程的子进程。
+    def pid=(value)
+      @owner = Process.pid if value
+      @pid = value
     end
 
     # 只关闭由本库拥有的 IO；借用的 reader、writer 由调用方管理。

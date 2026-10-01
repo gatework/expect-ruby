@@ -34,24 +34,21 @@ class Expect
       validate_spawn!(command)
 
       @slave.raw! if raw_pty?
-      # 错误管道的写端在 exec 成功时自动关闭；父进程据此区分成功启动与 exec 前失败。
-      from_child, to_parent = IO.pipe
-      to_parent.close_on_exec = true
-      @command = command.map { |part| part.dup.freeze }.freeze
-      child = fork { exec_child(command, env:, chdir:, from_child:, to_parent:) }
-      @resources.pid = child
-      to_parent.close
-      @slave.close
-      failure = from_child.read
-      unless failure.empty?
-        hard_close
-        raise SpawnError, failure
+      from_child = to_parent = nil
+      Cleanup.always(-> { SessionResources.close_handles(from_child, to_parent) }) do
+        # 错误管道的写端在 exec 成功时自动关闭；父进程据此区分成功启动与 exec 前失败。
+        from_child, to_parent = IO.pipe
+        to_parent.close_on_exec = true
+        @command = command.map { |part| part.dup.freeze }.freeze
+        child = fork { exec_child(command, env:, chdir:, from_child:, to_parent:) }
+        @resources.pid = child
+        to_parent.close
+        @slave.close
+        failure = from_child.read
+        Cleanup.always(-> { hard_close }) { raise SpawnError, failure } unless failure.empty?
+        trace("spawned pid=#{child}", event: :spawned)
+        connection
       end
-      trace("spawned pid=#{child}", event: :spawned)
-      connection
-    ensure
-      from_child&.close unless from_child&.closed?
-      to_parent&.close unless to_parent&.closed?
     end
 
     # 暴露底层读写 IO 与终端属性，供 select、终端设置及 IO 适配使用。
@@ -126,8 +123,13 @@ class Expect
     def write(*objects)
       raise IOError, "closed Expect session" if closed? || writer.closed?
 
-      data = objects.map { |object| object.to_s.b }.join
-      trace_data(:sending, data, level: 2) if debug_level >= 2
+      begin
+        data = objects.map { |object| object.to_s.b }.join
+        trace_data(:sending, data, level: 2) if debug_level >= 2
+      rescue WriteTimeout
+        # 转换或诊断中的嵌套写入不属于当前命令；此时尚未向 writer 发送任何字节。
+        raise WriteTimeout.new("write interrupted before sending data", bytes_written: 0)
+      end
       deadline = write_timeout && (Expect.monotonic + write_timeout)
       offset = 0
       while offset < data.bytesize

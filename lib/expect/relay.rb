@@ -86,7 +86,7 @@ class Expect
       # 有进展时轮询输入再继续发送，避免大块输出饿死其他来源。
       remaining = 0 if progress
       begin
-        ready = IO.select(readers.map(&:to_io), pending.filter_map(&:io).uniq, nil, remaining)
+        ready = IO.select(readers.map(&:to_io), pending.filter_map(&:io).uniq(&:object_id), nil, remaining)
         if ready
           read_ready(readers, ready.first)
         elsif !progress
@@ -102,8 +102,14 @@ class Expect
 
     # 同源转接期间读取到借用缓冲；目标会话的背压读取沿用自身状态。
     def read_ready(readers, readable)
+      return if readable.empty?
+
+      if readable.size > 1
+        ready = {}.compare_by_identity
+        readable.each { |io| ready[io] = true }
+      end
       readers.each do |session|
-        next unless readable.include?(session.to_io)
+        next unless ready ? ready.key?(session.to_io) : readable.first.equal?(session.to_io)
 
         begin
           if @buffers.key?(session)
@@ -167,7 +173,7 @@ class Expect
         Session.for(output.target) if output.target.is_a?(Expect)
       end
       sources = @active.reject { |session| session.pending_output? && !targets.include?(session) }
-      (sources + targets).uniq(&:to_io).reject(&:eof?)
+      (sources + targets).uniq { |session| session.to_io.object_id }.reject(&:eof?)
     end
 
     # 总期限结束时将可交付尾部转为发送游标，至多尝试一轮交付；余量由源会话保存。
@@ -182,6 +188,7 @@ class Expect
         next if buffer.empty?
 
         session.queue_output(buffer.dup)
+        Interaction.remember_output(session, buffer)
         buffer.clear
       end
       # 到期后只尝试一次非阻塞写入，剩余游标留给下一次 interconnect。

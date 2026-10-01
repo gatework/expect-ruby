@@ -14,7 +14,7 @@ class Expect
       # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
       @hard_deadline = deadline
       @deadline = next_deadline
-      @handled_eof = []
+      @handled_eof = {}.compare_by_identity
       @stalled_matches = {}
       @polled = false
       @expired_eof_continuation = false
@@ -67,7 +67,7 @@ class Expect
       end
       groups.each do |sessions, patterns|
         sessions.each do |session|
-          next if @handled_eof.include?(session)
+          next if @handled_eof.key?(session)
 
           buffer = snapshots ? (snapshots[session] ||= session.buffer) : session.buffer
           stalled = @stalled_matches[session]
@@ -142,18 +142,18 @@ class Expect
 
     # 找出尚未派发 EOF 事件的会话，保证每个源只处理一次结束事件。
     def unhandled_eof
-      @sessions.find { |session| session.eof? && !@handled_eof.include?(session) }
+      @sessions.find { |session| session.eof? && !@handled_eof.key?(session) }
     end
 
     # 将剩余字节交给 EOF 回调；需要继续时等待其他源，全部结束则立即返回。
     def handle_eof(session)
       result = session.record_eof
-      @handled_eof << session
+      @handled_eof[session] = true
       actions = @patterns.eof_patterns_for(session.connection).map { |pattern| pattern.call(session.connection) }
       return result unless actions.any? { |action| continuing?(action) }
 
       @deadline = next_deadline if actions.include?(CONTINUE)
-      return result if @sessions.all? { |candidate| @handled_eof.include?(candidate) }
+      return result if @handled_eof.size == @sessions.size
 
       # 期限已过时不再扫描文本，但先派发已知 EOF；最后一个源结束不能被误报为超时。
       @expired_eof_continuation = !actions.include?(CONTINUE) && expired?
@@ -206,7 +206,7 @@ class Expect
     end
 
     # 返回本次仍需监听的会话，供读取选择和超时回调使用。
-    def active_sessions = @sessions.reject { |session| @handled_eof.include?(session) }
+    def active_sessions = @sessions.reject { |session| @handled_eof.key?(session) }
 
     # 只有约定的继续符号会驱动下一轮，普通回调返回值不会改变等待流程。
     def continuing?(action) = [CONTINUE, CONTINUE_WITHOUT_RESET].include?(action)
@@ -230,9 +230,9 @@ class Expect
     # 绝对总期限不受接收数据和 continue 重置；已知 EOF 仍按原顺序派发。
     def hard_expired? = @hard_deadline && Expect.monotonic >= @hard_deadline
 
-    # select 失败时无法归属单个源，为本次会话记录同一原始异常并返回首个结果。
+    # select 失败时无法归属单个源，只更新仍监听的会话；已派发 EOF 的结果保持不变。
     def record_error(error)
-      @sessions.map { |session| session.record_error(error) }.first
+      active_sessions.map { |session| session.record_error(error) }.first
     end
 
     # 为活跃会话记录超时，回调接收全部活跃源；只有重置计时的继续符号能重新等待。

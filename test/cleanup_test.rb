@@ -77,6 +77,41 @@ class CleanupTest < ExpectTest
     end
   end
 
+  def test_spawn_fork_failure_preserves_original_error_and_attempts_both_pipe_closes
+    session = Expect.new(log_stdout: false)
+    @sessions << session
+    reader, writer = IO.pipe
+    @ios.push(reader, writer)
+    failure = Errno::EAGAIN.new("fork failed")
+    IO.stub(:pipe, [reader, writer]) do
+      session.__send__(:session).stub(:fork, ->(&) { raise failure }) do
+        reader.stub(:close, -> { raise IOError, "error pipe close failed" }) do
+          assert_same failure, assert_raises(Errno::EAGAIN) { session.spawn("cat") }
+          assert writer.closed?
+          assert_nil session.pid
+        end
+      end
+    end
+  end
+
+  def test_spawn_exec_failure_preserves_spawn_error_when_handle_cleanup_also_fails
+    session = Expect.new(log_stdout: false)
+    @sessions << session
+    owner = Process.pid
+    close = session.to_io.method(:close)
+    session.to_io.stub(:close, lambda {
+      raise IOError, "master close failed" if Process.pid == owner
+
+      close.call
+    }) do
+      error = assert_raises(Expect::SpawnError) { session.spawn("/no/such/expect-test-command") }
+      assert_match(/ENOENT/, error.message)
+      assert_nil session.pid
+      assert_instance_of Process::Status, session.process_status
+      assert session.closed?
+    end
+  end
+
   def test_graceful_close_preserves_logging_error_when_handle_cleanup_also_fails
     session = stubborn_child
     failure = ArgumentError.new("log failed")

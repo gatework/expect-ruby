@@ -92,6 +92,43 @@ class WriteContractTest < ExpectTest
     assert_equal("a", bounded { sink.read(1) })
   end
 
+  def test_nested_timeout_before_sending_reports_the_commands_own_progress
+    %i[diagnostic conversion].each do |boundary|
+      session, sink = writable_session
+      diagnostic, diagnostic_sink = writable_session(write_timeout: 0)
+      nested_write = ->(*) { diagnostic.write("event") }
+      command = "command"
+      if boundary == :diagnostic
+        session.debug_level = 2
+        session.diagnostic_output = nested_write
+      else
+        command = Object.new
+        command.define_singleton_method(:to_s) do
+          nested_write.call
+          "command"
+        end
+      end
+      original = diagnostic.writer.method(:write_nonblock)
+      attempts = 0
+
+      error = diagnostic.writer.stub(:write_nonblock, lambda { |chunk, **options|
+        attempts += 1
+        attempts == 1 ? original.call(chunk.byteslice(0, 2), **options) : :wait_writable
+      }) do
+        assert_raises(Expect::WriteTimeout) { bounded { session.write(command) } }
+      end
+
+      assert_equal 0, error.bytes_written
+      assert_instance_of Expect::WriteTimeout, error.cause
+      assert_equal 2, error.cause.bytes_written
+      assert_equal "ev", diagnostic_sink.read(2)
+      assert_equal :wait_readable, sink.read_nonblock(1, exception: false)
+      session.debug_level = 0
+      assert_equal 7, session.write("command")
+      assert_equal "command", sink.read(7)
+    end
+  end
+
   private
 
   def writable_session(**)

@@ -195,6 +195,40 @@ class IOTest < ExpectTest
     assert_empty Expect.readable_sessions(first, second)
   end
 
+  def test_readiness_keeps_distinct_sessions_with_equal_values
+    type = Class.new(Expect) do
+      def ==(other) = other.is_a?(self.class)
+      alias eql? ==
+      def hash = 0
+    end
+    sources = Array.new(2) do
+      reader, writer = IO.pipe
+      @ios.push(reader, writer)
+      session = type.open(reader)
+      @sessions << session
+      [session, writer]
+    end
+    first, second = sources.map(&:first)
+    sources.last.last.write("ready")
+
+    ready = Expect.readable_sessions(first, second, second)
+    assert_equal 1, ready.size
+    assert_same second, ready.first
+    assert_equal "ready", second.to_io.read_nonblock(5)
+  end
+
+  def test_readiness_uses_io_identity_when_selecting_ready_sessions
+    first, = pipe_session
+    second, writer = pipe_session
+    second.to_io.define_singleton_method(:==) { |_other| true }
+    writer.write("ready")
+
+    ready = Expect.readable_sessions(first, second)
+    assert_equal 1, ready.size
+    assert_same second, ready.first
+    assert_equal "ready", second.to_io.read_nonblock(5)
+  end
+
   def test_readiness_retries_an_interrupted_select
     session, writer = pipe_session
     writer.write("ready")
