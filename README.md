@@ -17,7 +17,7 @@ RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.7.1", require: "expect/pty"
+gem "expect-pty", "~> 0.7.2", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -30,8 +30,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.7.1.gem
-gem install ./tmp/expect-pty-0.7.1.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.7.2.gem
+gem install ./tmp/expect-pty-0.7.2.gem
 ```
 
 ```ruby
@@ -409,7 +409,7 @@ Minitest、Rake、RuboCop 及发布工具的依赖。
 
 仅发布 RubyGems 使用 `ruby script/release.rb --rubygems-only`，直接复用本机已有的 Gem 登录状态；添加 `--dry-run`
 可先完成本地检查、测试、构建和安装验证。需要同时创建 GitHub Release 时使用 `ruby script/release.rb`，也可以在 GitHub Actions
-手动运行 Release 工作流。版本准备、Actions 凭据和失败重试见 [发布说明](docs/RELEASING.md)。
+推送版本标签触发 OIDC 可信发布，或手动恢复同一标签。版本准备、可信发布配置和失败重试见 [发布说明](docs/RELEASING.md)。
 
 SSH 示例用 `SSH_USER`、`SSH_HOST`、`SSH_KNOWN_HOSTS` 配置，密码隐藏输入或从 `EXPECT_PASSWORD` 读取；非本地主机要求受信任的
 known_hosts 文件。`ssh_auto.rb` 顶部 `COMMANDS` 可直接修改，日志写入 `tmp/ssh-auto/`，权限 0600。

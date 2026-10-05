@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.7.2 - 2026-10-05
+
+- **可信发布**：版本标签触发 GitHub Actions，通过 RubyGems OIDC 短期凭据发布，移除静态发布 Secret 依赖。
+- **产物验证**：保留四环境 CI、原包发布与提交内容、GitHub/RubyGems SHA256 回读校验；同步配置和恢复说明。
+
 ## 0.7.1 - 2026-10-01
 
 - **会话接口（不兼容 0.6.x）**：本次发布包含 0.7.0 的显式 `Expect::Session`、操作关键字及标准 Logger 接口；

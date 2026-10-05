@@ -5,8 +5,8 @@ GitHub Release，附带同一个 Gem 和 `SHA256SUMS`。生成文件统一放在
 
 ## 准备版本
 
-1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.1`，同步 README 中的安装版本和构建包路径。
-2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.1 - 2026-10-01`；可以保留空的 `Unreleased` 标题。
+1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.2`，同步 README 中的安装版本和构建包路径。
+2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.2 - 2026-10-01`；可以保留空的 `Unreleased` 标题。
 3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
 发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
@@ -46,21 +46,24 @@ ruby script/release.rb
 
 ## GitHub Actions 发布
 
-GitHub Runner 不会继承本机的 Gem 登录状态。要在 Actions 发布 RubyGems，需在仓库的 Settings → Secrets and variables →
-Actions 中配置 `RUBYGEMS_API_KEY`，使用具有 `Push rubygem` 权限的发布 Key。
+Actions 使用 RubyGems Trusted Publishing，通过 GitHub OIDC 交换只允许推送本 Gem 的短期凭据；不再需要仓库的 `RUBYGEMS_API_KEY` Secret。
+
+首次配置时，在 [expect-pty 的 Trusted publishers 页面](https://rubygems.org/gems/expect-pty/trusted_publishers)
+创建 GitHub Actions 发布者：Repository owner 为 `gatework`，Repository name 为 `expect-ruby`，Workflow filename 为
+`release.yml`。可将 Environment 限定为 `release`；工作流始终使用该环境。在 GitHub 仓库 Settings → Environments 中配置相应发布审批（如需）。
 
 ```sh
-git tag -a v0.7.1 -m 'Release v0.7.1'
-git push origin v0.7.1
-gh workflow run release.yml --ref v0.7.1 --repo gatework/expect-ruby
+git tag -a v0.7.2 -m 'Release v0.7.2'
+git push origin v0.7.2
 ```
 
-也可以在 Actions → Release → Run workflow 选择对应版本标签。工作流仅支持手动触发，避免本地发布时出现第二次并发上传。
+推送版本标签会自动启动 Release；也可在 Actions → Release → Run workflow 选择同一标签恢复失败任务。
+本地与 Actions 不应同时上传同一版本，优先由标签工作流完成发布。
 
-发布作业先验证标签与版本号一致，再复用 CI 的 Linux/macOS、Ruby 3.4/4.0 共 4 个环境。全部通过后，下载 Ubuntu / Ruby
-4.0 作业验证过的 Gem，交给同一个发布脚本；发布阶段不重新构建。
+发布作业先验证标签与版本号一致，再复用 Linux/macOS、Ruby 3.4/4.0 共 4 个 CI 环境。全部通过后，下载 Ubuntu / Ruby
+4.0 作业验证过的 Gem，配置 OIDC 凭据并交给同一个发布脚本；发布阶段不重新构建。脚本仍核对提交内容、GitHub 附件和 RubyGems 下载包的 SHA256。
 
-未配置 `RUBYGEMS_API_KEY` 时，GitHub Release 仍会创建，RubyGems 步骤会明确失败；此时可以下载 Release 中的原包，在本地使用已有登录状态完成上传。
+未配置匹配的可信发布者时，OIDC 交换会明确失败，不能将它当成发布成功。补齐配置后使用原 CI 产物恢复；本地发布保留现有 Gem 登录及 MFA 方式。
 
 ## 失败后继续
 
@@ -68,7 +71,7 @@ gh workflow run release.yml --ref v0.7.1 --repo gatework/expect-ruby
 CI 或 Release 下载的原包：
 
 ```sh
-ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.7.1.gem
+ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.7.2.gem
 ```
 
 将示例路径替换为实际输出的 `Artifact` 路径。`--artifact` 会跳过构建和测试，但仍核对包与当前源码是否一致；需要同时恢复

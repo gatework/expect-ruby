@@ -2,9 +2,27 @@
 
 require "minitest/autorun"
 require "minitest/mock"
+require "yaml"
 require_relative "../script/release"
 
 class ReleaseTest < Minitest::Test
+  def test_release_workflow_uses_tag_triggered_trusted_publishing_for_the_verified_artifact
+    workflow = YAML.safe_load_file(File.expand_path("../.github/workflows/release.yml", __dir__))
+    triggers = workflow["on"] || workflow[true]
+    assert_equal ["v*"], triggers.fetch("push").fetch("tags")
+    publish = workflow.fetch("jobs").fetch("publish")
+    assert_equal "release", publish.fetch("environment")
+    assert_equal "write", publish.fetch("permissions").fetch("id-token")
+    assert_equal "verify", publish.fetch("needs")
+    steps = publish.fetch("steps")
+    credentials = steps.index { |step| step["uses"].to_s.start_with?("rubygems/configure-rubygems-credentials@") }
+    upload = steps.index { |step| step["name"] == "Publish the verified artifact" }
+    refute_nil credentials
+    assert_operator credentials, :<, upload
+    refute steps.fetch(upload).fetch("env").key?("GEM_HOST_API_KEY")
+    assert_includes steps.fetch(upload).fetch("run"), '--artifact "tmp/ci/expect-pty-${version}.gem"'
+  end
+
   def test_current_readme_installation_examples_use_the_current_version
     readme = File.read(File.expand_path("../README.md", __dir__))
     assert_nil Release.validate_readme!(readme, Expect::VERSION)
@@ -140,7 +158,7 @@ class ReleaseTest < Minitest::Test
         [nil, ""].each do |api_key|
           with_environment("GITHUB_ACTIONS" => "true", "GEM_HOST_API_KEY" => api_key) do
             error = assert_raises(RuntimeError) { release.send(:publish_rubygems) }
-            assert_includes error.message, "RUBYGEMS_API_KEY"
+            assert_includes error.message, "Trusted Publishing"
           end
         end
       end
