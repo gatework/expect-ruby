@@ -5,8 +5,8 @@ GitHub Release，附带同一个 Gem 和 `SHA256SUMS`。生成文件统一放在
 
 ## 准备版本
 
-1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.2`，同步 README 中的安装版本和构建包路径。
-2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.2 - 2026-10-01`；可以保留空的 `Unreleased` 标题。
+1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.3`，同步 README 中的安装版本和构建包路径。
+2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.3 - 2026-10-06`；可以保留空的 `Unreleased` 标题。
 3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 
 发布脚本只接受正式版 `X.Y.Z`；未归档的变更会阻止发布。
@@ -53,8 +53,8 @@ Actions 使用 RubyGems Trusted Publishing，通过 GitHub OIDC 交换只允许�
 `release.yml`。可将 Environment 限定为 `release`；工作流始终使用该环境。在 GitHub 仓库 Settings → Environments 中配置相应发布审批（如需）。
 
 ```sh
-git tag -a v0.7.2 -m 'Release v0.7.2'
-git push origin v0.7.2
+git tag -a v0.7.3 -m 'Release v0.7.3'
+git push origin v0.7.3
 ```
 
 推送版本标签会自动启动 Release；也可在 Actions → Release → Run workflow 选择同一标签恢复失败任务。
@@ -71,7 +71,7 @@ git push origin v0.7.2
 CI 或 Release 下载的原包：
 
 ```sh
-ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.7.2.gem
+ruby script/release.rb --rubygems-only --artifact tmp/ci/expect-pty-0.7.3.gem
 ```
 
 将示例路径替换为实际输出的 `Artifact` 路径。`--artifact` 会跳过构建和测试，但仍核对包与当前源码是否一致；需要同时恢复

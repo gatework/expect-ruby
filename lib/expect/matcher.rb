@@ -52,7 +52,7 @@ module Expect
     ensure
       # 嵌套 expect 即使异常退出，也要把未消费尾部还给原 Relay 的同一个缓冲对象。
       @relay_buffers.each do |session, buffer|
-        buffer.replace(session.clear_buffer)
+        buffer.replace(session.take_buffer)
         session.interaction_buffer = buffer
       end
     end
@@ -60,18 +60,16 @@ module Expect
     private
 
     # 按声明组、会话、模式的顺序寻找首个匹配，不按文本中的出现位置重新排序。
-    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮快照须在同一次扫描保持一致。
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮缓冲须在同一次扫描保持一致。
     def find_match
-      # 单组且来源不重复时无需缓存；重复来源才为本轮扫描建立快照表。
+      # 单组且来源不重复时无需缓存；借用仅活在本次无回调扫描，不跨越 IO 或用户回调。
       groups = @groups
-      if groups.size > 1 || (groups.first && groups.first.first.size > @sessions.size)
-        snapshots = {}.compare_by_identity
-      end
+      buffers = {}.compare_by_identity if groups.size > 1 || (groups.first && groups.first.first.size > @sessions.size)
       groups.each do |sessions, patterns|
         sessions.each do |session|
           next if @handled_eof.key?(session)
 
-          buffer = snapshots ? (snapshots[session] ||= session.buffer) : session.buffer
+          buffer = buffers ? (buffers[session] ||= session.scan_buffer) : session.scan_buffer
           stalled = @stalled_matches[session]
           if stalled && stalled[:buffer] != buffer
             @stalled_matches.delete(session)
@@ -172,7 +170,7 @@ module Expect
       begin
         # 先标记已轮询；即使 select 连续被信号中断，下一轮也会检查原期限。
         @polled = true
-        ready = IO.select(readers.map(&:to_io), nil, nil, remaining)
+        ready = IO.select(readers.map(&:to_io).uniq(&:object_id), nil, nil, remaining)
       rescue Errno::EINTR
         return :retry
       rescue IOError, SystemCallError => error

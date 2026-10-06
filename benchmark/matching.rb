@@ -68,6 +68,35 @@ ensure
   writer.close
 end
 
+# 通过公开 expect 从真实管道逐块读取，覆盖未命中扫描与下一次追加的组合成本。
+# 输入和 EOF 必须完整保留；不能只测静态扫描而遗漏 String 共享存储的写时复制。
+(runner.smoke ? [65_536] : [1_048_576, 4_194_304, 16_777_216]).each do |size|
+  chunk = "x" * Expect::READ_SIZE
+  expected = "x" * size
+  verify = lambda do |result|
+    ExpectBenchmark.check(result.eof? && result.before == expected)
+  end
+  runner.measure("growing/#{size}", bytes: size, inputs: { size:, chunk_bytes: chunk.bytesize },
+                                    iterations: 1, verify:) do
+    input, output = IO.pipe
+    source = Expect.open(input)
+    sender = Thread.new do
+      (size / chunk.bytesize).times { output.write(chunk) }
+    ensure
+      output.close
+    end
+    result = source.expect("never-present", :eof, timeout: 30)
+    ExpectBenchmark.check(sender.join(5), "producer did not complete")
+    sender.value
+    result
+  ensure
+    sender&.kill&.join if sender&.alive?
+    source&.close
+    input&.close unless input&.closed?
+    output&.close unless output&.closed?
+  end
+end
+
 [1, 8, 32].each do |count|
   pipes = Array.new(count) { IO.pipe }
   sessions = pipes.map { |input, _| Expect.open(input) }

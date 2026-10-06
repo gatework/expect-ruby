@@ -52,6 +52,8 @@ module Expect
         end
 
         @offset += count
+        # 先登记底层已接受的进度，再通知诊断；logger 失败后恢复只补未发送后缀。
+        trace_delivery(bytes.byteslice(0, count)) if target.is_a?(Session)
       end
       if @offset == @data.bytesize
         # write_nonblock 已直接写到底层；普通 write 对象仍遵守自身 flush 协议。
@@ -72,6 +74,15 @@ module Expect
       return unless deadline && Expect.monotonic >= deadline
 
       raise WriteTimeout.new("relay target write timed out", bytes_written: @offset)
+    end
+
+    private
+
+    # 诊断可嵌套写入；外层只报告本游标的进度，原超时及其内层进度保留在 cause。
+    def trace_delivery(data)
+      target.__send__(:trace_data, :sending, data)
+    rescue WriteTimeout
+      raise WriteTimeout.new("relay interrupted by a diagnostic timeout", bytes_written: @offset)
     end
   end
 

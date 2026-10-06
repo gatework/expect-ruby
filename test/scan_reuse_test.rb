@@ -3,17 +3,17 @@
 require_relative "test_helper"
 
 class ScanReuseTest < ExpectTest
-  def test_each_scan_snapshots_a_session_once_across_non_adjacent_groups
+  def test_each_scan_borrows_a_session_buffer_once_across_non_adjacent_groups
     first, = pipe_session
     second, = pipe_session
     first.buffer = "ready"
     list = Expect::PatternList.new
     list.on("missing", from: first).on("other", from: second).on("ready", from: first)
     matcher = Expect::Matcher.new(list, 0)
-    snapshots = 0
-    original = first.method(:buffer)
-    first.stub(:buffer, lambda {
-      snapshots += 1
+    borrows = 0
+    original = first.method(:scan_buffer)
+    first.stub(:scan_buffer, lambda {
+      borrows += 1
       original.call
     }) do
       2.times do
@@ -23,7 +23,7 @@ class ScanReuseTest < ExpectTest
         assert_equal [0, 5, []], result[2]
       end
     end
-    assert_equal 2, snapshots
+    assert_equal 2, borrows
   end
 
   def test_callback_replacement_and_nested_match_are_visible_on_the_next_scan

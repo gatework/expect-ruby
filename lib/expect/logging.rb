@@ -102,13 +102,20 @@ module Expect
 
     # 字节诊断在 inspect 转义之前过滤，发送与接收各自保留分片状态。
     def trace_data(event, data)
-      return unless logger&.debug?
+      return unless logger
+
+      enabled = logger.debug?
 
       if @secrets
         redactor = (@diagnostic_redactors[event] ||= Redactor.new(@secrets))
+        # 级别变化不切断协议流；关闭期间仍识别秘密，但这些字节以后也不可输出。
+        return redactor.suppress(data) unless enabled
+
         data = redactor.append(data)
         return if data.empty?
       end
+      return unless enabled
+
       trace("#{event} #{data.inspect}", severity: Logger::DEBUG, event:)
     end
 

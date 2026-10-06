@@ -1,5 +1,76 @@
 # 验证记录
 
+## 2026-10-06：输入连续性与慢速发送恢复
+
+在 `1003584ba9a679d172b66cae6378d04e6f61dc21` 及上一轮未提交修复上继续，先冻结本轮起点，再检查匹配、转接、发送、
+日志与生命周期的交接路径。版本保持 0.7.2，未提交、推送或发布。并行评审代理因额度不足中止，主流程串行补完对应范围；
+代理中止不计为独立评审通过。没有扩大到新的公开接口、配置或依赖。
+
+| 边界 | 旧代码证据与修复 |
+|------|------------------|
+| 正则转义历史连续性 | 已转发 ST，expect 消费 NOISE 后再输入 OPtail，旧版错误识别 /STOP/。匹配实际消费、显式替换/清空和窗口裁剪现在清除历史；内部 take_buffer 只交接所有权，连续转接和非消费匹配继续保留历史 |
+| send_slow 失败进度 | 真实管道发送 a中b，已交付 a 与中的首字节，旧版仅报告 1 字节，修复后报告累计 2 字节。对象转换和回复记录的嵌套超时不计入外层进度；原异常保留在 cause，首字符 write 的无需调整错误原样传播 |
+
+本轮新增 10 个测试方法，覆盖零宽匹配、非法 setter、未实际裁剪的上限、嵌套匹配，以及多字节字符中途失败后的按字节续发。
+先观察回归失败再修复；最终同一组 relay_history / write_contract 测试对照为：
+起点运行库 **17 runs / 99 assertions / 7 failures / 0 errors / 0 skips**；
+候选运行库 **17 runs / 130 assertions / 0 failures / 0 errors / 0 skips**。
+这是两类缺陷的多条回归，不把失败方法数当作独立缺陷数。
+
+冻结候选的 103 个源码文件及依赖锁文件逐字节核对与工作区一致，在独立目录、显式 Homebrew Ruby 路径下执行
+`bash script/ci`，macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20，退出 0：
+
+- Minitest：**465 runs / 7,962 assertions**，零失败、错误或跳过。
+- RuboCop：76 文件无违规；公开 API/YARD/RBS 覆盖、RBS validate、示例对话通过。
+- matching、relay、send_slow、scaling、redactor 五组 benchmark smoke 全部通过。
+- Gem 构建、普通 RubyGems 与最小 Bundler 应用的两种隔离安装通过，均验证真实本地 PTY。
+- 构建包的全部 21 个文件与工作区逐字节一致；主工作区 `actionlint` 和 `git diff --check` 通过。
+
+性能另以同一驱动串行交替复测，16 MiB 持续读取仍约 12 ms，全部输入及回显校验通过；详见
+[性能复核](PERFORMANCE.md#输入连续性与慢速发送修复复核2026-10-06)。本轮着重恢复正确性，不宣称新增吞吐收益。
+原始证据在本地忽略目录 `tmp/contracts-review/`，包括起点/候选清单、`baseline-regressions.log`、`ci-macos40.log` 和 `package.json`。
+测试包 SHA-256 为 `b4557b38d195fbdb2432ed906c8dca940341f9090d86fd888502a290670841db`，不是新发布版本。
+完整门禁后仅补充不随 Gem 分发的内部合同、性能和验证文档；运行代码、测试与包内容未再变化。
+成功日志仍含测试替身重定义和本机 RDoc 重复加载警告。未执行 Ruby 3.4、Linux、远端 GitHub Actions、真实 SSH 或设备验证。
+
+## 2026-10-06：流式组件的性能与恢复边界
+
+基线为 `1003584ba9a679d172b66cae6378d04e6f61dc21`，本轮修改留在工作区，版本保持 0.7.2，未提交或发布。
+按 ruby-rails 与 Waza 的深度审查流程复核 Matcher、Session、Logging/Redactor、Interaction/Relay/RelayWriter 的调用链与失败恢复。
+并行评审代理因额度或运行权限错误未返回结论；匹配、日志与转接范围由主流程串行补完，不把失败的代理任务记为独立评审通过。
+
+| 边界 | 修复及可复现证据 |
+|------|------------------|
+| 持续增长缓冲 | 单轮扫描只读借用，保留公开副本和回调变化检测；真实管道 16 MiB 从约 835 ms 降至 12 ms，完整输入及 EOF 校验通过 |
+| 共享 IO | 两个会话包装同一 IO、16 KiB 窗口及 32 KiB 输入，先匹配 READY 再继续读取；旧版多读导致窗口丢弃匹配内容 |
+| 诊断级别切换 | DEBUG → INFO → DEBUG 仍识别跨块秘密，关闭期间字节不能在恢复级别或 finish 时补记；追加所有分割点、规则更新及二进制重叠回归 |
+| 转接诊断与短写恢复 | 实际接受字节后才推进目标发送诊断，异常不回退游标；嵌套超时报告外层已写入 2 字节，cause 保留内层的 97 字节 |
+| 转接总期限 | 直接、延迟转义及 EOF 继续回调和字面前缀扫描后检查正数预算；到期保留尾部，零轮询及明确停止优先级保持 |
+| 接收回调重入 | 日志、transcript、同步 outputs 交付中递归读取同会话会抛出 ReentrancyError，避免后块越过前块；已有缓冲匹配及独立来源仍可用 |
+
+先增加回归观察失败，再修改实现。最终 `stream_contract_test.rb` 单独装载基线运行库复核：
+14 runs / 35 assertions / 11 failures / 0 errors / 0 skips；同一组在候选中为 14 runs / 93 assertions、全部通过。
+脱敏随机字节区间差分和既有短写、EINTR、重入、EOF、对象身份测试继续保留。
+性能收益和普通脱敏约 2%–6% 的部分负载代价见 [性能对照](PERFORMANCE.md#持续读取与诊断修复对照2026-10-06)。
+
+从基线源码归档应用本轮差异和新增测试，逐字节核对全部 102 个源码文件与主工作区一致，并复制当前依赖锁文件。
+在 macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20 的独立副本执行 `bash script/ci`，退出 0：
+
+- Minitest：**455 runs / 7,887 assertions**，零失败、错误、跳过；相比基线增加 17 个测试方法。
+- RuboCop：75 文件无违规；公开 API/YARD/RBS 覆盖、RBS validate 和示例对话通过。
+- matching、relay、send_slow、scaling、redactor 五组 benchmark smoke 通过，含新增真实管道持续读取。
+- Gem 构建及普通 RubyGems、最小 Bundler 应用两种隔离安装通过，验证真实本地 PTY、依赖与包内容。
+- 主工作区额外执行 `actionlint` 和 `git diff --check`，均退出 0。
+
+独立目录首次误用系统 Ruby 2.6，在依赖加载阶段退出；显式固定 Homebrew Ruby 路径后完成上述完整检查。
+旧代码回归补验的首次普通 Ruby 调用选中不含 minitest/mock 的版本，改用同一 Bundle 后才取得上述断言失败证据。
+这两次环境失败均不计为产品回归或验证通过。成功 CI 日志仍含测试替身重定义和本机 RDoc 重复加载警告。
+
+日志和冻结清单位于本地忽略目录 `tmp/stream-review/`：`ci-macos40.log`、`old-code-regressions.log` 和 `manifest.json`。
+本地测试包 SHA-256 为 `a403111e32c04f3b815167f2244c4172856af80b213b6d09064e1309b5859037`；它不是新发布版本。
+完整门禁后只追加本节维护记录，不改变运行代码、测试或包内容。
+未运行 Ruby 3.4、Linux、远端 GitHub Actions、真实 SSH 或设备连接；本地通过不代替这些验证。
+
 ## 2026-10-01：原目标完成审计
 
 以已提交的 `34a1e2b` 再次核对逻辑、性能、可靠性、最佳实践与本地交付要求。将四组 CI 的源码清单逐文件与当前内容比较，

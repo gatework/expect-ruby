@@ -15,6 +15,8 @@ module Expect
       @active = @sessions.dup
       period = Expect.duration(timeout)
       @deadline = period && (Expect.monotonic + period)
+      # 零超时保留首轮缓冲及一次轮询；正预算在扫描和每次回调之间重新检查。
+      @dispatch_deadline = @deadline unless period&.zero?
       @token = Object.new
       @buffers = {}.compare_by_identity
       @previous = {}.compare_by_identity
@@ -28,6 +30,7 @@ module Expect
       polled = false
       loop do
         stopped, idle, queued = dispatch_sources
+        return finish_timeout(idle) if :timeout.equal?(stopped)
         return stopped if stopped
 
         return nil if @active.empty?
@@ -50,15 +53,13 @@ module Expect
       idle = []
       queued = false
       @active.dup.each do |session|
+        return [:timeout, idle, queued] if dispatch_expired?
+
         next if session.pending_output?
 
-        if (callback = session.relay_callback)
-          session.relay_callback = nil
-          return [session, idle, queued] unless callback.call
-        end
-
-        result = Interaction.queue_input(session, @buffers.fetch(session), final: session.eof?)
+        result = dispatch_input(session)
         return [session, idle, queued] if result == :stopped
+        return [:timeout, idle, queued] if result == :timeout
 
         if result == :queued
           queued = true
@@ -72,8 +73,20 @@ module Expect
         return [session, idle, queued] unless callback&.call
 
         @active.delete_if { |active| active.equal?(session) }
+        return [:timeout, idle, queued] if dispatch_expired?
       end
       [nil, idle, queued]
+    end
+
+    # 前缀交付完才调用延迟动作；动作耗尽预算后，尚未扫描的输入留给下次转接。
+    def dispatch_input(session)
+      if (callback = session.relay_callback)
+        session.relay_callback = nil
+        return :stopped unless callback.call
+        return :timeout if dispatch_expired?
+      end
+
+      Interaction.queue_input(session, @buffers.fetch(session), final: session.eof?, deadline: @dispatch_deadline)
     end
 
     # 共同等待来源与目标，每轮读每个就绪来源一次；EINTR 返回原期限循环。
@@ -131,7 +144,7 @@ module Expect
       end
       @sessions.each do |session|
         @previous[session] = session.interaction_buffer
-        @buffers[session] = session.clear_buffer
+        @buffers[session] = session.take_buffer
         session.interaction_buffer = @buffers.fetch(session)
       end
     end
@@ -164,6 +177,9 @@ module Expect
 
     # 转接总期限不因持续输入或某个目标的写入进展而重置。
     def expired? = !@deadline.nil? && Expect.monotonic >= @deadline
+
+    # 回调结束后只暂停后续工作，不打断当前用户代码，也不消费尚未扫描的转义尾部。
+    def dispatch_expired? = !@dispatch_deadline.nil? && Expect.monotonic >= @dispatch_deadline
 
     # 背压源暂停吸收新输入，限制排队增长；作为写入目标的会话仍需读取以解除双向等待。
     def read_sources(pending)

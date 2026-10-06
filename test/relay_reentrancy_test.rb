@@ -124,7 +124,7 @@ class RelayReentrancyTest < ExpectTest
     first.buffer = "first"
     second.buffer = "second"
     error = IOError.new("injected preparation failure")
-    second.stub(:clear_buffer, -> { raise error }) do
+    second.stub(:take_buffer, -> { raise error }) do
       assert_same error, assert_raises(IOError) { Expect.interconnect(first, second, timeout: 0) }
     end
     assert_equal "first", first.buffer

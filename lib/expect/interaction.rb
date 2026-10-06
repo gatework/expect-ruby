@@ -83,23 +83,28 @@ module Expect
     # 超时或异常后仍有未交付的数据；重新 interconnect 同一源会话可继续发送。
     def pending_output? = @pending_writes.any? { |output| !output.done? }
 
-    # 将待处理输入排入唯一的转接发送队列；返回 :ready、:queued 或 :stopped。
+    # 将待处理输入排入唯一的转接发送队列；返回 :ready、:queued、:stopped 或 :timeout。
     # 字面序列暂存潜在前缀，正则序列结合历史匹配；final 为真时不再等待后续字节。
     # @api private
-    def self.queue_input(session, buffer, final: false)
+    def self.queue_input(session, buffer, final: false, deadline: nil)
       loop do
         sequences = session.sequences.except(:eof)
         history = session.relay_history
         found, regexp_scanned, utf8_regexp = scan_sequences(buffer, sequences, history, final:)
+        return :timeout if expired?(deadline)
+
         if found
           result = handle_escape(session, buffer, history, found)
           return result unless result == :ready
+          return :timeout if expired?(deadline)
 
           next
         end
 
         # 暂存可能构成字面转义的最长后缀，保证 STOP 分两次读取时 ST 不会提前发给子进程。
         held = final ? 0 : hold_literal_prefix(buffer, sequences)
+        return :timeout if expired?(deadline)
+
         count = [buffer.bytesize - held, READ_SIZE].min
         session.queue_output(buffer.byteslice(0, count)) if count.positive?
         if regexp_scanned
@@ -110,6 +115,9 @@ module Expect
         return count.positive? ? :queued : :ready
       end
     end
+
+    # 单轮扫描和同步回调恢复控制后才检查预算，不能强行中断用户代码。
+    def self.expired?(deadline) = !deadline.nil? && Expect.monotonic >= deadline
 
     # 转义前缀必须交付完才运行回调；有前缀时保存回调，交给 Relay 交付后再执行。
     def self.handle_escape(session, buffer, history, found)
@@ -190,7 +198,7 @@ module Expect
       history.slice!(0) while (byte = history.getbyte(0)) && (0x80..0xBF).cover?(byte)
     end
 
-    private_class_method :handle_escape, :scan_sequences, :hold_literal_prefix, :trim_history
+    private_class_method :expired?, :handle_escape, :scan_sequences, :hold_literal_prefix, :trim_history
 
     # 为当前数据块冻结目标选择并各建一个发送游标；此后修改 outputs 只影响后续数据。
     # 调用方须先排空旧游标；显示转换也只做一次，短写重试时不能重复转换 CRLF。
@@ -226,7 +234,7 @@ module Expect
     # @api private
     attr_accessor :relay_callback
 
-    # 历史属于产生它的转义规则；同规则重入继续匹配，换规则不能重放已转发输入。
+    # 同规则保留跨次转接的连续历史；换规则或消费、改写输入后，不能拼接旧的前缀。
     # @api private
     def relay_history
       sequences = @sequences.except(:eof)

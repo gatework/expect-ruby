@@ -17,7 +17,7 @@ RubyGems/Bundler 解析。推荐入口 **`require "expect/pty"`**；本项目提
 项目和仓库名为 `expect-ruby`，Gem 名为 `expect-pty`。在应用的 Gemfile 中添加以下内容，然后运行 `bundle install`：
 
 ```ruby
-gem "expect-pty", "~> 0.7.2", require: "expect/pty"
+gem "expect-pty", "~> 0.7.3", require: "expect/pty"
 ```
 
 也可直接执行 `gem install expect-pty`。需要跟随开发分支时，可从 GitHub 安装：
@@ -30,8 +30,8 @@ gem "expect-pty", git: "https://github.com/gatework/expect-ruby.git", branch: "m
 
 ```sh
 mkdir -p tmp
-gem build expect-pty.gemspec --output tmp/expect-pty-0.7.2.gem
-gem install ./tmp/expect-pty-0.7.2.gem
+gem build expect-pty.gemspec --output tmp/expect-pty-0.7.3.gem
+gem install ./tmp/expect-pty-0.7.3.gem
 ```
 
 ```ruby
@@ -229,6 +229,8 @@ ready = Expect.readable_sessions(first, second, timeout: 5)
 
 `send_slow` 在每次写入后只检查已经可读的回复，不附加固定等待；返回时不保证收齐最后一个字符引发的回复，完整对话请继续使用
 `expect`。
+失败时 `WriteTimeout#bytes_written` 累计这次 `send_slow` 已发送的所有字符及当前字符的部分字节；
+转换对象或交付回复引发的内层写入不计入。新增包装异常通过 `cause` 保留原错误，可按原始字节偏移续发剩余内容。
 
 大块写入遇到背压时同时读取输出，避免双向传输互相阻塞。背压等待超过 `write_timeout` 抛出 `Expect::WriteTimeout`，
 `error.bytes_written` 给出本次 `write` 已被底层接受的字节数；这些字节不回滚，不要从头重发整个命令。写入、等待和背压读取中的
@@ -270,10 +272,15 @@ ActiveSupport logger，本库不依赖 ActiveSupport。生命周期和匹配使�
 
 所有会话默认没有 stdout 输出。需要显示时显式把 `$stdout` 放进 `outputs`。普通 `expect` 按读取顺序同步执行诊断、
 transcript 和 outputs，目标须及时消费；匹配期限不会中断这些代码。慢目标需要独立调度时使用 `interconnect`。
+交付接收字节期间，这些目标的回调可以匹配已有缓冲或驱动独立会话；若递归读取同一会话的新输入，会抛出 `ReentrancyError`，
+避免后读字节抢先进入其他目标。转义回调中的嵌套匹配不受此限制。
 记录不重复包含发送字节，但终端回显可能作为接收内容返回；敏感会话须控制回显、显示和目标文件权限。
 
 `redact` 复制并追加非空字符串秘密，以 `[FILTERED]` 遮盖 transcript、`write_transcript` 及收发诊断，支持跨分片和重叠秘密。
 匹配缓冲、Result 和 outputs 始终保留原始字节。它不推断编码、终端转义、哈希或其他变换后的秘密，也不能删除已交付的记录。
+临时关闭 DEBUG 仍保留连续脱敏上下文；关闭期间的原始字节不会在重新启用或冲刷尾部时补记。
+直接 `write` 的发送诊断描述尝试发送的内容；转接到 Session 时，发送诊断按底层实际接受的片段推进，并与直接写入共用过滤状态。
+转接诊断失败后，恢复只补未写入的后缀；若诊断内嵌套写入超时，外层 `bytes_written` 保留转接进度，内层异常通过 `cause` 获取。
 
 过滤器最多延迟最长秘密长度减一的尾部字节，EOF、目标替换和显式关闭时交付剩余内容；流边界的疑似秘密前缀也会遮盖。
 发送与接收诊断独立保留过滤状态，因此实际写入分块可能变化。GC 兜底不调用用户代码；需显式关闭会话以交付过滤尾部，
@@ -313,6 +320,8 @@ end
 `interconnect` 统一调度真实 IO 的非阻塞读写；慢目标不会阻止其他源前进，等待同时受总 `timeout` 和目标会话的 `write_timeout`
 约束。总期限到达返回 `nil`，目标写期限先到则抛出 `WriteTimeout`。超时后的字面转义前缀只尝试非阻塞发送，不再等待下游。作为写入目标但未显式列出的
 Session，背压期间读取的回复保留在其匹配缓冲；需要同时转发这些回复时，把它也传给 `interconnect`。
+正数总期限会在扫描及继续回调返回后检查，包括延迟执行的转义回调和 EOF 回调；到期后保留尚未处理的输入。
+`timeout: 0` 保留处理当前缓冲及首次非阻塞轮询的行为。回调明确停止时仍返回对应会话。
 
 每个源独立保存待发送数据以及各目标的发送位置，`source.pending_output?` 表示仍有未交付内容。超时或异常后再次对同一源调用
 `interconnect`，会接着发送未完成的后缀，已完成的目标不会重复接收；转义回调在前缀交付后执行。待发送数据与 `buffer`
@@ -326,6 +335,8 @@ IO 期限不会强行中断这些代码。普通 `expect` 的同步 transcript �
 字面转义可以跨读取完整过滤，尾部留给下次调用。正则转义使用历史记录，默认最多保留最近 65,536 字节；设置 `buffer_limit`
 后改用该值。正则及其锚点作用于当前历史窗口，超过窗口的跨读取正则无法匹配，已实时转发的前缀也无法撤回；零长度正则匹配抛出
 `ArgumentError`。日志包括被转接过滤的转义，显式启用 `redact` 时遮盖注册秘密；在 `expect` / `interconnect` 之间切换不会重复记录。
+正则历史只连接连续输入：匹配消费了字节、显式 `buffer=` / `clear_buffer` 或窗口实际裁剪后会清除旧历史。
+非消费匹配、未丢弃字节的空等待及内部缓冲交接仍保留历史，因此连续转接可以继续识别跨调用转义。
 
 一次转接尚未返回时，递归 `interconnect` 的来源若与活跃来源重叠，会在移动缓冲和修改发送游标前抛出
 `Expect::ReentrancyError`。完全独立的来源仍可嵌套转接；`on_sequence` 中的嵌套 `expect` 及返回后再次转接仍受支持。

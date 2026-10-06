@@ -128,6 +128,66 @@ class WriteContractTest < ExpectTest
     end
   end
 
+  def test_slow_send_timeout_includes_previous_characters_and_partial_current_character
+    session, sink = writable_session(write_timeout: 0)
+    original = session.writer.method(:write_nonblock)
+    attempts = 0
+    error = session.writer.stub(:write_nonblock, lambda { |chunk, **options|
+      attempts += 1
+      case attempts
+      when 1 then original.call(chunk, **options)
+      when 2 then original.call(chunk.byteslice(0, 1), **options)
+      else :wait_writable
+      end
+    }) do
+      assert_raises(Expect::WriteTimeout) { session.send_slow("a中b", delay: 0) }
+    end
+
+    assert_equal 2, error.bytes_written
+    assert_equal 1, error.cause.bytes_written
+    assert_equal "a\xe4".b, sink.read_nonblock(100)
+    assert_equal 3, session.write("a中b".b.byteslice(error.bytes_written..))
+    assert_equal "\xb8\xadb".b, sink.read_nonblock(100)
+  end
+
+  def test_slow_send_conversion_timeout_excludes_unrelated_nested_progress
+    session, sink = writable_session
+    nested = Expect::WriteTimeout.new(bytes_written: 97)
+    object = Object.new
+    object.define_singleton_method(:to_s) { raise nested }
+
+    error = assert_raises(Expect::WriteTimeout) { session.send_slow("ab", object, delay: 0) }
+    assert_equal 2, error.bytes_written
+    assert_same nested, error.cause
+    assert_equal "ab", sink.read_nonblock(100)
+  end
+
+  def test_slow_send_reply_timeout_reports_its_own_confirmed_progress
+    session, sink, producer = writable_session
+    nested = Expect::WriteTimeout.new(bytes_written: 97)
+    # 回复记录中的写入可能失败，已发出的字符不属于这次内层写入。
+    session.transcript = write_target { raise nested }
+    producer.write("reply")
+
+    error = assert_raises(Expect::WriteTimeout) { session.send_slow("abc", delay: 0) }
+    assert_equal 1, error.bytes_written
+    assert_same nested, error.cause
+    assert_equal "a", sink.read_nonblock(100)
+    assert_equal "reply", session.buffer
+  end
+
+  def test_slow_send_first_conversion_timeout_reports_zero_progress
+    session, sink = writable_session
+    nested = Expect::WriteTimeout.new(bytes_written: 97)
+    object = Object.new
+    object.define_singleton_method(:to_s) { raise nested }
+
+    error = assert_raises(Expect::WriteTimeout) { session.send_slow(object, delay: 0) }
+    assert_equal 0, error.bytes_written
+    assert_same nested, error.cause
+    assert_equal :wait_readable, sink.read_nonblock(1, exception: false)
+  end
+
   private
 
   def writable_session(**)
@@ -136,6 +196,6 @@ class WriteContractTest < ExpectTest
     @ios.push(reader, producer, sink, writer)
     session = Expect.open(reader, writer:, **)
     @sessions << session
-    [session, sink]
+    [session, sink, producer]
   end
 end

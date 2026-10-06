@@ -25,7 +25,7 @@ module Expect
   # PTY 创建后命令启动失败。
   class SpawnError < StandardError; end
 
-  # 同一个来源不能同时交给两个 Relay。
+  # 拒绝同源递归转接及接收交付回调中的同源递归读取，防止数据归属和顺序被破坏。
   class ReentrancyError < StandardError; end
 
   # 本次写入已经确认交付的进度；其他嵌套写入的异常保留在 cause。

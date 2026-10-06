@@ -151,6 +151,51 @@ class RedactorTest < Minitest::Test
     assert_equal "[FILTERED]!", filter.append("!") + filter.finish
   end
 
+  def test_suppressed_secret_fragments_are_matched_at_every_pair_of_boundaries
+    secret = "synthetic-password"
+    (0..secret.bytesize).each do |starting|
+      (starting..secret.bytesize).each do |ending|
+        filter = Expect::Redactor.new([secret])
+        output = filter.append(secret.byteslice(0, starting))
+        filter.suppress(secret.byteslice(starting...ending))
+        output << filter.append("#{secret.byteslice(ending..)}!") << filter.finish
+
+        assert_equal "!", output.delete_prefix("[FILTERED]"), "boundaries #{starting}, #{ending}"
+        assert_empty filter.finish
+      end
+    end
+  end
+
+  def test_suppressed_pending_bytes_stay_hidden_across_rule_updates_and_stream_boundaries
+    filter = Expect::Redactor.new(["long-pattern"])
+    assert_nil filter.suppress("private")
+    filter.patterns = ["short"]
+    assert_equal "visible", filter.append("visible") + filter.finish
+    assert_equal "next", filter.append("next") + filter.finish
+
+    filter.suppress("sec")
+    filter.patterns = ["secret"]
+    assert_equal "[FILTERED]!", filter.append("ret!") + filter.finish
+    assert_raises(ArgumentError) { filter.suppress(nil) }
+    assert_empty filter.finish
+  end
+
+  def test_repeated_suppression_preserves_overlapping_binary_secrets
+    filter = Expect::Redactor.new(["\0AB\xff".b, "B\xffC".b, "long-pattern" * 4])
+    output = filter.append("public\0")
+    filter.suppress("A")
+    output << filter.append("B")
+    filter.suppress("\xff".b)
+    output << filter.append("C!") << filter.finish
+    assert_equal "public[FILTERED]!", output
+
+    filter.suppress("private")
+    output = filter.append("\0A")
+    filter.suppress("B\xff".b)
+    output << filter.append("!") << filter.finish
+    assert_equal "[FILTERED]!", output
+  end
+
   private
 
   # 独立参考模型：逐偏移比较完整秘密，再合并布尔掩码；不复用生产代码的扫描/输出实现。

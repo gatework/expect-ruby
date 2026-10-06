@@ -140,17 +140,30 @@ module Expect
     # 返回缓冲副本，防止调用方原地修改绕过裁剪规则。
     def buffer = @buffer.dup
 
+    # Matcher 仅在无回调的当前扫描借用原字节，避免副本使下一次追加复制整个窗口。
+    # 不得修改或跨读取、回调保留；公开 buffer 和继续回调的快照仍独立复制。
+    # @api private
+    def scan_buffer = @buffer
+
     # 复制并替换原始字节缓冲，应用当前上限；调用方后续修改原字符串不会影响会话。
     def buffer=(value)
       raise ArgumentError, "buffer must be a String" unless value.is_a?(String)
 
       @buffer = value.b
       @buffer_generation += 1
+      @relay_history.clear
       trim_buffer
     end
 
-    # 移交旧缓冲并换上新的空字节串，供显式清空或人工转接接管数据。
+    # 显式清空并返回旧字节；它建立新的输入边界，不能再拼接此前的正则转义历史。
     def clear_buffer
+      @relay_history.clear
+      take_buffer
+    end
+
+    # Matcher / Relay 的所有权交接不消费输入，也不能截断跨次转接的正则历史。
+    # @api private
+    def take_buffer
       previous = @buffer
       @buffer = "".b
       @buffer_generation += 1
@@ -199,18 +212,29 @@ module Expect
       nil
     end
 
-    # 逐字符延迟发送，同时收集回复，适配输入处理较慢的交互程序；返回写入字节数。
+    # 逐字符延迟发送，同时收集回复；返回总字节数，背压失败也报告本次累计确认进度。
     def send_slow(*objects, delay:)
       pause = Expect.duration(delay)
       raise ArgumentError, "delay is required" unless pause
 
       count = 0
-      objects.each do |object|
-        object.to_s.each_char do |character|
-          sleep(pause) if pause.positive?
-          count += write(character)
-          read_available if !eof? && to_io.wait_readable(0)
+      writing = false
+      begin
+        objects.each do |object|
+          object.to_s.each_char do |character|
+            sleep(pause) if pause.positive?
+            writing = true
+            count += write(character)
+            writing = false
+            read_available if !eof? && to_io.wait_readable(0)
+          end
         end
+      rescue WriteTimeout => error
+        # 只有当前字符的 write 进度属于本次发送；转换和回复交付中的嵌套写入不计入。
+        raise if writing && count.zero?
+
+        progress = count + (writing ? error.bytes_written : 0)
+        raise WriteTimeout.new("slow send interrupted", bytes_written: progress)
       end
       count
     end
@@ -281,6 +305,8 @@ module Expect
       if consume
         @buffer = @last_result.after.dup
         @buffer_generation += 1
+        # before 与 match 都已消费，后续转接不能跨过这段输入拼接旧的转义前缀。
+        @relay_history.clear if (offset + length).positive?
       end
       # 诊断回调可能嵌套等待；恢复本次结果后再交给正式模式回调，不能返回内层等待的结果。
       result = @last_result
@@ -306,6 +332,8 @@ module Expect
     # 先将读取字节交给匹配或转接缓冲，再记录日志；日志失败也能恢复输入。
     # @api private
     def read_available(propagate: true, buffer: @buffer, trim: true)
+      raise ReentrancyError, "cannot read while delivering received data" if @receiving
+
       return nil if eof?
 
       # 写入背压也会读取；转接期间统一交给转义处理器，不能直接转发或另存匹配缓冲。
@@ -332,10 +360,17 @@ module Expect
       data = data.b
       buffer << data
       trim_buffer if trim
-      trace_data(:received, data)
-      # 仅在真实读取时记录日志，后续匹配或人工转接重用缓冲时不会重复记录。
-      write_transcript(data)
-      propagate(data) if propagate
+      # 本块完成全部交付前不能递归读取，否则后块会抢先进入其他日志及输出目标。
+      # 回调仍可匹配已有缓冲或驱动其他会话；拒绝嵌套读取不能释放外层的保护。
+      @receiving = true
+      begin
+        trace_data(:received, data)
+        # 仅在真实读取时记录日志，后续匹配或人工转接重用缓冲时不会重复记录。
+        write_transcript(data)
+        propagate(data) if propagate
+      ensure
+        @receiving = false
+      end
       data
     end
 
@@ -366,7 +401,7 @@ module Expect
       @diagnostic_redactors = {}
       @logger = @transcript = nil
       @last_result = @command = nil
-      @closed = @eof = false
+      @closed = @eof = @receiving = false
       self.timeout = timeout
       self.write_timeout = write_timeout
       self.buffer_limit = buffer_limit
@@ -540,6 +575,8 @@ module Expect
       @buffer_discarded_bytes += @buffer.bytesize - limit
       @buffer = @buffer.byteslice(-limit, limit)
       @buffer_generation += 1
+      # 丢弃的前缀使当前窗口与已转发历史之间不再连续。
+      @relay_history.clear
     end
 
     # 仅由资源创建者向仍未回收的子进程发送信号；若进程刚好退出，则尝试回收。

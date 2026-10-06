@@ -76,10 +76,13 @@ EncodingError。
 
 操作参数 `raw`、`consume`、`reset_timeout_on_read`、`graceful` 不持久化为会话设置。
 `buffer` 返回副本，`buffer=` 复制并应用上限，`clear_buffer` 移交并清空缓冲；`buffer_discarded_bytes` 累计窗口裁剪量，匹配消费不计入。
+显式替换/清空、实际裁剪和消费输入会清除正则转义历史；非消费匹配、未裁剪的等待与内部缓冲交接保持连续历史。
 
 `write(*objects)` 按 to_s 写字节并返回字节数，`<<` 返回 Session，`puts` 遵循 Ruby IO 换行与数组规则并返回 nil。
 `send_slow(*objects, delay:)` 按字符延迟发送并收取回复。背压超时抛出 `Expect::WriteTimeout`，`bytes_written` 仅标识本次调用已确认进度，
 嵌套写入异常放在 cause。成功短写不受 write_timeout 的总耗时限制。
+`send_slow` 的进度累计本次调用中此前完整字符与失败字符实际接受的字节；转换对象和记录回复的内层写入进度不计入。
+首字符 write 的异常无需修正进度时保留原对象；需要累计或排除内层进度时包装并保留 cause。
 `to_io`、`writer`、`slave` 暴露句柄；`pid`、`command`、`tty_name`、`fileno`、`tty?`、`alive?`、`exit_code` 查询会话属性。
 终端直接使用 `session.to_io.console_mode`、`echo=`、`winsize` 等 Ruby io/console 接口，没有 stty 或窗口尺寸包装方法。
 
@@ -95,6 +98,8 @@ Logger 自身控制级别和格式。INFO 记录生命周期/匹配，DEBUG 增�
 logger、transcript、outputs 一律借用，显式关闭冲刷过滤尾部，但不会关闭这些目标。
 
 `redact(*secrets)` 追加非空字符串，仅过滤 transcript 和诊断，不更改匹配、Result 或 outputs。
+DEBUG 关闭期间仍推进分片脱敏，但这些字节不会在重新启用后补记。转接到 Session 的发送诊断仅记录底层接受的片段，
+与直接 write 共用过滤状态；诊断失败不回退转接进度，嵌套 WriteTimeout 的原始进度由 cause 保留。
 `Expect::Redactor` 提供 `append`、`finish(partial: true)`、`patterns=` 和完整文本类方法 `redact`；流尾部默认隐藏疑似秘密前缀。
 
 `outputs=` 校验并复制可写目标数组，读取返回副本；`$stdout` 与其他 writer 一样显式加入。
@@ -102,6 +107,8 @@ logger、transcript、outputs 一律借用，显式关闭冲刷过滤尾部，�
 `on_sequence(String/Regexp/:eof) { ... }` 注册无参数回调，未给块或返回 nil/false 停止，其余值继续。
 `pending_output?` 表示尚未交付数据；再次转接同源会话继续发送，不重放成功前缀；更换 outputs 不改变已排队字节的目标。
 同源递归转接抛出 ReentrancyError；转义回调可嵌套匹配，所有来源状态按对象身份隔离。
+接收字节交付期间，logger/transcript/outputs 的回调不能递归读取同一会话的新输入，否则抛出 ReentrancyError；
+匹配已有缓冲及读取独立会话仍可用。正数转接总期限会在扫描和继续回调返回后检查；零超时仍处理缓冲并首次轮询。
 
 `interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)` 临时建立双向转接，退出后恢复
 outputs、转义和本地终端模式。
