@@ -32,6 +32,7 @@ module Expect
 
       @patterns = patterns.map { |pattern| pattern.b.freeze }.uniq.freeze
       @lookbehind = [(@patterns.map(&:bytesize).max || 0) - 1, 0].max
+      @scanned_bytes = 0
     end
 
     # 追加一个原始字节块，返回已经可以确定的安全前缀；新秘密可能跨越此前保留的尾部。
@@ -94,14 +95,18 @@ module Expect
       end
     end
 
-    # 仍逐字节推进重叠命中，但同一模式的相交/相邻区间只写一次掩码。
-    # 只向旧掩码取并集，不能清除其他模式或旧规则已经隐藏的 pending 字节。
+    # 每个模式只扫描可能跨越新增字节的起点；规则更新后从头重扫保留窗口。
+    # 重叠命中取并集，同一模式的相交/相邻区间只写一次，不清除旧掩码。
     def mark_secrets
+      size = @pending.bytesize
+      return if @scanned_bytes == size
+
       @patterns.each do |pattern|
-        starting = @pending.index(pattern)
+        length = pattern.bytesize
+        offset = @scanned_bytes >= length ? @scanned_bytes - length + 1 : 0
+        starting = @pending.index(pattern, offset)
         next unless starting
 
-        length = pattern.bytesize
         ending = starting + length
         offset = starting
         while (offset = @pending.index(pattern, offset + 1))
@@ -113,12 +118,15 @@ module Expect
         end
         @hidden[starting, ending - starting] = "\1" * (ending - starting)
       end
+      @scanned_bytes = size
     end
 
     # 按连续区间输出，避免逐字节构造字符串；只保存尚可能与下一块组成秘密的后缀。
     # masking 跨 append 保留，使被分成多个块的同一隐藏区间只输出一次替换标记。
     def release(length)
       output = "".b
+      return output if length.zero?
+
       cursor = 0
       while cursor < length
         hidden = @hidden.getbyte(cursor) == 1
@@ -135,9 +143,11 @@ module Expect
         end
         cursor = ending
       end
-      @pending = @pending.byteslice(length..)
-      @hidden = @hidden.byteslice(length..)
-      @suppressed = @suppressed.byteslice(length..) if @suppressed
+      remaining = @pending.bytesize - length
+      @pending = @pending.byteslice(length, remaining)
+      @hidden = @hidden.byteslice(length, remaining)
+      @suppressed = @suppressed.byteslice(length, remaining) if @suppressed
+      @scanned_bytes = remaining
       output
     end
 

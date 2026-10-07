@@ -49,6 +49,7 @@ result => { number:, captures: }
 `reset_timeout: false` 保持原相对期限。全部 EOF 后直接返回 EOF；已处理的来源不再参与超时。
 
 `consume: false` 仅在本轮保留完整匹配缓冲；继续但不改变缓冲的模式暂停到输入变化，避免反复触发。
+回调中的嵌套等待实际读入新字节时，即使缓冲内容与之前相同也会恢复匹配；仅同值赋回缓冲不算新输入。
 `reset_timeout_on_read: true` 使每次读取重置本轮相对期限。`deadline` 是单调时钟绝对秒数，不被输入或回调延长。
 IO 期限不打断用户代码或单次正则；不可信正则应使用 Ruby `Regexp` 自身的 timeout。
 

@@ -111,7 +111,9 @@ module Expect
           trim_history(history, buffer.byteslice(0, count), limit: session.buffer_limit || REGEXP_ESCAPE_HISTORY_LIMIT,
                                                             utf8: utf8_regexp)
         end
-        buffer.slice!(0, count)
+        # 排队前缀与尾部可共享原字节；替换窗口而非删除前缀，避免逐块复制整个余量。
+        # 保留缓冲对象身份，嵌套 Matcher 仍把尾部交回 Relay 借用的同一个对象。
+        buffer.replace(buffer.byteslice(count..)) if count.positive?
         return count.positive? ? :queued : :ready
       end
     end

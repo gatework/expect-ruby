@@ -1,5 +1,39 @@
 # 验证记录
 
+## 2026-10-06：0.7.4 发布候选
+
+归档本轮三项修复至 0.7.4，并同步版本常量、安装示例和发布说明后，重新运行 `bash script/ci`，退出 0。
+结果为 **472 runs / 8,002 assertions**，零失败、错误或跳过；77 个文件 RuboCop、API/YARD/RBS、示例、五组基准 smoke
+以及普通 RubyGems / 最小 Bundler 应用的隔离安装全部通过，两种安装均验证真实本地 PTY。
+运行环境仍为 macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20；原始日志为 `tmp/release/0.7.4/ci-local.log`。
+此前性能与回归对照使用下节记载的 0.7.3 候选库，发布准备仅调整版本及文档。
+
+## 2026-10-06：匹配进展与缓冲热点
+
+基线为 `ec1f43101651bd7b711cf263159a579f0f6a9f11`（0.7.3），修复保留在工作区的 Unreleased 范围，未提交或发布。
+Matcher 使用实际接收字节计数识别嵌套读取的进展；Relay 替换已排队后的尾部而非逐块删除前缀；Redactor 仅扫描
+可能跨越新增字节的起点，并在规则更新后重扫保留窗口。没有新增运行依赖或公开 API。
+
+新增 `matching_progress_test` 的同一份测试在冻结基线与候选上分别得到：
+**5 runs / 18 assertions / 3 failures** → **5 runs / 27 assertions / 0 failures**。
+覆盖消费与非消费匹配、其他模式及 timeout 回调内读入相同消息，以及同值赋回和空轮询仍受防空转保护。
+另补充大缓冲经非消费 expect 交给 Relay 的完整交付与 Result 快照隔离，以及脱敏规则更新后的重新扫描与旧掩码保留。
+
+macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20 上运行 `bash script/ci`，退出 0：
+
+- **472 runs / 8,002 assertions**，零失败、错误或跳过；77 个文件 RuboCop 无违规。
+- 公开 API/YARD/RBS 覆盖、RBS validate、示例对话通过。
+- 五组 benchmark smoke 通过，含新增的已缓冲转接和长短秘密混合分片。
+- Gem 构建、普通 RubyGems 与最小 Bundler 应用的隔离安装通过，均执行真实本地 PTY 验证。
+
+额外对照 1000 条固定种子的过滤流，每条交错执行 40 次 append、suppress、规则更新及不同 partial 策略的 finish，
+逐次输出与冻结基线完全一致。构建包的全部 21 个文件与当前源码逐字节一致，文件清单与 gemspec 一致。
+
+性能比较使用独立基线库、相同驱动及串行采样，详细规模与原始数据见
+[性能记录](PERFORMANCE.md#已缓冲转接与混合秘密分片2026-10-06)。日志保存在 `tmp/074-review/ci.log`、
+`matcher-before.log` 和 `matcher-after.log`。完整门禁后仅补充不随 Gem 分发的内部合同、性能及本验证记录。
+日志仍有测试替身重定义及本机 RDoc 重复加载警告；本轮未运行 Ruby 3.4、Linux、远端 Actions、真实 SSH 或设备验证。
+
 ## 2026-10-06：输入连续性与慢速发送恢复
 
 在 `1003584ba9a679d172b66cae6378d04e6f61dc21` 及上一轮未提交修复上继续，先冻结本轮起点，再检查匹配、转接、发送、

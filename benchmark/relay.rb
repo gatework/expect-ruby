@@ -33,6 +33,21 @@ begin
   end
 
   session.__send__(:sequences=, {})
+  buffered_output = StringIO.new("".b)
+  session.outputs = [buffered_output]
+  (runner.smoke ? [65_536] : [1_048_576, 4_194_304, 16_777_216]).each do |bytes|
+    buffered_payload = "x" * bytes
+    verify = lambda do |result|
+      ExpectBenchmark.check(result.equal?(session) && buffered_output.string == buffered_payload)
+      ExpectBenchmark.check(session.buffer.empty? && !session.pending_output?)
+    end
+    runner.measure("prebuffered/#{bytes}", bytes:, inputs: { size: bytes, escapes: 0 }, verify:, iterations: 1) do
+      buffered_output.string = "".b
+      session.buffer = buffered_payload
+      Timeout.timeout(10) { Expect.interconnect(session, timeout: 5) }
+    end
+  end
+
   normal = StringIO.new("".b)
   slow = StringIO.new("".b)
   slow.define_singleton_method(:write) { |data| super(data.byteslice(0, 17)) }

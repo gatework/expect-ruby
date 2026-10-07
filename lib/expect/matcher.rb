@@ -71,7 +71,7 @@ module Expect
 
           buffer = buffers ? (buffers[session] ||= session.scan_buffer) : session.scan_buffer
           stalled = @stalled_matches[session]
-          if stalled && stalled[:buffer] != buffer
+          if stalled && (stalled[:received_bytes] != session.received_bytes || stalled[:buffer] != buffer)
             @stalled_matches.delete(session)
             stalled = nil
           end
@@ -124,13 +124,14 @@ module Expect
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。
     def handle_match(session, pattern, position)
       previous_buffer = session.buffer
+      received_bytes = session.received_bytes
       result = session.record_match(pattern, position, consume: @consume)
       action = pattern.call(session)
       return result unless continuing?(action)
 
-      # 回调未改变缓冲时暂停当前模式，等待缓冲变化后再匹配，避免原地空转。
-      if session.buffer == previous_buffer
-        stalled = (@stalled_matches[session] ||= { buffer: previous_buffer, patterns: [] })
+      # 同值赋回仍须防止空转；嵌套读取到的新字节即使内容相同，也能恢复匹配。
+      if session.received_bytes == received_bytes && session.buffer == previous_buffer
+        stalled = (@stalled_matches[session] ||= { buffer: previous_buffer, received_bytes:, patterns: [] })
         stalled[:patterns] << pattern
       end
       @deadline = next_deadline if CONTINUE.equal?(action)

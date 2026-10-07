@@ -145,6 +145,10 @@ module Expect
     # @api private
     def scan_buffer = @buffer
 
+    # 成功读取的累计字节数；消费、替换和移交缓冲不算新的接收进展。
+    # @api private
+    attr_reader :received_bytes
+
     # 复制并替换原始字节缓冲，应用当前上限；调用方后续修改原字符串不会影响会话。
     def buffer=(value)
       raise ArgumentError, "buffer must be a String" unless value.is_a?(String)
@@ -359,6 +363,7 @@ module Expect
 
       data = data.b
       buffer << data
+      @received_bytes += data.bytesize
       trim_buffer if trim
       # 本块完成全部交付前不能递归读取，否则后块会抢先进入其他日志及输出目标。
       # 回调仍可匹配已有缓冲或驱动其他会话；拒绝嵌套读取不能释放外层的保护。
@@ -388,6 +393,7 @@ module Expect
       @tty_name = slave.path if slave
       @buffer = "".b
       @buffer_generation = 0
+      @received_bytes = 0
       @buffer_discarded_bytes = 0
       @outputs = []
       @sequences = {}

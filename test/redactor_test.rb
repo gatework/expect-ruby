@@ -98,6 +98,19 @@ class RedactorTest < Minitest::Test
     assert_equal "[FILTERED]!", filter.append("ret!") + filter.finish
   end
 
+  def test_rule_updates_rescan_retained_bytes_without_removing_old_masks
+    filter = Expect::Redactor.new(["token", "Z" * 256])
+    prefix = "safe!" * 100
+    output = +"".b
+    "#{prefix}prefix token public half".each_char { |character| output << filter.append(character) }
+    filter.patterns = ["public", "halfsecret", "Z" * 256]
+    "secret! token".each_char { |character| output << filter.append(character) }
+    output << filter.finish
+
+    assert_equal "#{prefix}prefix [FILTERED] [FILTERED] [FILTERED]! token", output
+    assert_empty filter.finish
+  end
+
   def test_inspect_does_not_expose_registered_or_pending_bytes
     filter = Expect::Redactor.new(["private-pattern"])
     filter.append("raw-pending")

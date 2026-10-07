@@ -47,6 +47,15 @@ RedactorBenchmark.measure(runner, "marker_in_input", "[FILTERED] secret!" * coun
   RedactorBenchmark.measure(runner, "stream_#{chunk_size}", "prefix secret!\n" * count,
                             ["secret"], "prefix [FILTERED]!\n" * count, chunk_size:)
 end
+
+# 长规则扩大保留窗口；短规则密集命中时也不应反复扫描已经遮盖的完整秘密。
+mixed_input = "token" * (runner.smoke ? 17 : 1639)
+mixed_patterns = ["token", "z" * (runner.smoke ? 128 : 4096)]
+[1, 64, 4096].each do |chunk_size|
+  RedactorBenchmark.measure(runner, "mixed_lengths_stream_#{chunk_size}", mixed_input, mixed_patterns,
+                            "[FILTERED]", chunk_size:, iterations: 1)
+end
+
 [true, false].each do |partial|
   RedactorBenchmark.measure(runner, "partial_#{partial}", "prefix pass", ["password"],
                             partial ? "prefix [FILTERED]" : "prefix pass", chunk_size: 1, partial:)

@@ -123,6 +123,28 @@ class RelayRecoveryTest < ExpectTest
     assert_equal "abcdef", received
   end
 
+  def test_large_non_consuming_match_hands_its_buffer_to_relay_intact
+    source, writer = pipe_session
+    payload = "#{(0..255).to_a.pack("C*") * 4096}END!".b
+    producer = background do
+      writer.write(payload)
+      writer.close
+    end
+    result = bounded { source.expect("END!", timeout: 2, consume: false) }
+    assert result.matched?
+    assert producer.join(2), "producer did not finish"
+    output = StringIO.new("".b)
+    source.outputs = [output]
+
+    assert_same(source, bounded { Expect.interconnect(source, timeout: 2) })
+    assert_equal payload.bytesize, output.string.bytesize
+    assert payload == output.string, "relay output differs from the matched buffer"
+    assert_equal payload.bytesize - 4, result.before.bytesize
+    assert result.before == payload.byteslice(0...-4), "relay changed an earlier Result snapshot"
+    assert_empty source.buffer
+    refute source.pending_output?
+  end
+
   def test_failed_second_listener_does_not_replay_first_listener
     source, = pipe_session
     first = StringIO.new
