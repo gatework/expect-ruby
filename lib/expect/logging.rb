@@ -51,10 +51,13 @@ module Expect
 
     # 向接收记录补写内容，不发送给子进程或 outputs；脱敏尾部可能延迟交付，返回 nil。
     def write_transcript(*objects)
+      return unless transcript
+
+      data = objects.map { |object| object.to_s.b }.join
+      # to_s 可切换或禁用记录目标；整条记录与其过滤尾部必须属于转换完成后的同一目标。
       target = transcript
       return unless target
 
-      data = objects.map { |object| object.to_s.b }.join
       if @secrets
         @transcript_redactor ||= Redactor.new(@secrets)
         data = @transcript_redactor.append(data)

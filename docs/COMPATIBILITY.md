@@ -1,4 +1,4 @@
-# Ruby 接口与 Expect 行为对照
+# Ruby 接口与 Expect 语义边界
 
 ## Tcl Expect 语义边界
 
@@ -24,11 +24,11 @@
 `expect` 的 `deadline:` 是额外的绝对单调时钟总期限，限制相对 `timeout` 的所有重置，不改变已知 EOF 派发和未指定总期限时的零超时轮询。会话
 `logger` 与接收记录 `transcript` 独立；显式 `redact` 仅过滤日志和诊断，协议转发与匹配仍使用原始字节。
 
-## 实现来源
+## 历史实现参考：Perl Expect.pm
 
 交互能力参考 [jacoby/expect.pm](https://github.com/jacoby/expect.pm)，源码基准为版本 1.38、提交
 `2ea0e4ce20a896c95cb4c94e781f1b1f3145150d`。此项目独立实现，使用 MIT 许可，没有复制 Perl 实现代码；原项目作者及维护者为
-Austin Schutz、Roland Giersig、Dave Jacoby，采用与 Perl 相同的许可。
+Austin Schutz、Roland Giersig、Dave Jacoby，采用与 Perl 相同的许可。此处仅记录早期行为验证参考，不表示本 Gem 实现其 API、接受 Perl 语法或与其保持兼容。
 
 ## 保留的交互能力
 

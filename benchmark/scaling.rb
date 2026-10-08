@@ -26,10 +26,11 @@ counts.each do |count|
     marker = "ready\n"
     ready_count = 0
     list = Expect::PatternList.new(sessions)
-    list.on(marker) do
+    on_ready = lambda do |_source|
       ready_count += 1
       Expect.continue(reset_timeout: false) if ready_count < count
     end
+    list.on(marker, &on_ready)
     verify = lambda do |result|
       ExpectBenchmark.check(result.matched? && ready_count == count && sessions.all? { |source| source.buffer.empty? })
     end
@@ -39,15 +40,24 @@ counts.each do |count|
       pipes.each { |pipe| pipe.last.write(marker) }
       Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
     end
+    runner.measure("declare_and_ready/#{count}", bytes: count * marker.bytesize, inputs: { sessions: count },
+                                                 iterations: 10, verify:) do
+      ready_count = 0
+      pipes.each { |pipe| pipe.last.write(marker) }
+      Timeout.timeout(10) do
+        Expect.expect(from: sessions, timeout: 5) { |patterns| patterns.on(marker, &on_ready) }
+      end
+    end
 
     # 已知 EOF 逐个派发，仍须保留来源顺序、尾部快照，并在全部结束后返回 EOF。
     sessions.each(&:close)
     ended = []
     list = Expect::PatternList.new(sessions)
-    list.eof do |source|
+    on_eof = lambda do |source|
       ended << source
       Expect.continue(reset_timeout: false)
     end
+    list.eof(&on_eof)
     verify = lambda do |result|
       ExpectBenchmark.check(result.eof? && ended == sessions && sessions.all? do |source|
         source.before == "tail" && source.buffer.empty?
@@ -57,6 +67,13 @@ counts.each do |count|
       ended.clear
       sessions.each { |source| source.buffer = "tail" }
       Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
+    end
+    # 公开入口每次重新声明，计入规则编译，不能只证明复用冻结列表的调度收益。
+    runner.measure("declare_and_eof/#{count}", bytes: count * 4, inputs: { sessions: count },
+                                               iterations: 10, verify:) do
+      ended.clear
+      sessions.each { |source| source.buffer = "tail" }
+      Timeout.timeout(10) { Expect.expect(from: sessions, timeout: 5) { |patterns| patterns.eof(&on_eof) } }
     end
   ensure
     sessions.each(&:close)

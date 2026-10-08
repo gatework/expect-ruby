@@ -9,7 +9,7 @@ module Expect
     def initialize(patterns, timeout, deadline: nil, consume: true, reset_timeout_on_read: false)
       @patterns = patterns.finalize!
       @sessions = patterns.sessions
-      @groups = patterns.groups
+      @groups = patterns.text_groups
       @consume = consume
       @reset_timeout_on_read = reset_timeout_on_read
       @timeout = Expect.duration(timeout)
@@ -62,9 +62,9 @@ module Expect
     # 按声明组、会话、模式的顺序寻找首个匹配，不按文本中的出现位置重新排序。
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮缓冲须在同一次扫描保持一致。
     def find_match
-      # 单组且来源不重复时无需缓存；借用仅活在本次无回调扫描，不跨越 IO 或用户回调。
+      # 编译后的组内来源已按身份去重；借用仅活在本次无回调扫描，不跨越 IO 或用户回调。
       groups = @groups
-      buffers = {}.compare_by_identity if groups.size > 1 || (groups.first && groups.first.first.size > @sessions.size)
+      buffers = {}.compare_by_identity if groups.size > 1
       groups.each do |sessions, patterns|
         sessions.each do |session|
           next if @handled_eof.key?(session)

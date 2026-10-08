@@ -32,6 +32,33 @@ begin
     end
   end
 
+  prefix_reader, prefix_writer = IO.pipe
+  prefix_session = Expect.open(prefix_reader)
+  begin
+    prefix_size = size
+    prefix_payload = "#{"a" * prefix_size}?"
+    prefix_session.on_sequence("#{"a" * prefix_size}!")
+    prefix_output = StringIO.new("".b)
+    prefix_session.outputs = [prefix_output]
+    verify_prefix = ->(result) { ExpectBenchmark.check(result.nil? && prefix_output.string == prefix_payload) }
+    runner.measure("escape/literal-prefix-miss", bytes: prefix_payload.bytesize,
+                                                 inputs: { prefix_bytes: prefix_size, matching: false },
+                                                 verify: verify_prefix) do
+      prefix_output.string = "".b
+      prefix_session.buffer = prefix_payload
+      Timeout.timeout(10) do
+        loop do
+          result = Expect.interconnect(prefix_session, timeout: 0)
+          break if result || (prefix_session.buffer.empty? && !prefix_session.pending_output?)
+        end
+      end
+    end
+  ensure
+    prefix_session.close
+    prefix_reader.close unless prefix_reader.closed?
+    prefix_writer.close unless prefix_writer.closed?
+  end
+
   session.__send__(:sequences=, {})
   buffered_output = StringIO.new("".b)
   session.outputs = [buffered_output]

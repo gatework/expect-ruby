@@ -5,7 +5,7 @@ GitHub Release，附带同一个 Gem 和 `SHA256SUMS`。生成文件统一放在
 
 ## 准备版本
 
-1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.4`，同步 README 中的安装版本和构建包路径。
+1. 更新 `lib/expect/version.rb` 的 `Expect::VERSION`，例如 `0.7.4`，检查两个 README 的安装方式与包名，并更新带版本号的安装示例（如有）。
 2. 把 `CHANGELOG.md` 的 `Unreleased` 内容移到对应版本标题下，例如 `## 0.7.4 - 2026-10-06`；可以保留空的 `Unreleased` 标题。
 3. 提交源码，发布时工作区必须干净。若同时发布 GitHub Release，还需推送到 `main`，远端 `main` 必须包含该提交，已有同名标签必须指向该提交。
 

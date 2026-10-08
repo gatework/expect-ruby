@@ -6,7 +6,7 @@ module Expect
   class PatternList
     # 供匹配器读取的已编译分组和超时规则。
     # @api private
-    attr_reader :groups, :timeout_pattern
+    attr_reader :groups, :text_groups, :timeout_pattern
 
     # 建立默认来源，并将位置参数中的文本、正则、:eof、:timeout 转成统一模式。
     def initialize(sessions = [], patterns = [])
@@ -51,6 +51,8 @@ module Expect
     # 这里只去重会话对象；不同会话包装同一 IO 时的读取归属由 Matcher 决定。
     # @api private
     def sessions
+      return @sessions if frozen?
+
       groups.flat_map(&:first).each_with_object({}.compare_by_identity) do |session, unique|
         unique[session] = true
       end.keys
@@ -59,6 +61,8 @@ module Expect
     # 收集指定会话的所有 EOF 处理器，保留原注册顺序。
     # @api private
     def eof_patterns_for(session)
+      return (@eof_groups[session] || []).flatten(1) if frozen?
+
       groups.flat_map do |sessions, patterns|
         sessions.any? { |candidate| candidate.equal?(session) } ? patterns.select(&:eof?) : []
       end
@@ -76,16 +80,43 @@ module Expect
     # @api private
     def finalize!
       validate!
+      freeze
+    end
+
+    # 显式 Ruby freeze 与引擎完成注册遵循相同编译路径，不能把浅冻结误判为编译完成。
+    # @api private
+    def freeze
+      return self if frozen?
+
+      @sessions = sessions.freeze
+      compile_groups
       groups.each do |sessions, patterns|
         sessions.freeze
         patterns.freeze
       end
       groups.each(&:freeze).freeze
       @default_sessions.freeze
-      freeze
+      super
     end
 
     private
+
+    # 声明只编译一次；运行状态仍属于 Matcher，冻结后的列表可以供不同等待复用。
+    # EOF 索引只保存各组模式数组的引用，避免把共享模式按来源数重复复制。
+    def compile_groups
+      @text_groups = []
+      @eof_groups = {}.compare_by_identity
+      groups.each do |sources, patterns|
+        eof, text = patterns.partition(&:eof?).each(&:freeze)
+        sources = sources.uniq(&:object_id).freeze
+        @text_groups << [sources, text].freeze unless text.empty?
+        next if eof.empty?
+
+        sources.each { |source| (@eof_groups[source] ||= []) << eof }
+      end
+      @text_groups.freeze
+      @eof_groups.each_value(&:freeze).freeze
+    end
 
     # 校验并复制来源列表，将模式加入相邻的相同来源组或新建组。
     def add(value, from, callback)

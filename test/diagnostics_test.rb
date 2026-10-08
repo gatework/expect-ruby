@@ -226,6 +226,57 @@ class DiagnosticsTest < ExpectTest
     assert_equal "valid", output.string
   end
 
+  def test_transcript_conversion_rotates_the_whole_record_with_its_redaction_tail
+    session, = pipe_session
+    first = StringIO.new
+    second = StringIO.new
+    session.redact("secret")
+    session.transcript = first
+    session.write_transcript("old tail")
+    value = Object.new
+    value.define_singleton_method(:to_s) do
+      session.transcript = second
+      "secret annotation"
+    end
+
+    assert_nil session.write_transcript("prefix ", value, "!")
+    session.close
+
+    assert_equal "old tail", first.string
+    assert_equal "prefix [FILTERED] annotation!", second.string
+    refute first.closed?
+    refute second.closed?
+  end
+
+  def test_transcript_conversion_can_disable_the_target_without_writing_to_the_old_stream
+    session, = pipe_session
+    first = StringIO.new
+    session.redact("secret")
+    session.transcript = first
+    session.write_transcript("old tail")
+    value = Object.new
+    value.define_singleton_method(:to_s) do
+      session.transcript = nil
+      "new annotation"
+    end
+
+    assert_nil session.write_transcript(value)
+    session.transcript = second = StringIO.new
+    session.write_transcript("fresh")
+    session.close
+
+    assert_equal "old tail", first.string
+    assert_equal "fresh", second.string
+  end
+
+  def test_disabled_transcript_does_not_convert_objects
+    session, = pipe_session
+    value = Object.new
+    value.define_singleton_method(:to_s) { raise "unexpected conversion" }
+
+    assert_nil session.write_transcript(value)
+  end
+
   def test_flush_failure_does_not_prevent_handle_and_child_cleanup
     session = child('puts "ready"; sleep 60', raw: true)
     session.expect("ready", timeout: 2)

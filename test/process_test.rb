@@ -78,20 +78,33 @@ class ProcessTest < ExpectTest
   end
 
   def test_spawn_cleans_child_when_post_exec_diagnostics_fail
-    inherited_constructor = !Expect::Session.singleton_methods(false).include?(:new)
+    master, slave = PTY.open
+    @ios.push(master, slave)
     failure = IOError.new("spawn diagnostic failed")
-    session = Expect::Session.new(logger: diagnostic_logger { raise failure })
-    @sessions << session
-    Expect::Session.stub(:new, session) do
-      assert_same failure, assert_raises(IOError) { Expect.spawn(RbConfig.ruby, "-e", "sleep 60") }
+    pid = nil
+    logger = diagnostic_logger do |event|
+      pid ||= event[:pid]
+      raise failure
     end
-    assert session.closed?
-    assert_nil session.pid
-    assert_instance_of Process::Status, session.process_status
+    PTY.stub(:open, [master, slave]) do
+      assert_same(failure, assert_raises(IOError) do
+        Expect.spawn(RbConfig.ruby, "-e", "sleep 60", logger:)
+      end)
+    end
+    assert_predicate master, :closed?
+    assert_predicate slave, :closed?
+    assert_instance_of Integer, pid
+    assert_raises(Errno::ECHILD) { Process.waitpid(pid, Process::WNOHANG) }
   ensure
-    # Minitest 恢复继承方法时会留下单例代理，测试应还原原本的 Class#new 查找链。
-    if inherited_constructor && Expect::Session.singleton_methods(false).include?(:new)
-      Expect::Session.singleton_class.remove_method(:new)
+    if pid
+      begin
+        unless Process.waitpid(pid, Process::WNOHANG)
+          Process.kill("KILL", pid)
+          Process.waitpid(pid)
+        end
+      rescue Errno::ECHILD, Errno::ESRCH
+        nil
+      end
     end
   end
 

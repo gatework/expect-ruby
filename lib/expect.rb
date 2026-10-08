@@ -47,9 +47,15 @@ module Expect
               timeout: nil, write_timeout: nil, buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
       session = nil
       spawned = false
-      cleanup = -> { session&.close(graceful: spawned && graceful) if block_given? || !spawned }
+      cleanup = lambda do
+        if session && (block_given? || !spawned)
+          session.cleanup_session(nil, writer: nil, own: false, graceful: spawned && graceful)
+        end
+      end
       Cleanup.always(cleanup) do
-        session = Session.new(timeout:, write_timeout:, buffer_limit:, logger:, transcript:, outputs:)
+        # 先持有对象再初始化，构造完成到工厂接管之间不能留下无人负责关闭的窗口。
+        session = Session.allocate
+        session.__send__(:initialize, timeout:, write_timeout:, buffer_limit:, logger:, transcript:, outputs:)
         session.spawn(*command, env:, chdir:, raw:)
         spawned = true
         block_given? ? yield(session) : session

@@ -20,7 +20,8 @@ module Expect
     def initialize(timeout: nil, write_timeout: nil, buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
       master = slave = nil
       Cleanup.on_failure(-> { cleanup_session(master, writer: master, slave:, own: true) }) do
-        master, slave = PTY.open
+        # 取得原生句柄与登记局部所有权不可被异步中断拆开；后续参数协议仍立即响应中断。
+        Thread.handle_interrupt(Object => :never) { master, slave = PTY.open }
         initialize_io(master, writer: master, slave:, own: true, timeout:, write_timeout:, buffer_limit:,
                               logger:, transcript:, outputs:)
       end
@@ -59,7 +60,8 @@ module Expect
       from_child = to_parent = nil
       Cleanup.always(-> { SessionResources.close_handles(from_child, to_parent) }) do
         # 错误管道的写端在 exec 成功时自动关闭；父进程据此区分成功启动与 exec 前失败。
-        from_child, to_parent = IO.pipe
+        # 管道返回到多重赋值之间也属于接管区间，确保 ensure 始终能找到两个端点。
+        Thread.handle_interrupt(Object => :never) { from_child, to_parent = IO.pipe }
         to_parent.close_on_exec = true
         @command = command.map { |part| part.dup.freeze }.freeze
         # 原生 fork 返回后先登记 PID，再交付线程中断或终止，避免清理时遗漏新子进程。
@@ -397,6 +399,7 @@ module Expect
       @buffer_discarded_bytes = 0
       @outputs = []
       @sequences = {}
+      @literal_prefix_tables = {}
       @pending_writes = []
       @interact_inputs = {}.compare_by_identity
       @interact_output = nil

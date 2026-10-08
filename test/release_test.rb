@@ -28,6 +28,26 @@ class ReleaseTest < Minitest::Test
     assert_nil Release.validate_readme!(readme, Expect::VERSION)
   end
 
+  def test_gem_metadata_describes_the_ruby_gem_without_an_upstream_name
+    spec = Gem::Specification.load(File.expand_path("../expect-pty.gemspec", __dir__))
+
+    assert_equal "Ruby PTY automation for interactive programs", spec.summary
+    assert_operator spec.summary.length, :<=, 100
+    refute_match(/expect\.pm|perl/i, "#{spec.summary} #{spec.description}")
+    assert_equal "https://github.com/gatework/expect-ruby", spec.homepage
+    assert_equal "#{spec.homepage}/blob/main/docs/API.md", spec.metadata.fetch("documentation_uri")
+  end
+
+  def test_english_readme_is_the_default_and_links_to_the_chinese_version
+    readme = File.read(File.expand_path("../README.md", __dir__))
+
+    assert_match(/\A# expect-ruby\n/, readme)
+    assert_includes readme, "[English](README.md) · [简体中文](README.zh-CN.md)"
+    assert_includes readme, "A Ruby library for automating interactive programs"
+    refute_match(/expect\.pm/i, readme)
+    refute_match(/expect\.pm/i, File.read(File.expand_path("../README.zh-CN.md", __dir__)))
+  end
+
   def test_readme_version_validation_rejects_stale_installation_examples
     Release.validate_readme!(%(gem "expect-pty", "~> 0.5.3"), "0.5.3")
     Release.validate_readme!("gem build --output tmp/expect-pty-0.5.3.gem", "0.5.3")
@@ -37,7 +57,8 @@ class ReleaseTest < Minitest::Test
 
   def test_package_contains_runtime_types_and_user_docs_without_development_material
     spec = Gem::Specification.load(File.expand_path("../expect-pty.gemspec", __dir__))
-    %w[lib/expect/session.rb lib/expect/cleanup.rb sig/expect.rbs docs/API.md docs/MIGRATION.md].each do |path|
+    %w[lib/expect/session.rb lib/expect/cleanup.rb sig/expect.rbs README.md README.zh-CN.md docs/API.md
+       docs/COMPATIBILITY.md docs/MIGRATION.md].each do |path|
       assert_includes spec.files, path
     end
     assert_empty spec.files.grep(%r{\A(?:test/|benchmark/|examples/|script/|Gemfile|Rakefile|\.rubocop)})

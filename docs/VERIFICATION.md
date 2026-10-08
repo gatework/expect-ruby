@@ -1,5 +1,56 @@
 # 验证记录
 
+## 2026-10-08：长字面转义前缀扫描
+
+本轮在上一轮未提交工作树上继续优化 `Interaction.queue_input` 的字面转义尾部扫描。冻结基线是本轮开始时保存的源码；候选只增加增量 KMP
+前缀表和其会话内缓存，不新增依赖或公开 API。规则替换时移除已不再使用的表，避免临时 `interact` 转义规则在会话内累积。
+
+回归对照在 2 KiB 重复前缀和末尾不匹配的数据上，冻结基线执行 2,048 次 `end_with?` 比较，候选执行 0 次；另用 200 个固定种子的
+二进制键/缓冲样本对照最长后缀参考算法，覆盖表逐步扩展及规则替换后的缓存释放。
+真实 `Expect.interconnect` 同脚本基准中，65,536 字节长规则未命中由 166.315 ms / 164,064 分配降至 14.387 ms / 219 分配。
+完整负载、运行版本、源码 SHA-256 和边界见 [性能记录](PERFORMANCE.md#长字面转义前缀扫描2026-10-08)；样本保存在
+`tmp/075-round2/relay-prefix-{baseline,candidate}.json`。
+
+macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20 和 Linux aarch64 / Ruby 3.4.10 / Bundler 4.0.20 均通过 `bash script/ci`：
+各为 **491 runs / 8,283 assertions**，零失败、错误或跳过；79 个文件 RuboCop、API/YARD/RBS、示例、五组基准 smoke、Gem 构建和
+普通 RubyGems / 最小 Bundler 应用的隔离安装全部通过。Linux 使用冻结锁文件安装。已有测试替身方法重定义及本机 RDoc 版本告警仍会输出。
+本轮未提交、发布或运行远端 CI。
+
+## 2026-10-08：资源接管、日志交接与声明编译
+
+基线为 `4313ee212b61e761e524689b3196938438154f7f`（0.7.4），本轮修改保留在 Unreleased，未提交或发布。
+审查覆盖 Session/资源账本、Matcher/声明与结果、Relay/发送游标、Logging/Redactor，以及 API、测试、CI 和打包边界。
+采用已有资源账本与 Ruby 的短范围中断屏蔽、冻结 Array/身份 Hash 编译声明，未增加运行依赖或公共配置。
+
+- PTY.open、IO.pipe 创建与局部登记组成不可被异步中断拆开的接管区间；工厂先持有对象再初始化，未初始化对象也能安全退出。
+  使用真实句柄及 TracePoint，在原生返回、初始化前后由另一线程执行 raise/kill，验证关闭责任与异常身份；用户初始化协议仍可中断。
+- write_transcript 在全部对象转换结束后选定目标，整条补记及脱敏尾部归同一流；转换期间禁用目标不会向旧流补写。
+- PatternList 冻结时编译纯文本组、完整来源及共享 EOF 组索引，保持默认无模式来源、身份顺序、显式 freeze 和列表复用。
+  四个独立复审角度发现并修复了候选中“浅冻结被误判为已编译”的回归，最终架构与操作序列复审无新增发现。
+
+新增 16 个测试方法，并将两项工厂清理测试改为真实工厂/子进程验证。相同的 resource_acquisition、pattern_compilation、
+diagnostics 测试在独立基线和候选上分别为 **38 runs / 216 assertions / 9 failures** 与
+**38 runs / 238 assertions / 0 failures**，均无错误或跳过。9 个红灯包含多种中断路径及性能扫描不变量，不等同于 9 类缺陷。
+
+冻结候选的 107 个源文件与锁文件逐字节核对后执行完整 `bash script/ci`：
+
+| 环境 | 结果 |
+|------|------|
+| macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20，独立源码目录 | 488 runs / 8,073 assertions，零失败、错误或跳过 |
+| Linux aarch64 / Ruby 3.4.10 / Bundler 4.0.20，独立容器副本、冻结锁文件安装 | 488 runs / 8,073 assertions，零失败、错误或跳过 |
+
+两套环境均通过 79 文件 RuboCop、API/YARD/RBS、示例对话、五组基准 smoke、Gem 构建，以及普通 RubyGems 和最小 Bundler
+应用的隔离安装；两种安装均运行真实本地 PTY。两份包各含 21 个文件，逐字节匹配当前源码及 gemspec 清单。
+macOS 测试包 SHA-256 为 `93f86d420320317894809bb3f58a8f00e2da29d43d69887ebeb2b8359bb3fe56`，
+Linux 测试包为 `848115a5cffe235817bb34171ff84b1510bcb6fc75ec8cf9e5b207c34908d557`；它们是本地开发产物，不是已发布的 0.7.4 包。
+
+512 来源 EOF 的 ABBA 对照耗时降低约 81%–82%，包含每次声明编译的公开入口保留收益；单来源新建 EOF 声明增加约
+0.3–0.4 微秒/次。完整规模、分配量与非线性调度边界见 [性能记录](PERFORMANCE.md#eof-声明编译与公共入口2026-10-07)。
+原始证据在 `tmp/075-review/`：`baseline-regressions.log`、`candidate-regressions.log`、`ci-macos40.log`、`ci-linux34.log`、
+`candidate.json`、`package.json`、`package-linux34.json` 和 `final-*.json`。完整门禁后仅补充本验证记录，不改变运行代码或包内容。
+macOS 首次独立目录检查误用系统 Ruby，显式指定 Homebrew Ruby 后重跑通过；成功日志仍有本机 RDoc 重复加载及测试替身警告。
+本轮未运行远端 Actions、真实 SSH、设备或生产负载，也未声称完成四组合远端版本矩阵。
+
 ## 2026-10-06：0.7.4 发布候选
 
 归档本轮三项修复至 0.7.4，并同步版本常量、安装示例和发布说明后，重新运行 `bash script/ci`，退出 0。

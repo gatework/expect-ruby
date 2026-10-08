@@ -102,7 +102,7 @@ module Expect
         end
 
         # 暂存可能构成字面转义的最长后缀，保证 STOP 分两次读取时 ST 不会提前发给子进程。
-        held = final ? 0 : hold_literal_prefix(buffer, sequences)
+        held = final ? 0 : hold_literal_prefix(buffer, sequences, session.literal_prefix_tables)
         return :timeout if expired?(deadline)
 
         count = [buffer.bytesize - held, READ_SIZE].min
@@ -174,19 +174,62 @@ module Expect
     end
 
     # 只暂存可能拼成完整字面转义的最长后缀。
-    def self.hold_literal_prefix(buffer, sequences)
+    def self.hold_literal_prefix(buffer, sequences, prefix_tables = {})
       held = 0
       sequences.each_key do |key|
         next if key.is_a?(Regexp)
 
-        [key.bytesize - 1, buffer.bytesize].min.downto(1) do |prefix_length|
-          next unless buffer.end_with?(key.byteslice(0, prefix_length))
-
-          held = [held, prefix_length].max
-          break
-        end
+        prefix_length = literal_prefix_suffix(buffer, key, prefix_tables)
+        held = prefix_length if prefix_length > held
       end
       held
+    end
+
+    # KMP 在缓冲尾部寻找规则前缀，长规则只扫描相关字节一次，避免逐短前缀反复复制和比较。
+    # 短规则使用原生字符串操作，避免为小输入建立前缀表。
+    def self.literal_prefix_suffix(buffer, key, prefix_tables = {})
+      maximum = [key.bytesize - 1, buffer.bytesize].min
+      return 0 unless maximum.positive?
+      return short_literal_prefix_suffix(buffer, key, maximum) if maximum < 64
+
+      failure = key.frozen? ? (prefix_tables[key] ||= []) : []
+      literal_prefix_failure_table(key, failure, maximum)
+      matched = 0
+      index = buffer.bytesize - maximum
+      while index < buffer.bytesize
+        byte = buffer.getbyte(index)
+        matched = failure[matched - 1] while matched.positive? && byte != key.getbyte(matched)
+        matched += 1 if byte == key.getbyte(matched)
+        index += 1
+      end
+      matched
+    end
+
+    def self.literal_prefix_failure_table(key, failure, length)
+      failure << 0 if failure.empty?
+      matched = failure.last
+      index = failure.length
+      while index < length
+        byte = key.getbyte(index)
+        if byte == key.getbyte(matched)
+          matched += 1
+          failure << matched
+          index += 1
+        elsif matched.positive?
+          matched = failure[matched - 1]
+        else
+          failure << 0
+          index += 1
+        end
+      end
+      failure
+    end
+
+    def self.short_literal_prefix_suffix(buffer, key, maximum)
+      maximum.downto(1) do |length|
+        return length if buffer.end_with?(key.byteslice(0, length))
+      end
+      0
     end
 
     # 已转发历史有界保留，固定 UTF-8 正则不能从续字节开始匹配。
@@ -200,7 +243,9 @@ module Expect
       history.slice!(0) while (byte = history.getbyte(0)) && (0x80..0xBF).cover?(byte)
     end
 
-    private_class_method :expired?, :handle_escape, :scan_sequences, :hold_literal_prefix, :trim_history
+    private_class_method :expired?, :handle_escape, :scan_sequences, :hold_literal_prefix,
+                         :literal_prefix_suffix, :literal_prefix_failure_table,
+                         :short_literal_prefix_suffix, :trim_history
 
     # 为当前数据块冻结目标选择并各建一个发送游标；此后修改 outputs 只影响后续数据。
     # 调用方须先排空旧游标；显示转换也只做一次，短写重试时不能重复转换 CRLF。
@@ -219,7 +264,16 @@ module Expect
 
     # 仅供转接内部保存和恢复注册表，避免公开可变 Hash 绕过 on_sequence 的校验。
     # @api private
-    attr_accessor :sequences
+    attr_reader :sequences
+
+    # @api private
+    def sequences=(sequences)
+      @sequences = sequences
+      @literal_prefix_tables&.delete_if { |sequence, _table| !sequences.key?(sequence) }
+    end
+    # 冻结字面规则对应的 KMP 前缀表，跨转接复用，避免每个读块重新编译长规则。
+    # @api private
+    attr_reader :literal_prefix_tables
     # 让同步写入的背压读取遵守当前转接的数据所有权，退出后恢复普通匹配缓冲。
     # @api private
     attr_accessor :interaction_buffer

@@ -123,21 +123,31 @@ class CleanupTest < ExpectTest
   end
 
   def test_spawn_block_error_is_preserved_and_child_reaped_when_cleanup_also_fails
-    inherited_constructor = !Expect::Session.singleton_methods(false).include?(:new)
-    session = stubborn_child
+    master, slave = PTY.open
+    @ios.push(master, slave)
     failure = ArgumentError.new("block failed")
-    Expect::Session.stub(:new, session) do
-      session.stub(:spawn, session) do
-        session.to_io.stub(:close, -> { raise IOError, "reader close failed" }) do
-          error = assert_raises(ArgumentError) { Expect.spawn("already started") { raise failure } }
-          assert_same failure, error
-          assert_nil session.pid
+    session = nil
+    close = master.method(:close)
+    fail_close = false
+    PTY.stub(:open, [master, slave]) do
+      master.stub(:close, lambda {
+        raise IOError, "reader close failed" if fail_close
+
+        close.call
+      }) do
+        error = assert_raises(ArgumentError) do
+          Expect.spawn(RbConfig.ruby, "--disable-gems", "-e",
+                       'STDOUT.sync = true; Signal.trap("HUP", "IGNORE"); puts "ready"; sleep 60', raw: true) do |child|
+            session = child
+            @sessions << child
+            assert child.expect("ready", timeout: 2).matched?
+            fail_close = true
+            raise failure
+          end
         end
+        assert_same failure, error
+        assert_nil session.pid
       end
-    end
-  ensure
-    if inherited_constructor && Expect::Session.singleton_methods(false).include?(:new)
-      Expect::Session.singleton_class.remove_method(:new)
     end
   end
 

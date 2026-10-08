@@ -76,6 +76,50 @@ class RelayHistoryTest < ExpectTest
     assert_equal "tail", session.buffer
   end
 
+  def test_long_literal_prefix_scan_matches_the_longest_possible_suffix
+    key = "#{"a" * 2048}!".b
+    sequences = { key.freeze => nil }
+    prefix_tables = {}
+    comparisons = 0
+    buffer = "#{"a" * 128}?".b
+    buffer.define_singleton_method(:end_with?) do |*_arguments|
+      comparisons += 1
+      false
+    end
+
+    assert_equal 0, Expect::Interaction.send(:hold_literal_prefix, buffer, sequences, prefix_tables)
+    table = prefix_tables.fetch(key)
+    assert_equal 129, table.length
+    assert_equal 2048, Expect::Interaction.send(:hold_literal_prefix, "a" * 2048, sequences, prefix_tables)
+    assert_same table, prefix_tables.fetch(key)
+    assert_equal 2048, table.length
+    assert_equal 0, comparisons
+  end
+
+  def test_literal_prefix_scan_matches_reference_for_binary_suffixes
+    random = Random.new(47)
+    200.times do
+      key = Array.new(random.rand(1..100)) { random.rand(4) }.pack("C*")
+      buffer = Array.new(random.rand(0..120)) { random.rand(4) }.pack("C*")
+      expected = (1...[key.bytesize, buffer.bytesize + 1].min).to_a.reverse.find do |length|
+        buffer.end_with?(key.byteslice(0, length))
+      end || 0
+
+      assert_equal expected, Expect::Interaction.send(:literal_prefix_suffix, buffer, key)
+    end
+  end
+
+  def test_replacing_escape_rules_releases_unused_prefix_tables
+    session, = pipe_session
+    session.on_sequence("#{"a" * 256}!")
+    Expect::Interaction.send(:hold_literal_prefix, "a" * 64, session.sequences,
+                             session.literal_prefix_tables)
+
+    refute_empty session.literal_prefix_tables
+    session.__send__(:sequences=, {})
+    assert_empty session.literal_prefix_tables
+  end
+
   def test_nested_match_preserves_unconsumed_relay_tail_and_clears_consumed_history
     session, producer = pipe_session
     output = StringIO.new

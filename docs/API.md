@@ -96,6 +96,7 @@ Logger 自身控制级别和格式。INFO 记录生命周期/匹配，DEBUG 增�
 
 `transcript=` 接收 nil 或 writer；路径打开、权限和关闭由调用方通过 File.open 管理，不接收路径或 callable。
 `write_transcript(*objects)` 补写接收记录并返回 nil；不发送到子进程。writer 必须返回实际接受的正整数字节数，支持短写。
+调用开始时没有 transcript 则不转换参数；对象的 `to_s` 若切换目标，整条补记及脱敏尾部使用转换完成后的目标，禁用目标则不写入。
 logger、transcript、outputs 一律借用，显式关闭冲刷过滤尾部，但不会关闭这些目标。
 
 `redact(*secrets)` 追加非空字符串，仅过滤 transcript 和诊断，不更改匹配、Result 或 outputs。
