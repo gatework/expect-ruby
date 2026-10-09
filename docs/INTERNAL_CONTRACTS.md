@@ -10,6 +10,7 @@ Expect::Session 本身是公开接口；本文所列状态与标为 `@api privat
 | `session.rb`                                    | PTY 生命周期、缓冲、直接读写和结果状态；组合记录、诊断及交互模块 |
 | `cleanup.rb`                                    | 异常优先级与始终/失败清理作用域                                  |
 | `pattern.rb`、`pattern_list.rb`、`result.rb`    | 字节定位、声明顺序及原生结果值                                   |
+| `literal_prefix.rb`                             | 转义暂存与流尾脱敏共享的字节前缀计算，不持有会话或 IO              |
 | `matcher.rb`                                    | 一次等待的匹配、事件派发和期限                                   |
 | `session_resources.rb`                          | 所属 IO 与直属子进程的所有权账本和 GC 兜底                       |
 | `logging.rb`                                    | 借用 logger/transcript/outputs 及同步输出；不拥有目标            |
@@ -124,6 +125,10 @@ Session.allocate 或资源账本构造本身也可能被中断。会话未建立
 Cleanup 仍按上述主异常规则处理。失败资源继续持有，后续关闭可重试。GC
 终结器独立尝试句柄关闭和非阻塞回收，常规清理错误不向外传播。终结器不能强引用会话本身。
 
+Session 的资源关闭与 Logging 的 `finish_logging` 使用嵌套 Cleanup 作用域：进程等待或句柄关闭已失败时，日志中的
+StandardError 不能覆盖该异常；没有前序失败时，诊断错误先于后续 transcript 错误。两个日志目标都须尝试收尾，
+新的 Interrupt/SystemExit 仍优先传播。日志模块负责冲刷及解除 transcript 引用，Session 不重复实现异常优先级。
+
 `SessionResources#reap` 只做一次非阻塞系统调用，EINTR 交给所属流程决定：主会话 `process_status` 返回当前未知/缓存状态，
 `wait_for_child` 沿用阶段开始时的绝对期限，并在重试间休眠。自然等待、TERM 等待分别使用调用方预算，硬关闭的 KILL 阶段保留 1
 秒预算；
@@ -181,6 +186,10 @@ ActiveSupport 兼容对象可直接注入，不引入框架依赖，也不再包
 默认替换标记为 `[FILTERED]`，上层库可显式指定自己的标记。类方法 `redact` 使用独立流并以 `finish(partial: false)` 结束完整文本；
 `append`/`finish` 的默认流策略仍隐藏末尾疑似秘密前缀。作用域所有权、终端渲染和异常字段选择由调用方负责。
 
+流尾疑似秘密与字面转义的潜在后缀共享 LiteralPrefix，输入与规则均为二进制字节串，只计算最长真前缀，不修改或保存输入。
+先按尾字节排除不可能候选，再直接比较最长候选；歧义长尾用 KMP 保证线性扫描，短尾使用有界的原生字符串比较。
+转义前缀表仍按会话内冻结规则缓存和按规则替换清理；Redactor 只在本次 finish 建表，不持有转接状态或规则缓存。
+
 EOF 结束接收流，日志或诊断目标替换先冲刷旧流，显式关闭结束所有方向；尾部疑似秘密前缀保守隐藏。GC
 只清理所属资源，不执行用户回调或过滤尾部输出。调用方需显式关闭以交付尾部；借用 transcript、logger 和 outputs
 不关闭，文件权限、打开与关闭全部由调用方负责。
@@ -227,6 +236,7 @@ RelayWriter 在底层确认短写后先推进游标，再提交目标 Session �
 | 转接历史连续性、显式输入边界、非消费匹配与内部交接；慢速发送的外层累计进度                      | relay_history_test、write_contract_test                         |
 | 原生句柄与工厂接管前后的线程中断、终止，用户初始化协议仍可中断                                  | resource_acquisition_test                                     |
 | 编译后的 EOF 身份和顺序、默认无模式来源、显式冻结、列表复用与回调状态变化                         | pattern_compilation_test                                      |
+| 关闭时进程/句柄/双日志的异常优先级、fatal 中断；长部分秘密、字节后缀与前缀表复用                 | cleanup_priority_test、redactor_test、relay_history_test       |
 
 ## 既有回归入口
 

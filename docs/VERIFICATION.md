@@ -1,5 +1,49 @@
 # 验证记录
 
+## 2026-10-09：0.7.6 发布候选
+
+归档关闭异常优先级修复和共享字节前缀优化至 0.7.6，同步版本常量与发布说明后，运行
+`bundle exec ruby script/release.rb --dry-run`，退出 0。该命令执行完整 `bash script/ci`，并核对候选包内容。
+macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20 上为 **498 runs / 8,437 assertions**，零失败、错误或跳过；
+81 文件 RuboCop、API/YARD/RBS、示例、五组基准 smoke，以及普通 RubyGems / 最小 Bundler 应用的隔离安装全部通过。
+两种安装均运行真实本地 PTY；包内 24 个文件与源码和 gemspec 清单一致，包含新增内部前缀模块。
+
+日志为 `tmp/release/0.7.6/local-dry-run.log`，本地候选 SHA-256 为
+`a8dbfdfffa2f463ef425ac8fad4d96f5409f437b4ffd7f6f44bcb690014c6089`。
+正式发布由标签工作流完成，使用其四环境检查通过后保存的原始 CI 产物；本地候选仅用于发布预检。
+
+## 2026-10-09：关闭异常优先级与共享字节前缀
+
+基线为 `ff9ae89decc1f27e80fc1262475dcf95022d1d02`（0.7.5），起始工作树干净。审查覆盖工厂、Session/资源账本、
+Matcher/声明/结果、Relay/发送游标、Logging/Redactor，以及相应测试、基准、API 与打包边界；修改保留在 Unreleased。
+
+- 资源关闭复用 Cleanup 作用域，Logging 负责日志收尾。进程等待、Interrupt/SystemExit、句柄关闭的主异常不会被
+  日志 StandardError 覆盖；两个日志目标都尝试收尾，后续新发生的致命中断仍传播。新增四项测试在旧代码上得到
+  **4 runs / 8 assertions / 3 failures**；修复后纳入完整门禁全部通过。
+- 转义暂存与流尾脱敏共用无 IO 的 LiteralPrefix，保持字节语义与最长真前缀规则。长近似前缀改为线性扫描，
+  完整前缀和无候选尾部保持快速路径；新增长二进制秘密在多种分块与 partial 策略下的独立参考对照。
+  前缀缓存仍由转义会话持有，规则替换会释放不用的表；未新增公开接口或依赖。
+- 独立只读复审覆盖完整补丁及 Matcher/PatternList 调用方，未报告新增缺陷；另在主验证进程对照冻结基线执行
+  1,000 条流的 40,000 次 append、suppress、规则替换、两种 finish 交错操作及 1,000 次最终冲刷，输出逐次一致。
+
+从基线建立独立工作树，仅应用本轮修改，110 个源码、配置与锁文件逐字节核对后执行 `bash script/ci`：
+
+| 环境 | 结果 |
+|------|------|
+| macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20，独立工作树 | 498 runs / 8,437 assertions，零失败、错误或跳过 |
+| Linux aarch64 / Ruby 3.4.10 / Bundler 4.0.20，独立容器副本、冻结锁文件 | 498 runs / 8,437 assertions，零失败、错误或跳过 |
+
+两套完整命令均退出 0，包含 81 文件 RuboCop、API/YARD/RBS、示例对话、五组基准 smoke、Gem 构建，以及普通 RubyGems
+和最小 Bundler 应用的隔离安装；两种安装均运行真实本地 PTY。包内 24 个文件与 gemspec 清单及当前源码逐字节一致，
+包括新增内部前缀模块。macOS 包 SHA-256 为 `9de07352c3b261ad47ef6d37d248477cadabfdaa03ec3d77e4d93cffd3d95bb6`，
+Linux 包为 `22cef11a5801058890648d393b0087f7b9f5eeaf52e49646e983630e49528a45`；均为未发布的本地开发产物。
+
+ABBA 性能对照中，64 KiB 近似秘密前缀耗时降低约 90.5%，无候选字面转义完整转接降低约 99%；
+输入规模、迭代数、对象分配及测量限制见 [性能记录](PERFORMANCE.md#共享字节前缀与流尾脱敏2026-10-09)。
+原始证据位于忽略目录 `tmp/review-20261009/`：两套 `ci-*.log`、退出状态、两份 `package-*.json`、
+`snapshot.json`、`stream-differential.rb`/`.log` 及八份性能报告。完整门禁后仅补充不随 Gem 分发的性能与本验证记录。
+已有测试替身重定义及本机 RDoc 重复加载告警仍有输出；本轮未运行远端 CI、真实 SSH 或设备负载，也未提交、推送或发布。
+
 ## 2026-10-08：长字面转义前缀扫描
 
 本轮在上一轮未提交工作树上继续优化 `Interaction.queue_input` 的字面转义尾部扫描。冻结基线是本轮开始时保存的源码；候选只增加增量 KMP

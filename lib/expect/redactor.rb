@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "literal_prefix"
+
 module Expect
   # 单个日志字节流的过滤器。保留最长秘密长度减一的尾部，跨 write/read 分片仍可识别。
   # 掩码与原字节一起留存；重叠命中的区间取并集，已经输出的掩码不重复生成。
@@ -78,20 +80,13 @@ module Expect
 
     # 流关闭时无法再等待后续字节，默认隐藏与秘密开头一致的未完成尾部。
     def mark_partial_secrets
-      tail = @pending.byteslice(-1, 1)
-      return unless tail
+      return if @pending.empty?
 
       @patterns.each do |pattern|
-        length = [pattern.bytesize - 1, @pending.bytesize].min
-        # 前缀必须以当前尾字节结束；只收紧最高候选长度，密集候选仍沿用简单倒序扫描。
-        next unless length.positive? && (offset = pattern.rindex(tail, length - 1))
+        length = LiteralPrefix.length(@pending, pattern)
+        next unless length.positive?
 
-        (offset + 1).downto(1) do |candidate|
-          next unless @pending.end_with?(pattern.byteslice(0, candidate))
-
-          @hidden[-candidate, candidate] = "\1" * candidate
-          break
-        end
+        @hidden[-length, length] = "\1" * length
       end
     end
 

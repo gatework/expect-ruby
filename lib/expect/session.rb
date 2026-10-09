@@ -503,30 +503,26 @@ module Expect
         failure ||= error
         nil
       end
-      # IO 关闭与进程退出独立记录：软关闭可能已经 closed?，但仍保留活跃 PID。
-      cleanup.call { @resources.close_handles }
-      @closed = true
-      @interact_inputs&.delete_if do |_io, input|
-        cleanup.call do
-          input.close(graceful: false)
-          true
+      # 日志收尾是本作用域的清理：不能覆盖进程等待/中断或已记录的句柄错误。
+      Cleanup.always(-> { finish_logging }) do
+        # IO 关闭与进程退出独立记录：软关闭可能已经 closed?，但仍保留活跃 PID。
+        cleanup.call { @resources.close_handles }
+        @closed = true
+        @interact_inputs&.delete_if do |_io, input|
+          cleanup.call do
+            input.close(graceful: false)
+            true
+          end
         end
+        @interact_output = nil
+        @pending_writes&.clear
+        @relay_history&.clear
+        @relay_callback = nil
+        status = close_child(timeout:, term_timeout:, force:)
+        raise failure if failure
+
+        status
       end
-      @interact_output = nil
-      @pending_writes&.clear
-      @relay_history&.clear
-      @relay_callback = nil
-      status = close_child(timeout:, term_timeout:, force:)
-      completed = true
-      status
-    ensure
-      begin
-        cleanup.call { flush_diagnostics }
-      ensure
-        cleanup.call { self.transcript = nil }
-      end
-      # 用本次流程的完成状态判断异常传播，不能误把调用者 rescue 中的异常当成当前错误。
-      raise failure if failure && completed
     end
 
     # 句柄清理失败不改变进程策略；未回收 PID 保留给重复关闭或终结器继续处理。

@@ -69,6 +69,15 @@ RedactorBenchmark.measure(runner, "long_tail_without_prefix", "#{tail}b", ["#{ta
 RedactorBenchmark.measure(runner, "long_tail_dense_candidates", "#{half_tail}c#{half_tail}",
                           ["#{tail}bc"], "#{half_tail}c[FILTERED]", partial: true, iterations: 100)
 
+# 长秘密的尾部逐个排除近似前缀时，必须避免平方扫描；完整前缀也单独覆盖，防止优化拖慢常见命中。
+prefix_size = runner.smoke ? 128 : 65_536
+prefix = "a" * prefix_size
+near_prefix = "#{"a" * (prefix_size - 2)}ba"
+RedactorBenchmark.measure(runner, "long_tail_near_prefix", near_prefix, ["#{prefix}!"],
+                          "#{near_prefix.byteslice(0...-1)}[FILTERED]", partial: true)
+RedactorBenchmark.measure(runner, "long_tail_full_prefix", prefix, ["#{prefix}!"],
+                          "[FILTERED]", partial: true)
+
 runner.measure("update_pending", bytes: 10, inputs: { update: "keep old mask and match new secret" },
                                  verify: lambda { |output|
                                    ExpectBenchmark.check(output == "[FILTERED]!")

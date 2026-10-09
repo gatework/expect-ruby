@@ -2,6 +2,7 @@
 
 require_relative "relay_writer"
 require_relative "relay"
+require_relative "literal_prefix"
 
 # 为会话补充人工接管和多路 IO 转接；核心会话定义位于 session.rb。
 module Expect
@@ -179,57 +180,10 @@ module Expect
       sequences.each_key do |key|
         next if key.is_a?(Regexp)
 
-        prefix_length = literal_prefix_suffix(buffer, key, prefix_tables)
+        prefix_length = LiteralPrefix.length(buffer, key, prefix_tables)
         held = prefix_length if prefix_length > held
       end
       held
-    end
-
-    # KMP 在缓冲尾部寻找规则前缀，长规则只扫描相关字节一次，避免逐短前缀反复复制和比较。
-    # 短规则使用原生字符串操作，避免为小输入建立前缀表。
-    def self.literal_prefix_suffix(buffer, key, prefix_tables = {})
-      maximum = [key.bytesize - 1, buffer.bytesize].min
-      return 0 unless maximum.positive?
-      return short_literal_prefix_suffix(buffer, key, maximum) if maximum < 64
-
-      failure = key.frozen? ? (prefix_tables[key] ||= []) : []
-      literal_prefix_failure_table(key, failure, maximum)
-      matched = 0
-      index = buffer.bytesize - maximum
-      while index < buffer.bytesize
-        byte = buffer.getbyte(index)
-        matched = failure[matched - 1] while matched.positive? && byte != key.getbyte(matched)
-        matched += 1 if byte == key.getbyte(matched)
-        index += 1
-      end
-      matched
-    end
-
-    def self.literal_prefix_failure_table(key, failure, length)
-      failure << 0 if failure.empty?
-      matched = failure.last
-      index = failure.length
-      while index < length
-        byte = key.getbyte(index)
-        if byte == key.getbyte(matched)
-          matched += 1
-          failure << matched
-          index += 1
-        elsif matched.positive?
-          matched = failure[matched - 1]
-        else
-          failure << 0
-          index += 1
-        end
-      end
-      failure
-    end
-
-    def self.short_literal_prefix_suffix(buffer, key, maximum)
-      maximum.downto(1) do |length|
-        return length if buffer.end_with?(key.byteslice(0, length))
-      end
-      0
     end
 
     # 已转发历史有界保留，固定 UTF-8 正则不能从续字节开始匹配。
@@ -243,9 +197,7 @@ module Expect
       history.slice!(0) while (byte = history.getbyte(0)) && (0x80..0xBF).cover?(byte)
     end
 
-    private_class_method :expired?, :handle_escape, :scan_sequences, :hold_literal_prefix,
-                         :literal_prefix_suffix, :literal_prefix_failure_table,
-                         :short_literal_prefix_suffix, :trim_history
+    private_class_method :expired?, :handle_escape, :scan_sequences, :hold_literal_prefix, :trim_history
 
     # 为当前数据块冻结目标选择并各建一个发送游标；此后修改 outputs 只影响后续数据。
     # 调用方须先排空旧游标；显示转换也只做一次，短写重试时不能重复转换 CRLF。

@@ -87,6 +87,12 @@ module Expect
 
     private
 
+    # 关闭时两种记录都要尝试完成；后续 writer 的常规异常不能覆盖先发生的诊断异常。
+    # 不关闭借用目标，新的 Interrupt/SystemExit 仍由 Cleanup 原样传播。
+    def finish_logging
+      Cleanup.always(-> { self.transcript = nil }) { flush_diagnostics }
+    end
+
     # 向目标写入并在支持时立即 flush，使日志和终端输出及时可见。
     # 这里遵循同步写入协议，不受 Matcher 的 IO 等待期限中断；慢目标转接应使用 Relay。
     # 短写只推进已确认的字节数；目标抛错时不猜测它是否已经产生副作用。

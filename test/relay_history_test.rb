@@ -80,20 +80,15 @@ class RelayHistoryTest < ExpectTest
     key = "#{"a" * 2048}!".b
     sequences = { key.freeze => nil }
     prefix_tables = {}
-    comparisons = 0
-    buffer = "#{"a" * 128}?".b
-    buffer.define_singleton_method(:end_with?) do |*_arguments|
-      comparisons += 1
-      false
-    end
+    buffer = "#{"a" * 127}ba".b
 
-    assert_equal 0, Expect::Interaction.send(:hold_literal_prefix, buffer, sequences, prefix_tables)
+    assert_equal 1, Expect::Interaction.send(:hold_literal_prefix, buffer, sequences, prefix_tables)
     table = prefix_tables.fetch(key)
     assert_equal 129, table.length
     assert_equal 2048, Expect::Interaction.send(:hold_literal_prefix, "a" * 2048, sequences, prefix_tables)
+    assert_equal 1, Expect::Interaction.send(:hold_literal_prefix, "#{"a" * 2046}ba", sequences, prefix_tables)
     assert_same table, prefix_tables.fetch(key)
     assert_equal 2048, table.length
-    assert_equal 0, comparisons
   end
 
   def test_literal_prefix_scan_matches_reference_for_binary_suffixes
@@ -105,14 +100,14 @@ class RelayHistoryTest < ExpectTest
         buffer.end_with?(key.byteslice(0, length))
       end || 0
 
-      assert_equal expected, Expect::Interaction.send(:literal_prefix_suffix, buffer, key)
+      assert_equal expected, Expect.const_get(:LiteralPrefix).length(buffer, key)
     end
   end
 
   def test_replacing_escape_rules_releases_unused_prefix_tables
     session, = pipe_session
     session.on_sequence("#{"a" * 256}!")
-    Expect::Interaction.send(:hold_literal_prefix, "a" * 64, session.sequences,
+    Expect::Interaction.send(:hold_literal_prefix, "#{"a" * 62}ba", session.sequences,
                              session.literal_prefix_tables)
 
     refute_empty session.literal_prefix_tables

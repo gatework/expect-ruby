@@ -1,5 +1,41 @@
 # 性能基准
 
+## 共享字节前缀与流尾脱敏（2026-10-09）
+
+基线为 `ff9ae89`（0.7.5），候选将转义暂存与流尾脱敏的最长真前缀计算集中到内部 LiteralPrefix。
+先用尾字节排除不可能候选，最长候选直接命中时立即返回；其余长尾使用 KMP，避免反复比较逐个缩短的前缀。
+前缀表空间随扫描窗口线性增长；转义按冻结规则复用缓存，脱敏只在本次 finish 建表。
+
+macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20，使用相同驱动、输入和依赖，按“基线 → 候选 → 候选 → 基线”串行运行，
+每轮五个样本。以下为每样本全部迭代的中位数区间，不同迭代数的行不能直接比较吞吐。
+
+| 工作负载 | 每样本迭代 | 基线 ms | 候选 ms | 基线 → 候选分配对象 |
+|----------|-----------:|--------:|--------:|--------------------:|
+| 64 KiB 近似秘密前缀，末尾仅一个字节仍为秘密前缀 | 5 | 413.664–416.220 | 39.257–39.283 | 327,781 → 106 |
+| 4 KiB 密集候选秘密长尾 | 100 | 46.431–49.717 | 44.165–44.995 | 206,901 → 2,101 |
+| 64 KiB 完整秘密前缀 | 5 | 0.155–0.155 | 0.136–0.147 | 101 → 96 |
+| 64 KiB 字面转义无匹配前缀，完整 interconnect | 100 | 1,440.394–1,450.788 | 15.037–15.063 | 21,825 → 22,201 |
+
+近似秘密前缀耗时降低约 90.5%；无候选字面转义无需进入 KMP，完整转接样本耗时降低约 99%，代价是每百次操作增加
+376 个临时对象。密集候选脱敏的主要收益是分配减少约 99%；完整前缀及无候选脱敏的亚毫秒样本不据此宣称稳定加速。
+其他静态、重叠、分片脱敏与普通转接负载也执行同一驱动的全部断言，时间存在波动，不宣称全部负载变快。
+
+新增 `long_tail_near_prefix` 与 `long_tail_full_prefix` 分别验证近似前缀退回及完整前缀快速路径，smoke 缩小到 128 字节。
+所有负载预热和每个样本后都验证完整输出、二次 finish 或转接余量。性能采样未并行运行全量测试，没有 CPU 隔离，
+这些结果不代表真实 SSH/设备吞吐，也不作为 CI 墙钟阈值。
+
+```sh
+bundle exec ruby benchmark/redactor.rb --library tmp/review-20261009/baseline/lib --samples 5 --output tmp/review-20261009/redactor-before.json
+bundle exec ruby benchmark/redactor.rb --samples 5 --output tmp/review-20261009/redactor-after.json
+bundle exec ruby benchmark/relay.rb --library tmp/review-20261009/baseline/lib --samples 5 --output tmp/review-20261009/relay-before.json
+bundle exec ruby benchmark/relay.rb --samples 5 --output tmp/review-20261009/relay-after.json
+```
+
+再以“候选 → 基线”的顺序各运行一次并使用 `-repeat.json` 输出。基线库 SHA-256 为
+`2193dd082b69b384af830ac015cd56b5d45c91d7f88b40bd5a30f7d83f54bd33`，候选为
+`79622cf22ecee94be3dfc1664014bfec48c1e05059f86680a74cb592a2d6aec3`；原始八份报告均位于忽略目录
+`tmp/review-20261009/`。基线通过 `git archive ff9ae89 lib` 冻结，候选的库摘要与报告一致。
+
 ## 0.7.0 测量边界
 
 本轮删除重复门面、全局配置和外部终端辅助进程，主要收益是缩小维护与故障处理边界；没有据此宣称吞吐提升。

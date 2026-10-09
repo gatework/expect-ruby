@@ -151,6 +151,29 @@ class RedactorTest < Minitest::Test
     assert_equal "[FILTERED]!", output
   end
 
+  def test_long_partial_secrets_preserve_binary_prefixes_and_exact_finish
+    binary = "\0\xff".b
+    patterns = ["#{"a" * 256}!".b, "#{binary * 128}!".b]
+    inputs = ["#{"a" * 254}ba".b, "#{binary * 100}?#{binary}".b,
+              "a" * 256, "prefix#{binary * 100}".b]
+    inputs.each do |input|
+      [true, false].each do |partial|
+        expected = reference_redact(input, patterns, partial:)
+        [1, 63, 128, input.bytesize].each do |chunk_size|
+          filter = Expect::Redactor.new(patterns)
+          actual = +"".b
+          (0...input.bytesize).step(chunk_size) do |offset|
+            actual << filter.append(input.byteslice(offset, chunk_size))
+          end
+          actual << filter.finish(partial:)
+
+          assert_equal expected, actual, "chunk_size=#{chunk_size} partial=#{partial}"
+          assert_empty filter.finish
+        end
+      end
+    end
+  end
+
   def test_rule_removal_keeps_hidden_pending_bytes_and_partial_finish_is_separate
     filter = Expect::Redactor.new(%w[aaaa long-pattern])
     assert_empty filter.append("aaaaa")
