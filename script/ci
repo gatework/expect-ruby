@@ -8,7 +8,7 @@ bundle exec ruby examples/dialogue.rb
 bundle exec ruby examples/auto_response.rb
 
 # 只检查小规模工作负载的正确性，不为共享 CI 机器设置性能阈值。
-for benchmark in matching relay send_slow scaling redactor; do
+for benchmark in matching relay send_slow scaling redactor logging dispatch; do
   bundle exec ruby "benchmark/${benchmark}.rb" --smoke
 done
 

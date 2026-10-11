@@ -4,6 +4,34 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class CleanupPriorityTest < ExpectTest
+  def test_eof_attempts_both_log_tails_and_preserves_the_first_failure
+    session, producer = pipe_session
+    calls = []
+    failure = RuntimeError.new("transcript tail failed")
+    session.redact("secret")
+    session.transcript = write_target do
+      calls << :transcript
+      raise failure
+    end
+    session.logger = diagnostic_logger do |event|
+      next unless event[:event] == :received
+
+      calls << :logger
+      raise ArgumentError, "diagnostic tail failed"
+    end
+    producer.write("sec")
+    session.read_available
+    producer.close
+
+    assert_same failure, assert_raises(RuntimeError) { session.read_available }
+    assert_equal %i[transcript logger], calls
+    assert session.eof?
+    assert_equal "sec", session.buffer
+    session.read_available
+    session.close
+    assert_equal %i[transcript logger], calls
+  end
+
   def test_process_failure_survives_failing_log_finalization
     [RuntimeError.new("wait failed"), Interrupt.new("wait interrupted"), SystemExit.new(17)].each do |primary|
       %i[logger transcript].each do |channel|

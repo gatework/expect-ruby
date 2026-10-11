@@ -57,6 +57,8 @@ module Expect
       mark_secrets
       mark_partial_secrets if partial
       output = release(@pending.bytesize)
+      # 已结束的流没有尚待抑制的字节，后续可见分片恢复普通路径；再次 suppress 时重新建立字节图。
+      @suppressed = nil
       @masking = false
       output
     end

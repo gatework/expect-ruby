@@ -4,6 +4,31 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class StreamContractTest < ExpectTest
+  def test_large_binary_records_preserve_short_writes_and_flush_once
+    %i[transcript outputs].each do |channel|
+      source, = pipe_session
+      bytes = "\0\xffabc\x80".b * 6000
+      received = "".b
+      flushes = 0
+      target = Object.new
+      target.define_singleton_method(:write) do |chunk|
+        count = [chunk.bytesize, 73].min
+        received << chunk.byteslice(0, count)
+        count
+      end
+      target.define_singleton_method(:flush) { flushes += 1 }
+      if channel == :transcript
+        source.transcript = target
+        source.write_transcript(bytes)
+      else
+        source.outputs = [target]
+        source.propagate(bytes)
+      end
+      assert_equal 1, flushes
+      assert_equal bytes, received
+    end
+  end
+
   def test_shared_reader_is_read_once_before_matching_a_bounded_window
     Tempfile.create("expect-shared-reader") do |io|
       io.binmode

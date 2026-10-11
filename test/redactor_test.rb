@@ -6,6 +6,20 @@ require "rbconfig"
 require_relative "../lib/expect/redactor"
 
 class RedactorTest < Minitest::Test
+  def test_finished_suppressed_stream_can_restart_with_visible_and_hidden_fragments
+    filter = Expect::Redactor.new(["secret"])
+    3.times do
+      assert_nil filter.suppress("private sec")
+      assert_equal "", filter.finish
+      visible = filter.append("visible ") + filter.finish
+      assert_equal "visible ", visible
+      assert_equal "", filter.append("sec")
+      assert_nil filter.suppress("ret")
+      assert_equal "!", filter.append("!") + filter.finish
+      assert_equal "", filter.finish
+    end
+  end
+
   def test_standalone_require_does_not_load_pty_or_allocate_a_session
     program = <<~RUBY
       require "expect/redactor"

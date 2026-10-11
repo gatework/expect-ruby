@@ -94,7 +94,7 @@ module Expect
           end
           patterns.each do |pattern|
             return nil if hard_expired?
-            next if stalled && stalled[:patterns].include?(pattern)
+            next if stalled && stalled[:patterns].key?(pattern)
 
             position = if pattern.value.is_a?(String)
                          locate_literal(session, pattern, buffer)
@@ -105,7 +105,8 @@ module Expect
             return nil if hard_expired?
             next unless position
 
-            return [session, pattern, position] unless @match_by_position
+            # 字节 0 已是最早位置，同位置仍由先声明者胜出；不再执行无法胜出的规则。
+            return [session, pattern, position] if !@match_by_position || position.first.zero?
 
             earliest = [session, pattern, position] if !earliest || position.first < earliest.last.first
           end
@@ -153,8 +154,11 @@ module Expect
 
       # 同值赋回仍须防止空转；嵌套读取到的新字节即使内容相同，也能恢复匹配。
       if session.received_bytes == received_bytes && session.scan_buffer == previous_buffer
-        stalled = (@stalled_matches[session] ||= { buffer: previous_buffer, received_bytes:, patterns: [] })
-        stalled[:patterns] << pattern
+        # 声明模式各有独立身份；恒定成本查询，避免重复继续时遍历不断增长的停滞数组。
+        stalled = (@stalled_matches[session] ||= {
+          buffer: previous_buffer, received_bytes:, patterns: {}.compare_by_identity
+        })
+        stalled[:patterns][pattern] = true
       end
       @deadline = next_deadline if CONTINUE.equal?(action)
       # 总期限到达时回主循环先派发已知 EOF；仅相对期限延续原有立即超时语义。

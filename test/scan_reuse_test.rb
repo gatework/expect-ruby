@@ -3,6 +3,48 @@
 require_relative "test_helper"
 
 class ScanReuseTest < ExpectTest
+  def test_each_stalled_declaration_runs_once_even_with_equal_pattern_values
+    session, = pipe_session
+    session.buffer = "x"
+    seen = []
+
+    result = session.expect(timeout: 0, consume: false) do |patterns|
+      128.times do
+        patterns.on("x") do |source|
+          seen << source.match_number
+          Expect.continue
+        end
+      end
+    end
+
+    assert result.timeout?
+    assert_equal (1..128).to_a, seen
+    assert_equal "x", session.buffer
+  end
+
+  def test_escape_scan_preserves_registration_ties_and_historical_offsets
+    first = -> { false }
+    second = -> { true }
+    scan = ->(buffer, sequences, history) { Expect::Interaction.send(:scan_sequences, buffer, sequences, history, final: true) }
+
+    result = scan.call("STOP".b, { "STOP".b => first, /STOP/n => second }, "".b)
+    assert_equal [[0, 4, first], true, false], result
+    result = scan.call("OPtail".b, { "OP".b => first, /STOP/n => second }, "ST".b)
+    assert_equal [[-2, 4, second], true, false], result
+  end
+
+  def test_escape_scan_still_validates_later_regexps_after_a_zero_position_winner
+    assert_raises(ArgumentError) do
+      Expect::Interaction.send(:scan_sequences, "STOP".b, { "STOP".b => nil, /(?=STOP)/ => nil }, "".b,
+                               final: true)
+    end
+    found, scanned, utf8 = Expect::Interaction.send(:scan_sequences, "STOP".b,
+                                                    { "STOP".b => nil, /确认/u => nil }, "".b, final: true)
+    assert_equal [0, 4, nil], found
+    assert scanned
+    assert utf8
+  end
+
   def test_terminal_match_without_callback_does_not_copy_a_progress_snapshot
     session, = pipe_session
     session.buffer = "output READY tail"

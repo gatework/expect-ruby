@@ -3,6 +3,31 @@
 require_relative "test_helper"
 
 class ResponderTest < ExpectTest
+  def test_completion_at_zero_does_not_scan_losing_utf8_rules
+    session, = pipe_session
+    session.buffer = "DONE\xff".b
+    rules = Expect::Responder.new.on(/确认/u) { flunk "irrelevant response" }
+
+    result = rules.expect(session, "DONE", timeout: 0)
+    assert_equal "DONE", result.match
+    assert_equal "\xff".b, result.after
+    assert_equal "\xff".b, session.buffer
+  end
+
+  def test_first_prompt_at_zero_is_answered_before_a_losing_utf8_rule
+    session, = pipe_session
+    session.buffer = "?DONE\xff".b
+    seen = []
+    rules = Expect::Responder.new do |responses|
+      responses.on("?") { |source| seen << source.match }
+      responses.on(/确认/u) { flunk "irrelevant response" }
+    end
+
+    assert_equal "DONE", rules.expect(session, "DONE", timeout: 1).match
+    assert_equal ["?"], seen
+    assert_equal "\xff".b, session.buffer
+  end
+
   def test_processes_prompts_in_input_order_and_preserves_the_tail
     session, = pipe_session
     session.buffer = "output:first?second?first?DONEtail"

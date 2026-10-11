@@ -53,7 +53,8 @@ module Expect
     def write_transcript(*objects)
       return unless transcript
 
-      data = objects.map { |object| object.to_s.b }.join
+      # 单对象沿用 Session#write 的转换路径，省去数组与 join；转换后仍重新取得目标。
+      data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join
       # to_s 可切换或禁用记录目标；整条记录与其过滤尾部必须属于转换完成后的同一目标。
       target = transcript
       return unless target

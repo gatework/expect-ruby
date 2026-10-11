@@ -137,25 +137,30 @@ module Expect
     def self.scan_sequences(buffer, sequences, history, final:)
       text = nil
       utf8_regexp = false
-      matches = sequences.filter_map do |key, handler|
+      earliest = nil
+      # 只保存最早候选，同位置不替换先注册者；仍扫描全部正则以校验零宽规则并收集编码状态。
+      sequences.each do |key, handler|
         if key.is_a?(Regexp)
           # 仅在本轮扫描复用组合文本；回调可能更换规则或消费缓冲，下一轮必须重新构造。
           text ||= history + buffer
           utf8_regexp ||= key.fixed_encoding? && key.encoding == Encoding::UTF_8
           position = Pattern.new(value: key).locate(text, final:, captures: false)
-          if position
-            offset, length, = position
-            raise ArgumentError, "escape regexp must consume at least one byte" if length.zero?
+          next unless position
 
-            # 历史前缀已实时转发，不能撤回；负偏移表示本次只需消费转义尚未转发的部分。
-            [offset - history.bytesize, length, handler]
-          end
+          offset, length, = position
+          raise ArgumentError, "escape regexp must consume at least one byte" if length.zero?
+
+          # 历史前缀已实时转发，不能撤回；负偏移表示本次只需消费转义尚未转发的部分。
+          offset -= history.bytesize
         else
-          position = buffer.index(key)
-          [position, key.bytesize, handler] if position
+          offset = buffer.index(key)
+          next unless offset
+
+          length = key.bytesize
         end
+        earliest = [offset, length, handler] if !earliest || offset < earliest.first
       end
-      [matches.min_by(&:first), !text.nil?, utf8_regexp]
+      [earliest, !text.nil?, utf8_regexp]
     end
 
     # 普通转发和超时排出的字面前缀都属于正则历史，跨次转接时必须接续同一字节流。

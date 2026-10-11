@@ -576,8 +576,8 @@ module Expect
     # 只结束读取方向并冲刷接收记录；EOF 不代表子进程已经退出或写端已经关闭。
     def mark_eof
       @eof = true
-      flush_transcript
-      flush_diagnostics(:received)
+      # EOF 只登记一次；任一日志尾部失败也必须尝试另一通道，保持首个常规异常。
+      Cleanup.always(-> { flush_diagnostics(:received) }) { flush_transcript }
       nil
     end
 
