@@ -14,7 +14,7 @@ class OwnershipSequenceTest < ExpectTest
         attempts = []
         failure = seed.odd? ? Interrupt.new : SystemExit.new(17)
         original = writer.method(:close)
-        Expect::SessionResources.stub(:new, ->(*, **) { raise failure }) do
+        Expect::ResourceOwner.stub(:new, ->(*, **) { raise failure }) do
           reader.stub(:close, lambda {
             attempts << :reader
             raise IOError, "injected close failure"

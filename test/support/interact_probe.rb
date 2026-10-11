@@ -16,16 +16,16 @@ module InteractProbe
   end
 
   def self.prepare(session, echo: false)
-    # The remote tty needs ISIG for Ctrl-C to reach its foreground process.
-    # Manual interaction needs remote echo because the local input is raw.
+    # 远端终端需开启 ISIG，才能让 Ctrl-C 向前台进程发送信号。
+    # 本地输入处于 raw 模式，人工接管时依赖远端回显。
     session.write("stty sane #{echo ? "echo" : "-echo"}; set +o emacs; set +o vi\n")
     ScriptProbe.check(session.expect(ScriptProbe::PROMPT, timeout: 5).matched?,
                       "terminal setup did not return to shell")
     session.clear_buffer
   end
 
-  # A real local terminal slave is passed to interact; its master acts as a
-  # keyboard/screen. Only interact reads the remote session during handoff.
+  # 将真实本地终端的 slave 端传给 interact，master 端模拟键盘和屏幕。
+  # 接管期间仅由 interact 读取远端会话。
   def self.verify(session, user:)
     master, slave = PTY.open
     source = Expect.open(slave)
@@ -89,8 +89,8 @@ module InteractProbe
         expected_output: "STDOUT_FIRST\nSTDERR_SECOND\n中文输出：日志验证\nSTDOUT_LAST\n"
       )
       nonce = SecureRandom.hex(8)
-      # An actual foreground shell handles the forwarded Ctrl-C. Readiness is
-      # acknowledged before sending the control byte, without a timing guess.
+      # 由真实前台 shell 处理转发的 Ctrl-C；收到就绪确认后
+      # 再发送控制字节，避免依赖时间猜测。
       script = "trap 'printf \"INT_HANDLED_#{nonce}\\n\"; exit 0' INT; " \
                "printf 'INT_READY_#{nonce}\\n'; while :; do sleep 1; done"
       screen.write("/bin/sh -c #{Shellwords.escape(script)}\n")

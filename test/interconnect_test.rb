@@ -118,7 +118,7 @@ class InterconnectTest < ExpectTest
     loop { break if sink_writer.write_nonblock("x" * 4096, exception: false) == :wait_writable }
     session = Expect.open(reader, writer: sink_writer, write_timeout: 1)
     @sessions << session
-    # A loopback listener must not wait or read more input after the deadline.
+    # 回环监听器到达期限后不得继续等待或读取输入。
     session.outputs = [session]
     session.on_sequence("STOP")
     session.buffer = "ST"
@@ -386,8 +386,8 @@ class InterconnectTest < ExpectTest
       seen << :stopped
       false
     end
-    # Await actual forwarding before writing the continuation, ensuring the
-    # test cannot accidentally pass with a single combined read.
+    # 确认前段已实际转发后再写入后续数据，
+    # 避免测试因一次合并读取而意外通过。
     background do
       writer.write("beforeSTOP")
       bounded { sleep 0.001 until output.string == "beforeSTOP" }

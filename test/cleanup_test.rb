@@ -204,7 +204,7 @@ class CleanupTest < ExpectTest
     reader, writer = IO.pipe
     extra, peer = IO.pipe
     @ios.push(reader, writer, extra, peer)
-    resources = Expect::SessionResources.new(reader, writer:, slave: extra, own: true)
+    resources = Expect::ResourceOwner.new(reader, writer:, slave: extra, own: true)
     failure = IOError.new("reader close failed")
     reader.stub(:close, -> { raise failure }) do
       assert_same failure, assert_raises(IOError) { resources.close_handles }

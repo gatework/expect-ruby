@@ -5,7 +5,7 @@ require_relative "interaction"
 
 module Expect
   # 一个真实 PTY 或 IO 会话；缓冲、最近结果和所属进程都保存在本对象中。
-  # SessionResources 保存可独立回收的资源账本；Matcher、Relay 仅在操作期间借用会话状态。
+  # ResourceOwner 保存可独立回收的资源账本；Matcher、Relay 仅在操作期间借用会话状态。
   # 日志与协议目标属于调用方，显式关闭和 GC 均不得接管这些借用对象。
   class Session
     include Logging
@@ -58,7 +58,7 @@ module Expect
 
       @slave.raw! if raw
       from_child = to_parent = nil
-      Cleanup.always(-> { SessionResources.close_handles(from_child, to_parent) }) do
+      Cleanup.always(-> { ResourceOwner.close_handles(from_child, to_parent) }) do
         # 错误管道的写端在 exec 成功时自动关闭；父进程据此区分成功启动与 exec 前失败。
         # 管道返回到多重赋值之间也属于接管区间，确保 ensure 始终能找到两个端点。
         Thread.handle_interrupt(Object => :never) { from_child, to_parent = IO.pipe }
@@ -290,7 +290,7 @@ module Expect
       if @resources
         close(graceful:)
       elsif own
-        SessionResources.close_handles(reader, writer, slave)
+        ResourceOwner.close_handles(reader, writer, slave)
       end
     end
 
@@ -386,7 +386,7 @@ module Expect
     # 初始化前先登记所有权；参数校验失败也能释放已取得的端点。
     def initialize_io(reader, writer:, slave: nil, own: false, timeout: nil, write_timeout: nil,
                       buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
-      @resources = SessionResources.new(reader, writer:, slave:, own:)
+      @resources = ResourceOwner.new(reader, writer:, slave:, own:)
       raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
       raise ArgumentError, "writer must be a real IO" unless writer.is_a?(IO) && !writer.closed?
 

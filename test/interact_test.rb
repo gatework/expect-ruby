@@ -11,8 +11,8 @@ class InteractTest < ExpectTest
     @sessions << session
     ScriptProbe::Runner.new(session).ready!
     InteractProbe.prepare(session)
-    # Unlike SSH, the simulated remote shell shares the transport's PTY.
-    # Only the local input terminal is changed by interact.
+    # 模拟远端 shell 与传输端共用 PTY；真实 SSH 的远端终端是独立的。
+    # interact 只修改本地输入终端的模式。
     session
   end
 

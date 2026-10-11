@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Optional real SSH integration check. Password input is hidden and never logged.
+# 按需运行真实 SSH 集成检查；密码输入不回显，也不写入日志。
 require "io/console"
 require "tmpdir"
 require "securerandom"
@@ -20,8 +20,8 @@ begin
       session.write(password, "\n")
       password.replace("\0" * password.bytesize)
 
-      # Start a command after authentication. The marker is assembled remotely
-      # from two quoted arguments, so terminal command echo cannot satisfy it.
+      # 认证后执行命令；标记由远端拼接两个引用参数生成，
+      # 避免终端的命令回显被误判为执行结果。
       login = session.expect("EXPECT_SHELL> ", /Permission denied/i, timeout: 10).number
       abort "SSH login failed (#{session.error || "authentication rejected"})" unless login == 1
       token = SecureRandom.hex(12)

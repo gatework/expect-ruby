@@ -5,7 +5,7 @@ require "io/console"
 require "stringio"
 require_relative "expect/version"
 require_relative "expect/result"
-require_relative "expect/session_resources"
+require_relative "expect/resource_owner"
 require_relative "expect/pattern"
 require_relative "expect/pattern_list"
 require_relative "expect/matcher"
@@ -72,7 +72,7 @@ module Expect
         if session && (block_given? || !initialized)
           session.cleanup_session(io, writer:, own:, graceful: initialized && graceful)
         elsif !session && own
-          SessionResources.close_handles(io, writer)
+          ResourceOwner.close_handles(io, writer)
         end
       end
       Cleanup.always(cleanup) do

@@ -6,8 +6,8 @@ require "optparse"
 require "shellwords"
 require_relative "../../lib/expect/pty"
 
-# Local counterpart of jacoby/expect.pm examples/kibitz: both keyboards feed
-# one process, whose output is broadcast to both terminals using outputs.
+# 参考 jacoby/expect.pm 的本地双终端示例：两个键盘向同一进程输入，
+# 进程输出通过 outputs 同时转发到两个终端。
 module Kibitz
   ESCAPE = "\x1d".b.freeze
 
@@ -81,13 +81,13 @@ module Kibitz
     raise OptionParser::InvalidArgument, "--noproc cannot start a program" if options[:noproc] && !argv.empty?
 
     output.sync = true
-    # The ensure below closes the log after both terminal connections end.
+    # 两侧终端连接结束后，由 ensure 关闭日志。
     log = File.open(options[:log], File::WRONLY | File::CREAT | File::EXCL, 0o600) if options[:log] # rubocop:disable Style/FileOpen
 
     if options[:join]
       peer = UNIXSocket.new(options[:join])
     else
-      # A short, private socket path works with macOS's sockaddr_un limit.
+      # 使用私有目录中的短 socket 路径，满足 macOS 的 sockaddr_un 长度限制。
       directory = Dir.mktmpdir("expect-kibitz-", "/tmp")
       socket_path = File.join(directory, "peer.sock")
       server = UNIXServer.new(socket_path)
@@ -101,13 +101,13 @@ module Kibitz
       File.unlink(socket_path)
       unless options[:noproc]
         command = argv.empty? ? [ENV.fetch("SHELL", "/bin/sh")] : argv
-        # The process keeps canonical input, echo and ISIG on its own terminal.
+        # 子进程的终端保留规范输入、回显和 ISIG 信号处理。
         shell = Expect.spawn(*command, write_timeout: 5)
         shell.to_io.winsize = input.winsize
       end
     end
-    # Announce readiness only after local echo/canonical input are disabled.
-    # A fast typist (or PTY driver) may send bytes immediately after the banner.
+    # 关闭本地回显和规范输入后再发出就绪提示。
+    # 用户或 PTY 驱动可能在提示出现后立即发送输入。
     result = input.raw do
       hint = options[:escape] ? "Escape #{options[:escape].inspect} ends this session." : "Escape disabled."
       output.write("Kibitz connected. #{hint}\r\n")

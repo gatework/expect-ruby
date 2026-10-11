@@ -1,4 +1,4 @@
-# Public Session API; internal matching and relay protocols are documented with @api private.
+# 公开 Session 接口；内部匹配与转接协议在源码中标记为 @api private。
 module Expect
   type duration = Numeric | String
   type pattern = String | Regexp | :eof | :timeout

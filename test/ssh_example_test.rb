@@ -103,7 +103,7 @@ class SSHExampleTest < ExpectTest
 
   private
 
-  # -G parses configuration without connecting; drain both pipes while the child runs.
+  # -G 只解析配置，不建立连接；子进程运行时同时排空两个输出管道。
   def expanded_known_hosts(arguments)
     Open3.popen3({ "LC_ALL" => "C" }, arguments.first, "-G", *arguments.drop(1)) do |input, output, errors, child|
       input.close
@@ -113,7 +113,7 @@ class SSHExampleTest < ExpectTest
         begin
           Process.kill("KILL", child.pid)
         rescue Errno::ESRCH
-          # The process may exit between the deadline and the signal.
+          # 子进程可能在期限到达与发送信号之间退出。
         end
         flunk "ssh -G did not finish within 5 seconds"
       end

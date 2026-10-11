@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 module Expect
-  # 独立保存句柄和 PID 所有权，让终结器无需直接捕获会话即可清理遗弃资源。
-  # IO 是否关闭与子进程是否退出分别记录；不能仅凭句柄状态清空 PID 或伪造退出状态。
+  # 管理 IO 关闭责任和直属子进程归属，供显式关闭与 GC 回收共用。
+  # 不直接引用 Session、日志目标或用户回调；句柄关闭与进程退出分别记录。
   # @api private
-  class SessionResources
-    # 缓存已取得的状态；被外部回收的进程仍保留未知状态，不伪造成功。
+  class ResourceOwner
+    # 缓存已取得的 Process::Status；被外部回收的进程仍保留未知状态，不伪造成功。
     attr_accessor :status
     # own 控制句柄关闭责任，owner 控制进程回收责任；fork 后两者不能混为一谈。
     attr_reader :pid, :reader, :writer, :slave, :owner, :own
@@ -60,7 +60,7 @@ module Expect
       status
     end
 
-    # GC 兜底关闭所属句柄并终止尚存活的子进程；不执行用户代码或软关闭等待。
+    # GC 兜底关闭所属句柄并终止尚存活的子进程；不调用会话日志或转义回调，也不进行软关闭等待。
     # 可直接用绑定到资源对象的 Method 注册终结器，忽略 Ruby 传来的被回收对象 ID。
     def finalize(_object_id = nil)
       return unless owner == Process.pid
@@ -77,7 +77,7 @@ module Expect
 
     private
 
-    # GC 只做一次非阻塞回收和最多两次信号尝试；失败也把等待交给 detach，不运行用户回调。
+    # GC 只做一次非阻塞回收和最多两次信号尝试；失败也把等待交给 detach，不调用会话日志或转义回调。
     def finalize_child
       begin
         reap

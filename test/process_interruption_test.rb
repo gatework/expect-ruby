@@ -39,7 +39,7 @@ class ProcessInterruptionTest < ExpectTest
   def test_bound_resource_finalizer_accepts_the_gc_object_id
     reader, writer = IO.pipe
     @ios.push(reader, writer)
-    resources = Expect::SessionResources.new(reader, writer:, own: true)
+    resources = Expect::ResourceOwner.new(reader, writer:, own: true)
 
     resources.method(:finalize).call(123)
 

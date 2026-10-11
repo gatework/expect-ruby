@@ -2,8 +2,8 @@
 
 require_relative "interact_probe"
 
-# Drive the actual host and join CLIs through two independent local terminals.
-# No Minitest dependency, SSH service, password, or external user is needed.
+# 通过两个独立本地终端驱动实际的 host 和 join 命令。
+# 无需 Minitest、SSH 服务、密码或外部用户。
 module KibitzProbe
   EXAMPLE = File.expand_path("../../examples/kibitz/kibitz.rb", __dir__)
 
@@ -84,14 +84,14 @@ module KibitzProbe
 
   def self.shared_shell(directory)
     pair = Pair.new(directory)
-    # With local terminals raw, the process's terminal supplies typed echo.
+    # 本地终端处于 raw 模式，输入回显由子进程终端提供。
     pair.both(ScriptProbe::PROMPT)
     pair.host.write("printf 'VISIBLE_TYPING\\n'")
     pair.both("printf 'VISIBLE_TYPING\\n'")
     pair.host.write("\n")
     pair.both(/\r?\nVISIBLE_TYPING\r?\n/)
     pair.both(ScriptProbe::PROMPT)
-    # ready! expects an outstanding prompt; use a fresh one after the echo check.
+    # ready! 等待尚未消费的提示符；回显检查后需生成新提示符。
     pair.host.write("\n")
     pair.prepare_shell
     pair.command(pair.host, "shared_value=42; printf 'HOST_SET\\n'", /HOST_SET\r?\n/)
@@ -109,7 +109,7 @@ module KibitzProbe
     pair.finish!
     log = ScriptProbe.normalize(File.binread(pair.log_path))
     %w[HOST_SET SHARED=42 GUEST_STDERR RECOVERED=7 INT_READY INT_HANDLED FINAL_TAIL].each do |line|
-      # With echo disabled the output can follow a prompt on the same line.
+      # 关闭回显后，输出可能紧接提示符出现在同一行。
       ScriptProbe.check(log.scan("#{line}\n").length == 1, "#{line} missing or duplicated in log")
     end
     { name: "shared_shell", passed: true,

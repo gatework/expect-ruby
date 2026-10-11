@@ -12,7 +12,7 @@ Expect::Session 本身是公开接口；本文所列状态与标为 `@api privat
 | `pattern.rb`、`pattern_list.rb`、`result.rb`    | 字节定位、声明顺序及原生结果值                                   |
 | `literal_prefix.rb`                             | 转义暂存与流尾脱敏共享的字节前缀计算，不持有会话或 IO              |
 | `matcher.rb`                                    | 一次等待的匹配、事件派发和期限                                   |
-| `session_resources.rb`                          | 所属 IO 与直属子进程的所有权账本和 GC 兜底                       |
+| `resource_owner.rb`                             | 所属 IO 与直属子进程的所有权账本和 GC 兜底                       |
 | `logging.rb`                                    | 借用 logger/transcript/outputs 及同步输出；不拥有目标            |
 | `interaction.rb`、`relay.rb`、`relay_writer.rb` | 人工接管、转义处理、共同调度和各目标发送游标                     |
 
@@ -23,7 +23,7 @@ Expect::Session 本身是公开接口；本文所列状态与标为 `@api privat
 诊断复用 Ruby Logger 的级别、格式和输出协议，终端设置复用 io/console，文件打开与关闭交给调用方的 File.open，结果值复用 Data。
 这些能力不再由本库维护配置门面、日志文件所有权或 stty 命令包装。
 
-PTY 控制终端建立、exec 错误管道握手和有限期限的子进程回收继续由 Session 与 SessionResources 负责：会话需要在启动前设置
+PTY 控制终端建立、exec 错误管道握手和有限期限的子进程回收继续由 Session 与 ResourceOwner 负责：会话需要在启动前设置
 slave 的 raw 模式，
 父进程需要在交付会话前确认 exec 是否成功，关闭时还需保留直属子进程归属及分阶段回收策略。Open3 的普通管道不能替代这些终端语义。
 Redactor 则处理分片原始字节中的秘密、跨块前缀和重叠区间；它与 ActiveSupport::ParameterFilter 的参数键值过滤职责不同，不相互替代。
@@ -35,7 +35,7 @@ Session 组合 Logging 与 Interaction；timeout、write_timeout、buffer_limit�
 Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自持有 raw/graceful 参数，不把操作策略保存成配置层。
 回调、链式返回与 Result.session 始终是该 Session 本身。终端操作直接使用 Ruby io/console，不启动 stty。
 
-运行状态只属于 Session；SessionResources 不引用 Session、输出目标或用户回调。
+运行状态只属于 Session；ResourceOwner 不引用 Session、输出目标或用户回调。
 终结器通过 `@resources.method(:finalize)` 注册在 Session 上，绑定方法仅持有资源账本，允许会话和捕获它的回调循环一起回收。
 `Result` 使用 Data，复制冻结文本与捕获值，但不冻结来源或异常对象。
 
@@ -108,7 +108,7 @@ interact 先保存终端模式快照，再进入持有恢复责任的 Cleanup �
 
 ## 关闭与所有权
 
-SessionResources 只保存所属句柄、直属子进程及其所有者 PID。初始所有者为资源创建进程；登记新 PID 时改为实际启动它的进程，
+ResourceOwner 只保存所属句柄、直属子进程及其所有者 PID。初始所有者为资源创建进程；登记新 PID 时改为实际启动它的进程，
 因此父进程创建的 PTY 可以在 fork 后启动并回收新的直属子进程。仅继承已有 PID 的副本不改变所有者，不发送信号或回收父进程的孩子。借用
 IO 不关闭。soft_close
 最多发送 TERM 并保留未退出 PID；hard_close 可在有限等待后发送 KILL。
@@ -140,7 +140,7 @@ Session 的资源关闭与 Logging 的 `finish_logging` 使用嵌套 Cleanup 作
 StandardError 不能覆盖该异常；没有前序失败时，诊断错误先于后续 transcript 错误。两个日志目标都须尝试收尾，
 新的 Interrupt/SystemExit 仍优先传播。日志模块负责冲刷及解除 transcript 引用，Session 不重复实现异常优先级。
 
-`SessionResources#reap` 只做一次非阻塞系统调用，EINTR 交给所属流程决定：主会话 `process_status` 返回当前未知/缓存状态，
+`ResourceOwner#reap` 只做一次非阻塞系统调用，EINTR 交给所属流程决定：主会话 `process_status` 返回当前未知/缓存状态，
 `wait_for_child` 沿用阶段开始时的绝对期限，并在重试间休眠。自然等待、TERM 等待分别使用调用方预算，硬关闭的 KILL 阶段保留 1
 秒预算；
 零预算也先尝试一次，信号 EINTR 不重新计时。soft_close 不发 KILL，ECHILD 清空 PID，ESRCH 后仍尝试回收，预算耗尽也返回已取得的状态。

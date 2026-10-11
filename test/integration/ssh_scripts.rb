@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Opt-in: this script makes a real SSH connection. The default rake test does
-# not load it, and no password belongs in fixture files or command arguments.
+# 本脚本按需建立真实 SSH 连接，默认 rake test 不加载它。
+# 密码不得写入测试数据文件或命令参数。
 require "io/console"
 require "json"
 require "fileutils"
@@ -39,8 +39,8 @@ begin
     report[:passed] = true
   end
 rescue StandardError => error
-  # Error messages identify the failed check; raw authentication output is
-  # deliberately excluded from both the report and the console.
+  # 错误消息指出失败的检查；报告和控制台均不输出
+  # 原始认证内容。
   report[:error] = "#{error.class}: #{error.message}".gsub(password, "[REDACTED]")
   report[:cases] ||= runner&.results || []
 ensure

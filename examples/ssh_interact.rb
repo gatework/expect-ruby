@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Run from the checkout; examples and test helpers are not included in the gem.
-# Test helpers use standard libraries; Minitest is not needed for this live SSH example.
+# 从源码目录运行；示例与测试辅助代码不随 Gem 分发。
+# 测试辅助代码使用标准库；真实 SSH 示例无需加载 Minitest。
 require "io/console"
 require "json"
 require "fileutils"
@@ -52,7 +52,7 @@ begin
     session.write(password, "\n")
     runner = ScriptProbe::Runner.new(session, timeout: 10).ready!
     InteractProbe.prepare(session, echo: !automatic)
-    # The ensure closes this borrowed writer after the session flushes its tail.
+    # 会话交付日志尾部后，由 ensure 关闭调用方持有的 writer。
     transcript = File.open(log_path, File::WRONLY | File::CREAT | File::EXCL, 0o600) # rubocop:disable Style/FileOpen
     session.transcript = transcript
 
@@ -64,10 +64,10 @@ begin
       initial_mode = InteractProbe.configuration(local_terminal)
       puts "Logged in as #{user}@#{host}. Enter commands; press Ctrl-] to return to expect."
       puts "Log: #{log_path}"
-      # prepare consumed the initial prompt while configuring remote echo.
+      # prepare 配置远端回显时已消费初始提示符。
       $stdout.print(ScriptProbe::PROMPT)
       $stdout.flush
-      # This is the actual public API handoff: stdin -> SSH, SSH -> stdout.
+      # 通过公开接口接管输入输出：stdin → SSH，SSH → stdout。
       returned = session.interact(input: $stdin, escape: InteractProbe::ESCAPE, output: $stdout)
       ScriptProbe.check(InteractProbe.configuration(local_terminal) == initial_mode,
                         "stdin terminal mode was not restored")
