@@ -14,6 +14,7 @@ module ExpectBenchmark
   class Runner
     attr_reader :smoke, :library
 
+    # 解析本次命令行并加载指定库；可通过块添加场景参数，非法采样次数在执行负载前报错。
     def initialize(name)
       @library = File.expand_path("../lib", __dir__)
       @samples = 5
@@ -39,6 +40,8 @@ module ExpectBenchmark
       @results = []
     end
 
+    # 预热并验证一次操作后采样；每个样本仅计时重复操作，验证与资源采样在计时区间之外。
+    # 命令行次数覆盖场景默认值，smoke 默认只跑一次；bytes 为每次操作的输入字节数。
     def measure(name, bytes:, inputs:, verify:, iterations: 100, &operation)
       iterations = @iterations || (smoke ? 1 : iterations)
       samples = smoke ? 1 : @samples
@@ -63,6 +66,7 @@ module ExpectBenchmark
       puts "#{name}: #{format("%.6f", measurements.map { |row| row[:seconds] }.sort[samples / 2])}s"
     end
 
+    # 写入全部样本、运行环境及实际库源码摘要；只有库目录的父目录确为仓库根目录才记录 Git 状态。
     def finish
       root = File.dirname(library)
       repository = git_output(root, "rev-parse", "--show-toplevel")&.strip
@@ -108,6 +112,7 @@ module ExpectBenchmark
     end
   end
 
+  # 正确性检查失败立即终止，不将错误输出计入性能报告。
   def self.check(condition, message = "incorrect benchmark output")
     raise message unless condition
   end

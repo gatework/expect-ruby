@@ -13,7 +13,7 @@ module Expect
       filter.append(data) + filter.finish(partial: false)
     end
 
-    # pending 保存尚不能安全输出的原字节，hidden 的对应字节用 0/1 表示是否需要遮盖。
+    # 复制冻结替换文本与规则；pending 保存尚不能安全输出的原字节，hidden 用 0/1 标记遮盖。
     def initialize(patterns, replacement: "[FILTERED]")
       unless replacement.is_a?(String) && !replacement.empty?
         raise ArgumentError, "replacement must be a nonempty String"
@@ -67,6 +67,7 @@ module Expect
     private
 
     # 输出资格与秘密掩码分开保存；仅遇到被抑制的分片时才分配额外字节图。
+    # 三个字节窗口始终对齐；先标记完整命中，再释放最长规则长度减一之外的安全前缀。
     def append_chunk(data, visible:)
       raise ArgumentError, "data must be a String" unless data.is_a?(String)
 
@@ -147,6 +148,7 @@ module Expect
     end
 
     # 仅级别切换后的流需要按输出资格再分段，普通过滤不承担额外区间调用。
+    # 将指定掩码区间中可见的字节追加到 output；被抑制的明文会断开 masking，隐藏字节不会。
     def release_suppressed(output, starting, ending, hidden:)
       while starting < ending
         suppressed = @suppressed.getbyte(starting) == 1

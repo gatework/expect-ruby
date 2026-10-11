@@ -12,12 +12,14 @@ module APICheck
            Expect::Redactor, Expect::WriteTimeout].freeze
   DATA_METHODS = %i[members with to_h deconstruct deconstruct_keys].freeze
 
+  # 逐个核对公开类型的文档与签名；任一缺口直接报错，全部通过后才输出成功提示。
   def self.run
     builder = prepare
     TYPES.each { |type| validate_type!(type, builder) }
     puts "Public API documentation and RBS coverage passed"
   end
 
+  # 清空旧 YARD 注册表并重读库源码，解析 RBS 类型名称，返回供本轮校验共用的定义构建器。
   def self.prepare
     YARD::Registry.clear
     YARD.parse(Dir[ROOT.join("lib/**/*.rb").to_s])
@@ -26,6 +28,7 @@ module APICheck
     RBS::DefinitionBuilder.new(env: RBS::Environment.from_loader(loader).resolve_type_names)
   end
 
+  # 校验本类型及其混入模块提供的公开方法，排除基类继承方法；Data 的生成接口单独纳入。
   def self.validate_type!(type, builder)
     name = RBS::TypeName.parse("::#{type}")
     if type.is_a?(Class)
@@ -43,6 +46,7 @@ module APICheck
     validate_methods!(type, methods, ".", builder.build_singleton(name))
   end
 
+  # 按实际方法所有者查找文档；仅显式标记 @api private 的内部协议可跳过公开签名检查。
   def self.validate_methods!(type, methods, separator, definition)
     methods.each do |method|
       path = "#{type}#{separator}#{method}"

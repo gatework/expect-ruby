@@ -11,6 +11,8 @@ require_relative "../../lib/expect/pty"
 module Kibitz
   ESCAPE = "\x1d".b.freeze
 
+  # 借用两侧端点建立共享进程或直接互传的输出图，返回停止原因和本地输入尚未转发的尾部。
+  # 仅本地键盘注册退出序列；log 记录进程或对端的接收字节，底层 IO 与进程由调用方关闭。
   def self.relay(input:, output:, peer:, shell: nil, escape: ESCAPE, timeout: nil, log: nil)
     Expect.open(input, write_timeout: 5) do |keyboard|
       Expect.open(peer, write_timeout: 5) do |partner|
@@ -40,6 +42,7 @@ module Kibitz
     end
   end
 
+  # 将 ^A、^] 等单字符控制键表示法转为控制字节；其他非空文本保留为字面退出序列。
   def self.escape(value)
     return (value.getbyte(1) & 31).chr if value.match?(/\A\^[@A-Z\[\\\]\^_]\z/)
 
@@ -48,6 +51,7 @@ module Kibitz
     value
   end
 
+  # 解析 host/join 参数，先建连再接管本地终端；退出时恢复终端并关闭本次取得的进程、socket 和日志。
   # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- CLI 建连、终端接管和 ensure 清理共享一次生命周期。
   def self.run(argv, input: $stdin, output: $stdout)
     options = { escape: ESCAPE }

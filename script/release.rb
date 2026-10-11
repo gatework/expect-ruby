@@ -15,6 +15,7 @@ class Release
   REPOSITORY = "gatework/expect-ruby"
   GEM_HOST = "https://rubygems.org"
 
+  # 保存版本、目标和候选路径；显式 artifact 复用原包，仅缺省路径在 run 中触发构建。
   def initialize(artifact: nil, dry_run: false, rubygems_only: false)
     @version = Expect::VERSION
     @tag = "v#{@version}"
@@ -24,6 +25,8 @@ class Release
     @build = artifact.nil?
   end
 
+  # 先校验说明和独占候选副本；dry-run 到此结束，正式发布再核对源码并按目标依次交付。
+  # 同一个候选贯穿校验、上传和读回，不能在流程中用另一份重建包替换。
   def run
     notes = self.class.read_notes("CHANGELOG.md", @version)
     unless @dry_run || capture("git", "status", "--porcelain").empty?
@@ -98,6 +101,7 @@ class Release
 
   private
 
+  # 捕获命令文本并去除首尾空白；文件内容必须使用保留原始字节的 capture_bytes。
   def capture(*)
     capture_bytes(*).strip
   end
@@ -110,10 +114,12 @@ class Release
     output
   end
 
+  # 直接执行 argv 并保留命令的终端输出；非零退出立即中止后续发布步骤。
   def command(*arguments)
     raise "#{arguments.first} failed" unless system(*arguments)
   end
 
+  # 读取本仓库的 GitHub JSON；仅明确允许缺失时将 HTTP 404 转为 nil，其余失败仍报错。
   def github(path, missing: false)
     output, error, status = Open3.capture3("gh", "api", "repos/#{REPOSITORY}/#{path}")
     return nil if missing && !status.success? && error.include?("HTTP 404")
@@ -122,12 +128,14 @@ class Release
     JSON.parse(output)
   end
 
+  # 发布前重新核对 HEAD 与工作区；候选验证期间的提交或源码改动必须重新开始验证。
   def verify_local_source
     return if capture("git", "rev-parse", "HEAD") == @commit && capture("git", "status", "--porcelain").empty?
 
     raise "Source changed during verification; commit the changes and start again"
   end
 
+  # 确认本地候选提交已进入远端 main；同名标签若存在，必须解析到完全相同的提交。
   def verify_remote_source
     verify_local_source
 
@@ -185,6 +193,7 @@ class Release
     end
   end
 
+  # 每个包内文件必须对应提交中的普通文件，原始字节与执行位一致；不以文件大小代替内容核验。
   def verify_committed_file(file, bytes, mode, committed)
     committed_mode, type, object = committed[file.b]
     unless type == "blob" && committed_mode & 0o170000 == 0o100000
@@ -198,6 +207,7 @@ class Release
     raise "Artifact executable permissions differ from release commit: #{file}"
   end
 
+  # 在固定 RubyGems 主机执行有连接与读取期限的 HTTPS GET；状态码由具体调用方判断。
   def get(path)
     require "net/http"
 
@@ -207,6 +217,7 @@ class Release
     end
   end
 
+  # 读取目标版本元数据；404 表示尚不可见，其他非成功响应报错，不据此推断上传是否发生。
   def registry_version
     response = get("/api/v2/rubygems/expect-pty/versions/#{@version}.json")
     return nil if response.code == "404"
@@ -215,6 +226,7 @@ class Release
     JSON.parse(response.body)
   end
 
+  # 已有版本仅在未撤回且校验和相同时可复用；缺失版本由调用方决定是否上传。
   def verify_registry_checksum(version)
     return unless version
     return if !version.fetch("yanked") && version.fetch("sha") == @sha256
@@ -263,8 +275,8 @@ class Release
     puts "GitHub Release: https://github.com/#{REPOSITORY}/releases/tag/#{@tag}"
   end
 
+  # 下载每个公开附件并核对候选内容；有附件记录或上传成功都不能代替读回验证。
   def verify_github_assets(assets)
-    # 新上传的附件也读回核验，工作流成功不代替远端产物校验。
     Dir.mktmpdir("expect-release-readback-") do |directory|
       assets.each do |asset|
         name = File.basename(asset)
@@ -276,6 +288,8 @@ class Release
     end
   end
 
+  # 先核对已有版本，缺失时最多上传一次，再有界等待公开下载并核对同一候选的 SHA256。
+  # 上传后暂时查不到版本或下载不代表上传失败；错误交给调用方核实，不在这里重复 push。
   def publish_rubygems
     version = registry_version
     verify_registry_checksum(version)

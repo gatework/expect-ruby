@@ -6,6 +6,7 @@ require "shellwords"
 
 # 统一 SSH 示例的输入校验；此处不建立连接。
 module SSHExample
+  # 从环境读取并校验连接选项；远端主机必须显式提供 known_hosts，回环地址可使用临时文件。
   def self.options(environment = ENV)
     host = environment.fetch("SSH_HOST", "127.0.0.1")
     user = environment.fetch("SSH_USER") { environment.fetch("USER") { Etc.getpwuid.name } }
@@ -24,6 +25,8 @@ module SSHExample
     { host:, user:, port:, known_hosts: }
   end
 
+  # 从环境移除密码并返回副本；未提供时读取单行输入，仅在真实终端关闭回显。
+  # 调用方负责使用后的清除；此处不记录密码，非终端输入也不调用 noecho。
   def self.read_password(environment: ENV, input: $stdin, output: $stderr)
     password = environment.delete("EXPECT_PASSWORD")&.dup
     unless password
@@ -38,6 +41,8 @@ module SSHExample
     password
   end
 
+  # 将已校验选项转换为 argv，不经过本地 shell；known_hosts 仍需防范 OpenSSH 的二次解析。
+  # 显式文件使用严格校验，缺省临时文件仅用于回环地址；远端 shell 提示符独立按 shell 语法引用。
   def self.arguments(options, directory:, prompt:)
     host, user, port, known_hosts = options.values_at(:host, :user, :port, :known_hosts)
     # OpenSSH 会再次解析 -o 参数；按 ssh_config 语法引用单个文件路径。
