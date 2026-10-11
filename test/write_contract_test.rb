@@ -4,6 +4,51 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class WriteContractTest < ExpectTest
+  def test_callbacks_that_close_borrowed_sessions_prevent_later_protocol_writes
+    %i[conversion sending received].each do |boundary|
+      client, peer = Socket.pair(:UNIX, :STREAM, 0)
+      @ios.push(client, peer)
+      session = Expect.open(client)
+      @sessions << session
+      data = "unexpected"
+      if boundary == :conversion
+        data = Object.new
+        data.define_singleton_method(:to_s) do
+          session.close
+          "unexpected"
+        end
+      else
+        session.logger = diagnostic_logger { |event| session.close if event[:event] == boundary }
+      end
+      operation = -> { assert_raises(IOError) { bounded { session.write(data) } } }
+      if boundary == :received
+        peer.write("incoming")
+        original = client.method(:write_nonblock)
+        attempts = 0
+        client.stub(:write_nonblock, lambda { |chunk, **options|
+          attempts += 1
+          attempts == 1 ? :wait_writable : original.call(chunk, **options)
+        }) { operation.call }
+        assert_equal "incoming", session.buffer
+      else
+        operation.call
+      end
+      assert session.closed?
+      refute client.closed?
+      assert_equal :wait_readable, peer.read_nonblock(100, exception: false)
+    end
+  end
+
+  def test_empty_write_cannot_report_success_after_conversion_closes_the_session
+    session, = writable_session
+    object = Object.new
+    object.define_singleton_method(:to_s) do
+      session.close
+      ""
+    end
+    assert_raises(IOError) { session.write(object) }
+  end
+
   def test_single_and_multiple_object_conversion_preserves_false_nil_and_binary_bytes
     session, sink = writable_session
     conversions = 0

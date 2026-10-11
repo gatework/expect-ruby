@@ -178,16 +178,19 @@ module Expect
 
     # 按 Ruby to_s 规则原样写入所有字节，返回字节数；背压等待受 write_timeout 限制。
     def write(*objects)
-      raise IOError, "closed Expect session" if closed? || writer.closed?
+      check_writable!
 
       begin
         # 单对象不需要中间数组与 join 副本；to_s、诊断和部分写入仍经过同一条路径。
         data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join
+        check_writable!
         trace_data(:sending, data)
       rescue WriteTimeout
         # 转换或诊断中的嵌套写入不属于当前命令；此时尚未向 writer 发送任何字节。
         raise WriteTimeout.new("write interrupted before sending data", bytes_written: 0)
       end
+      # 转换与诊断均可关闭借用会话；即使底层 IO 仍打开，也不能把关闭后的发送报告为成功。
+      check_writable!
       deadline = write_timeout && (Expect.monotonic + write_timeout)
       offset = 0
       while offset < data.bytesize
@@ -467,6 +470,8 @@ module Expect
 
     # EINTR 未确认交付时不移动游标；其他写入计数必须落在当前块范围内。
     def write_chunk(data, offset, deadline)
+      # 背压读取会执行接收回调；每次重试重新检查，关闭会话不等于关闭调用方拥有的 writer。
+      check_writable!
       chunk = data.byteslice(offset, READ_SIZE)
       count = writer.write_nonblock(chunk, exception: false)
       return count if count == :wait_writable
@@ -479,6 +484,11 @@ module Expect
       raise WriteTimeout.new(bytes_written: offset) if deadline && Expect.monotonic >= deadline
 
       nil
+    end
+
+    # 同一状态检查覆盖入口、用户转换/诊断之后和背压恢复；只检查，不取得借用 IO 所有权。
+    def check_writable!
+      raise IOError, "closed Expect session" if closed? || writer.closed?
     end
 
     # 背压等待同时排空读端，期限不因 EINTR 重算，异常始终报告外层写入进度。

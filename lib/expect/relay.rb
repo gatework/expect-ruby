@@ -122,6 +122,8 @@ module Expect
       end
       readers.each do |session|
         next unless ready ? ready.key?(session.to_io) : readable.first.equal?(session.to_io)
+        # 前一个接收回调可耗尽总预算；本块交付完成后暂停新的读取，零超时仍允许首次批量轮询。
+        break if dispatch_expired?
 
         begin
           if @buffers.key?(session)

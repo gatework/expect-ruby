@@ -59,6 +59,7 @@ module Expect
       output = release(@pending.bytesize)
       # 已结束的流没有尚待抑制的字节，后续可见分片恢复普通路径；再次 suppress 时重新建立字节图。
       @suppressed = nil
+      @suppressed_until = nil
       @masking = false
       output
     end
@@ -73,7 +74,10 @@ module Expect
     def append_chunk(data, visible:)
       raise ArgumentError, "data must be a String" unless data.is_a?(String)
 
-      @suppressed ||= "\0" * @pending.bytesize unless visible
+      unless visible || data.empty?
+        @suppressed ||= "\0" * @pending.bytesize
+        @suppressed_until = @pending.bytesize + data.bytesize
+      end
       @suppressed << ((visible ? "\0" : "\1") * data.bytesize) if @suppressed
       @pending << data.b
       @hidden << ("\0" * data.bytesize)
@@ -144,7 +148,11 @@ module Expect
       remaining = @pending.bytesize - length
       @pending = @pending.byteslice(length, remaining)
       @hidden = @hidden.byteslice(length, remaining)
-      @suppressed = @suppressed.byteslice(length, remaining) if @suppressed
+      if @suppressed
+        # 只追踪最后一个抑制字节的排空边界，避免每轮扫描字节图；跨块秘密掩码不受影响。
+        @suppressed_until -= length
+        @suppressed = @suppressed_until.positive? ? @suppressed.byteslice(length, remaining) : nil
+      end
       @scanned_bytes = remaining
       output
     end

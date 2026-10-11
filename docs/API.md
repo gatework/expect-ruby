@@ -126,6 +126,7 @@ end
 `write(*objects)` 按 to_s 写字节并返回字节数，`<<` 返回 Session，`puts` 遵循 Ruby IO 换行与数组规则并返回 nil。
 `send_slow(*objects, delay:)` 按字符延迟发送并收取回复。背压超时抛出 `Expect::WriteTimeout`，`bytes_written` 仅标识本次调用已确认进度，
 嵌套写入异常放在 cause。成功短写不受 write_timeout 的总耗时限制。
+对象转换、发送诊断或背压读取的回调若关闭会话，后续写入抛出 IOError；借用 IO 仍归调用方所有，空写入同样检查关闭状态。
 `send_slow` 的进度累计本次调用中此前完整字符与失败字符实际接受的字节；转换对象和记录回复的内层写入进度不计入。
 首字符 write 的异常无需修正进度时保留原对象；需要累计或排除内层进度时包装并保留 cause。
 `to_io`、`writer`、`slave` 暴露句柄；`pid`、`command`、`tty_name`、`fileno`、`tty?`、`alive?`、`exit_code` 查询会话属性。
@@ -154,7 +155,8 @@ DEBUG 关闭期间仍推进分片脱敏，但这些字节不会在重新启用�
 `pending_output?` 表示尚未交付数据；再次转接同源会话继续发送，不重放成功前缀；更换 outputs 不改变已排队字节的目标。
 同源递归转接抛出 ReentrancyError；转义回调可嵌套匹配，所有来源状态按对象身份隔离。
 接收字节交付期间，logger/transcript/outputs 的回调不能递归读取同一会话的新输入，否则抛出 ReentrancyError；
-匹配已有缓冲及读取独立会话仍可用。正数转接总期限会在扫描和继续回调返回后检查；零超时仍处理缓冲并首次轮询。
+匹配已有缓冲及读取独立会话仍可用。正数转接总期限会在扫描、继续回调返回后及读取每个就绪来源前检查；接收回调耗尽预算后不再读取后续来源。
+已读分片的交付仍完整完成，零超时仍处理缓冲并首次轮询。
 
 `interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)` 临时建立双向转接，退出后恢复
 outputs、转义和本地终端模式。

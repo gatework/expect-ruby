@@ -18,7 +18,8 @@ module Expect
       # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
       @hard_deadline = deadline
       @deadline = next_deadline
-      @handled_eof = {}.compare_by_identity
+      # 按声明顺序维护仍参与本轮等待的来源；EOF 删除后不再从完整列表重复跳过已处理项。
+      @active_sessions = @sessions.each_with_object({}.compare_by_identity) { |session, active| active[session] = true }
       @stalled_matches = {}.compare_by_identity
       @polled = false
       @expired_eof_continuation = false
@@ -84,7 +85,7 @@ module Expect
       earliest = nil
       groups.each do |sessions, patterns|
         sessions.each do |session|
-          next if @handled_eof.key?(session)
+          next unless @active_sessions.key?(session)
 
           buffer = buffers ? (buffers[session] ||= session.scan_buffer) : session.scan_buffer
           stalled = @stalled_matches[session]
@@ -169,19 +170,19 @@ module Expect
 
     # 找出尚未派发 EOF 事件的会话，保证每个源只处理一次结束事件。
     def unhandled_eof
-      @sessions.find { |session| session.eof? && !@handled_eof.key?(session) }
+      @active_sessions.each_key.find(&:eof?)
     end
 
     # 将剩余字节交给 EOF 回调；需要继续时等待其他源，全部结束则立即返回。
     def handle_eof(session)
       result = session.record_eof
-      @handled_eof[session] = true
+      @active_sessions.delete(session)
       actions = @patterns.eof_patterns_for(session).map { |pattern| pattern.call(session) }
       return result unless actions.any? { |action| continuing?(action) }
 
       reset_timeout = actions.any? { |action| CONTINUE.equal?(action) }
       @deadline = next_deadline if reset_timeout
-      return result if @handled_eof.size == @sessions.size
+      return result if @active_sessions.empty?
 
       # 期限已过时不再扫描文本，但先派发已知 EOF；最后一个源结束不能被误报为超时。
       @expired_eof_continuation = !reset_timeout && expired?
@@ -234,7 +235,7 @@ module Expect
     end
 
     # 返回本次仍需监听的会话，供读取选择和超时回调使用。
-    def active_sessions = @sessions.reject { |session| @handled_eof.key?(session) }
+    def active_sessions = @active_sessions.keys
 
     # 只有约定的继续符号会驱动下一轮，普通回调返回值不会改变等待流程。
     def continuing?(action) = CONTINUE.equal?(action) || CONTINUE_WITHOUT_RESET.equal?(action)

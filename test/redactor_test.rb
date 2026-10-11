@@ -6,6 +6,18 @@ require "rbconfig"
 require_relative "../lib/expect/redactor"
 
 class RedactorTest < Minitest::Test
+  def test_suppressed_prefix_drains_during_a_live_stream_without_releasing_private_bytes
+    filter = Expect::Redactor.new(["secret"])
+    assert_nil filter.suppress("private sec")
+    output = filter.append("ret visible ")
+    output << filter.append("secret! ")
+    assert_nil filter.suppress("hidden sec")
+    output << filter.append("ret public") << filter.finish
+
+    assert_equal "[FILTERED] visible [FILTERED][FILTERED] public", output
+    assert_equal "", filter.finish
+  end
+
   def test_finished_suppressed_stream_can_restart_with_visible_and_hidden_fragments
     filter = Expect::Redactor.new(["secret"])
     3.times do

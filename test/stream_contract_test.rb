@@ -4,6 +4,49 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class StreamContractTest < ExpectTest
+  def test_zero_relay_timeout_preserves_the_first_ready_batch_after_slow_delivery
+    first, first_producer = pipe_session
+    second, second_producer = pipe_session
+    calls = []
+    now = 0.0
+    first.transcript = write_target do |data|
+      calls << data
+      now = 1.0
+    end
+    second.transcript = write_target { |data| calls << data }
+    first_producer.write("first")
+    second_producer.write("second")
+
+    Expect.stub(:monotonic, -> { now }) do
+      assert_nil Expect.interconnect(first, second, timeout: 0)
+    end
+    assert_equal %w[first second], calls
+    assert_equal [5, 6], [first.received_bytes, second.received_bytes]
+  end
+
+  def test_relay_stops_reading_ready_sources_when_a_delivery_consumes_the_budget
+    first, first_producer = pipe_session
+    second, second_producer = pipe_session
+    calls = []
+    now = 0.0
+    first.transcript = write_target do |data|
+      calls << data
+      now = 1.0
+    end
+    second.transcript = write_target { |data| calls << data }
+    first_producer.write("first")
+    second_producer.write("second")
+
+    Expect.stub(:monotonic, -> { now }) do
+      assert_nil Expect.interconnect(first, second, timeout: 0.5)
+    end
+    assert_equal ["first"], calls
+    assert_equal "first", first.buffer
+    assert_empty second.buffer
+    assert_equal "second", second.expect("second", timeout: 0).match
+    assert_equal %w[first second], calls
+  end
+
   def test_large_binary_records_preserve_short_writes_and_flush_once
     %i[transcript outputs].each do |channel|
       source, = pipe_session
