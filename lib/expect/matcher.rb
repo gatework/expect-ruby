@@ -6,11 +6,13 @@ module Expect
   # @api private
   class Matcher
     # 固定本次参与的会话及初始期限；已处理 EOF 的会话仅从本次等待中移除。
-    def initialize(patterns, timeout, deadline: nil, consume: true, reset_timeout_on_read: false)
+    def initialize(patterns, timeout, deadline: nil, consume: true, reset_timeout_on_read: false,
+                   match_by_position: false)
       @patterns = patterns.finalize!
       @sessions = patterns.sessions
       @groups = patterns.text_groups
       @consume = consume
+      @match_by_position = match_by_position
       @reset_timeout_on_read = reset_timeout_on_read
       @timeout = Expect.duration(timeout)
       # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
@@ -73,12 +75,13 @@ module Expect
       end
     end
 
-    # 按声明组、会话、模式的顺序寻找首个匹配，不按文本中的出现位置重新排序。
+    # 普通等待按声明组、会话、模式选择；单会话自动应答选最早字节位置，同位置保留声明顺序。
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮缓冲须在同一次扫描保持一致。
     def find_match
       # 编译后的组内来源已按身份去重；借用仅活在本次无回调扫描，不跨越 IO 或用户回调。
       groups = @groups
       buffers = {}.compare_by_identity if groups.size > 1
+      earliest = nil
       groups.each do |sessions, patterns|
         sessions.each do |session|
           next if @handled_eof.key?(session)
@@ -100,11 +103,15 @@ module Expect
                        end
             # 正则本身不可由 IO 期限中断；恢复控制后也不能消费已过总期限的匹配。
             return nil if hard_expired?
-            return [session, pattern, position] if position
+            next unless position
+
+            return [session, pattern, position] unless @match_by_position
+
+            earliest = [session, pattern, position] if !earliest || position.first < earliest.last.first
           end
         end
       end
-      nil
+      earliest
     end
 
     # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
@@ -137,14 +144,15 @@ module Expect
 
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。
     def handle_match(session, pattern, position)
-      previous_buffer = session.buffer
+      # 没有回调的终止匹配不可能继续，无须复制完整缓冲建立防空转快照。
+      previous_buffer = session.buffer if pattern.callback
       received_bytes = session.received_bytes
       result = session.record_match(pattern, position, consume: @consume)
       action = pattern.call(session)
       return result unless continuing?(action)
 
       # 同值赋回仍须防止空转；嵌套读取到的新字节即使内容相同，也能恢复匹配。
-      if session.received_bytes == received_bytes && session.buffer == previous_buffer
+      if session.received_bytes == received_bytes && session.scan_buffer == previous_buffer
         stalled = (@stalled_matches[session] ||= { buffer: previous_buffer, received_bytes:, patterns: [] })
         stalled[:patterns] << pattern
       end

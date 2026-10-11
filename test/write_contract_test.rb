@@ -4,6 +4,24 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class WriteContractTest < ExpectTest
+  def test_single_and_multiple_object_conversion_preserves_false_nil_and_binary_bytes
+    session, sink = writable_session
+    conversions = 0
+    object = Object.new
+    object.define_singleton_method(:to_s) do
+      conversions += 1
+      "a\xFF".b
+    end
+    assert_equal 2, session.write(object)
+    assert_equal "a\xFF".b, sink.read(2)
+    assert_equal 1, conversions
+    assert_equal 1, session.write(nil, "x")
+    assert_equal "x", sink.read(1)
+    assert_equal 5, session.write(false)
+    assert_equal "false", sink.read(5)
+    assert_equal 0, session.write(nil)
+  end
+
   def test_invalid_write_counts_fail_on_the_first_attempt
     [0, -1, nil, "3", 4].each do |invalid|
       session, = writable_session

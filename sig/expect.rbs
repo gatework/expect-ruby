@@ -263,6 +263,21 @@ module Expect
     def timeout: () ?{ (Array[Session]) -> untyped } -> PatternList
   end
 
+  class Responder
+    class ResponseError < StandardError
+    end
+
+    def initialize: () ?{ (Responder) -> untyped } -> void
+
+    def on: ((String | Regexp) pattern, ?reply: String?, ?limit: Integer?)
+      ?{ (Session) -> untyped } -> Responder
+
+    def expect: (Session session, *pattern patterns, ?timeout: duration?, ?deadline: duration?)
+      ?{ (PatternList) -> untyped } -> Result
+
+    def inspect: () -> String
+  end
+
   class Redactor
     def self.redact: (String data, Array[String] patterns, ?replacement: String) -> String
 

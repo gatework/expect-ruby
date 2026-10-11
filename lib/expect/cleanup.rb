@@ -6,14 +6,21 @@ module Expect
   module Cleanup
     # 包括非局部返回在内的所有退出均清理；StandardError 只在没有原异常时传播。
     # 清理期间新发生的 Interrupt、SystemExit 等致命异常仍原样传播。
-    def self.always(on_exit)
-      yield
+    # report_completion 仅供关闭策略区分正常结束、取消及非局部退出，不改变异常优先级。
+    def self.always(on_exit, report_completion: false)
+      result = yield
+      completed = true
+      result
     rescue Exception # rubocop:disable Lint/RescueException -- 中断也必须清理，然后原样传播。
       failed = true
       raise
     ensure
       begin
-        on_exit.call
+        if report_completion
+          on_exit.call(completed && !failed && Thread.current.status != "aborting")
+        else
+          on_exit.call
+        end
       rescue StandardError
         raise unless failed
       end

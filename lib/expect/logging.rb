@@ -10,7 +10,7 @@ module Expect
   # 宿主 Session 初始化目标与过滤器状态，并提供 pid、fileno 作为诊断元数据。
   # 三种输出各有边界：Logger 接收事件，transcript 接收脱敏字节，outputs 接收原协议字节。
   module Logging
-    # 调用方提供的诊断 Logger 与原始接收记录 writer，均由调用方管理生命周期。
+    # 调用方提供的诊断 Logger 与接收记录 writer，均由调用方管理生命周期。
     attr_reader :logger, :transcript
 
     # Logger 自己决定级别、格式与失败策略；nil 禁用诊断，不隐式写入 stderr。

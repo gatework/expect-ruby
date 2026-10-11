@@ -22,6 +22,8 @@ Session 构造器不接收命令或操作参数。同一会话只能启动一次
 TERM；
 `hard_close(timeout: 0.2)` 关闭句柄后分阶段等待、TERM、KILL。后两者和 `wait(timeout: nil)` 返回真实 `Process::Status` 或
 nil。
+直接 `soft_close` 在读尾、日志或输出交付失败时仍尝试软关闭并保留原始异常；失败路径跳过剩余自然退出等待，
+尤其不会因 `timeout: nil` 阻塞异常传播，TERM 阶段仍使用 `term_timeout`，不会升级为 KILL。参数校验失败不关闭会话。
 借用 IO 不随会话关闭。输入 EOF、IO 关闭与子进程退出分别由 `eof?`、`closed?`、`process_status` 表示。
 
 ## 匹配与回调
@@ -62,6 +64,48 @@ nil。
 匹配、捕获按原始字节保存；文本显示时先 `dup` 再 `force_encoding`。固定 UTF-8 正则等待尾部字符收齐，非法编码抛出
 EncodingError。
 成功默认消费匹配前缀，超时保留缓冲，EOF 将余下内容放入 before 并清空缓冲。EOF 不表示子进程已经退出。
+
+## 自动应答
+
+已有 `PatternList#on` 配合 `Expect.continue` 可手写应答循环。批量脚本使用 `Expect::Responder` 复用规则，
+不必每条命令重新拼接回调；普通 `expect` 的声明优先级保持不变。
+
+```ruby
+rules = Expect::Responder.new do |responses|
+  responses.on("Apply change? [y/N] ", reply: "y\n", limit: 5)
+  responses.on("--More--", reply: " ", limit: 100)
+  responses.on(/Repeat code (\d+): /, limit: 1) { |session| session.puts(session.captures.first) }
+end.freeze
+
+# 登录并收取设备初始提示后，再逐条发送配置。
+commands.each do |command|
+  session.puts(command)
+  result = rules.expect(session, "device>", timeout: 30, deadline: Expect.monotonic + 60)
+  raise "command incomplete: #{result.error}" unless result.matched?
+end
+```
+
+- `on(pattern, reply: nil, limit: nil)` 只接受非空 String 或 Regexp；必须提供 String 回复或动作块，二者互斥。
+  静态字符串复制并冻结，块收到带 `before`、`match`、`captures` 的 Session；块返回值忽略，应答后继续等待。
+- `reply` 原样发送，行确认自行包含 `\n` 或 `\r`，分页可发送空格；空回复合法但不产生字节。
+  不内置通用“全部确认”规则，调用方应按目标设备及业务选择精确提示和回复。
+- `expect(session, *patterns, timeout: session.timeout, deadline: nil)` 仅处理一个 Session；也可使用与 `expect` 相同的
+  PatternList 块声明完成模式、EOF 和 timeout 回调。位置参数模式与块不能同时提供。
+- 自动应答与完成模式按最早的字节位置处理；同位置时完成模式先于应答，多个应答按声明顺序。
+  不按正则长度推测未完成提示，不在未知提示上猜测回复。仅将成功匹配的文本视为完成，业务错误输出需由调用方注册为终止模式并检查。
+- 每条规则的 `limit` 是一次等待内的最大应答次数，必须为正 Integer，nil 不限；每次调用独立计数。
+  超限或正则匹配空文本时，抛出 `Expect::Responder::ResponseError`，且不执行本次应答。触发该异常的匹配已经按普通匹配语义消费，
+  未读尾部留在会话中。应答发送失败原样传播，不自动重试可能已经部分交付的确认。
+- 应答不重置相对 timeout，deadline 仍是不可延长的总期限；沿用 Matcher 的协作式期限检查。
+  动作块、单次正则计算和写入不由匹配期限强行中断；应为会话配置 `write_timeout`。
+  timeout 和 EOF 返回普通 Result，默认未知提示等到超时。显式完成回调仍遵循 `Expect.continue` 契约。
+- 中途应答消费 `before` 和 `match`；最后 Result 仅表示完成、EOF 或超时，不汇总整条脚本输出。
+  需要全文时在发送命令前设置 `session.transcript`；逐段展示可在动作块打印 `before/match`，完成后打印最终 `before`。
+  完成后的尾部保留给下一轮。发送秘密前调用 `session.redact(secret)`，回复会经过正常写入诊断，规则摘要不展示内容。
+- 注册阶段不读写 IO；每次等待快照规则，回调中的规则修改仅影响以后等待。不接管会话资源，
+  不保证同一会话并发操作安全；设备的 SSH 登录和配置成功判定仍属于调用方。
+
+本地设备模拟见 `examples/auto_response.rb`；`examples/ssh_auto.rb` 接入精确规则并保留分段输出和完整 transcript。
 
 ## 会话属性与读写
 

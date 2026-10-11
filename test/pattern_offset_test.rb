@@ -30,6 +30,15 @@ class PatternOffsetTest < ExpectTest
     end
   end
 
+  def test_range_only_regex_matching_keeps_encoding_validation_and_byte_offsets
+    pattern = Expect.const_get(:Pattern).new(value: /(中)(x)?/)
+    assert_equal [3, 3, []], pattern.locate("前中尾".b, captures: false)
+    assert_equal [3, 3, ["中".b, nil]], pattern.locate("前中尾".b)
+    incomplete = "前中😀".b.byteslice(0...-1)
+    assert_nil pattern.locate(incomplete, captures: false)
+    assert_raises(EncodingError) { pattern.locate(incomplete, final: true, captures: false) }
+  end
+
   def test_incomplete_utf8_defers_matching_and_eof_still_rejects_it
     pattern = Expect.const_get(:Pattern).new(value: /中(?=😀)/)
     bytes = "前中😀".b

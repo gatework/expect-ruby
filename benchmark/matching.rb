@@ -126,4 +126,31 @@ end
     pipes.flatten.each(&:close)
   end
 end
+# 超时快照与继续回调的缓冲分配单独计量，不把未读取字节当作网络吞吐。
+reader, writer = IO.pipe
+session = Expect.open(reader)
+begin
+  payload = "x" * (runner.smoke ? 4096 : 1_048_576)
+  session.buffer = payload
+  runner.measure("snapshot/timeout", bytes: 0, inputs: { buffered_bytes: payload.bytesize }, iterations: 1000,
+                                     verify: lambda { |result|
+                                       ExpectBenchmark.check(result.timeout? && result.before == payload &&
+                                                             result.before.frozen?)
+                                     }) { session.record_error(:timeout) }
+  session.clear_buffer
+  runner.measure("snapshot/continue", bytes: 0, inputs: { buffered_bytes: payload.bytesize }, iterations: 1000,
+                                      verify: lambda { |result|
+                                        ExpectBenchmark.check(result.match == "DONE" && result.before.empty?)
+                                      }) do
+    session.buffer = "#{payload}?DONE"
+    session.expect(timeout: 0) do |patterns|
+      patterns.on("?") { Expect.continue }
+      patterns.on("DONE")
+    end
+  end
+ensure
+  session.close
+  reader.close
+  writer.close
+end
 runner.finish

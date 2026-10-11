@@ -10,6 +10,16 @@ require_relative "support/ssh"
 # 在这里按顺序填写要执行的 macOS / POSIX shell 命令。
 COMMANDS = ["id", "uname -srm", "sw_vers", "df -h /", "uptime"].freeze
 PROMPT = "MACOS> "
+# 只应答业务明确允许的提示；按目标脚本修改精确模式和回复，换行显式写入。
+RESPONSES = Expect::Responder.new do |rules|
+  { "Continue deployment? [y/N] " => "y\n", "--More--" => " " }.each do |pattern, reply|
+    rules.on(pattern, limit: 20) do |connection|
+      # 中途应答会消费已读前缀；分段打印，完整原始输出仍由 transcript 保存。
+      print connection.before.gsub("\r\n", "\n"), connection.match
+      connection.write(reply)
+    end
+  end
+end.freeze
 
 if ARGV.delete("--help")
   puts "用法：ruby examples/ssh_auto.rb [--no-interact]"
@@ -50,8 +60,8 @@ begin
         token = SecureRandom.hex(8)
         # 远端拼接结束标记并带回退出码，避免把命令回显当成执行结果。
         ssh.write("#{command}; printf '\\n__DONE_%s:%s\\n' '#{token}' \"$?\"\n")
-        ssh.expect(/\r?\n__DONE_#{token}:(\d+)\r?\n#{Regexp.escape(PROMPT)}/,
-                   timeout: 30).matched? or abort "命令未完成：#{ssh.error}"
+        RESPONSES.expect(ssh, /\r?\n__DONE_#{token}:(\d+)\r?\n#{Regexp.escape(PROMPT)}/,
+                         timeout: 30).matched? or abort "命令未完成：#{ssh.error}"
         print ssh.before.gsub("\r\n", "\n")
         abort "命令失败（退出码 #{ssh.captures.first}）：#{command}" unless ssh.captures.first == "0"
       end

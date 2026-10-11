@@ -5,6 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 bundle exec rake
 bundle exec ruby examples/dialogue.rb
+bundle exec ruby examples/auto_response.rb
 
 # 只检查小规模工作负载的正确性，不为共享 CI 机器设置性能阈值。
 for benchmark in matching relay send_slow scaling redactor; do
@@ -83,6 +84,17 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", child, raw: true) do |sessio
   abort "installed gem PTY dialogue failed" unless session.expect("reply:expect-ruby", timeout: 5).matched?
   status = session.soft_close(timeout: 5)
   abort "installed gem child did not exit successfully" unless status&.success?
+end
+
+# 用安装后的规则集验证反复确认和原始分页字节，不借用源码路径。
+automation = 'STDOUT.sync = true; 2.times { print "Confirm?"; abort unless STDIN.gets == "y\n" }; print "--More--"; abort unless STDIN.read(1) == " "; puts "DONE"'
+rules = Expect::Responder.new do |responses|
+  responses.on("Confirm?", reply: "y\n", limit: 2)
+  responses.on("--More--", reply: " ", limit: 1)
+end
+Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", automation, raw: true, write_timeout: 2) do |session|
+  abort "installed responder failed" unless rules.expect(session, "DONE", timeout: 3).matched?
+  abort "installed responder child failed" unless session.soft_close(timeout: 2)&.success?
 end
 
 # 使用已安装包验证公共过滤器随包分发，且结构化诊断使用标准 Logger。

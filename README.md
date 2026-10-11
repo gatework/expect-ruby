@@ -38,6 +38,7 @@ The block closes the session and reaps its child process, including when the blo
 
 ## Features
 
+- Reusable automatic response rules for repeated confirmations, paging, and dynamic replies.
 - Exact byte-string and Ruby Regexp matching, immutable results, callbacks, timeouts, and EOF handling.
 - Explicit PTY sessions or borrowed IO sessions, with scoped cleanup and process status.
 - Multi-session waits, IO forwarding, and interactive terminal handoff.

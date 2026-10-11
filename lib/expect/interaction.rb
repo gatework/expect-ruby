@@ -142,7 +142,7 @@ module Expect
           # 仅在本轮扫描复用组合文本；回调可能更换规则或消费缓冲，下一轮必须重新构造。
           text ||= history + buffer
           utf8_regexp ||= key.fixed_encoding? && key.encoding == Encoding::UTF_8
-          position = Pattern.new(value: key).locate(text, final:)
+          position = Pattern.new(value: key).locate(text, final:, captures: false)
           if position
             offset, length, = position
             raise ArgumentError, "escape regexp must consume at least one byte" if length.zero?

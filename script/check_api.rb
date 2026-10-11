@@ -9,7 +9,7 @@ require_relative "../lib/expect"
 module APICheck
   ROOT = Pathname(__dir__).parent.freeze
   TYPES = [Expect, Expect::Session, Expect::Result, Expect::PatternList,
-           Expect::Redactor, Expect::WriteTimeout].freeze
+           Expect::Redactor, Expect::WriteTimeout, Expect::Responder].freeze
   DATA_METHODS = %i[members with to_h deconstruct deconstruct_keys].freeze
 
   # 逐个核对公开类型的文档与签名；任一缺口直接报错，全部通过后才输出成功提示。

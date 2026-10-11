@@ -3,6 +3,46 @@
 require_relative "test_helper"
 
 class ScanReuseTest < ExpectTest
+  def test_terminal_match_without_callback_does_not_copy_a_progress_snapshot
+    session, = pipe_session
+    session.buffer = "output READY tail"
+    session.stub(:buffer, -> { flunk "unnecessary progress snapshot" }) do
+      result = session.expect("READY", timeout: 0)
+      assert_equal "output ", result.before
+      assert_equal " tail", result.after
+    end
+  end
+
+  def test_continuing_match_only_takes_one_progress_snapshot
+    session, = pipe_session
+    session.buffer = "question?DONE"
+    copies = 0
+    original = session.method(:buffer)
+    session.stub(:buffer, lambda {
+      copies += 1
+      original.call
+    }) do
+      result = session.expect(timeout: 0) do |patterns|
+        patterns.on("question?") { Expect.continue }
+        patterns.on("DONE")
+      end
+      assert result.matched?
+    end
+    assert_equal 1, copies
+  end
+
+  def test_error_snapshot_does_not_use_an_extra_public_buffer_copy
+    session, = pipe_session
+    session.buffer = "retained output"
+    result = nil
+    session.stub(:buffer, -> { flunk "unnecessary intermediate error snapshot" }) do
+      result = session.record_error(:timeout)
+    end
+    session.buffer = "next output"
+    assert_equal "retained output", result.before
+    assert result.before.frozen?
+  end
+
   def test_each_scan_borrows_a_session_buffer_once_across_non_adjacent_groups
     first, = pipe_session
     second, = pipe_session

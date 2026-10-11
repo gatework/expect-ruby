@@ -19,8 +19,9 @@ module Expect
 
     # 在缓冲中定位字符串或正则，返回 [字节偏移, 字节长度, 捕获组]；事件或未匹配返回 nil。
     # buffer 应为二进制字符串，offset 仅用于字面扫描；正则始终看到完整窗口以保留锚点语义。
+    # captures 为 false 时只求字节范围，转义扫描不分配随后丢弃的捕获字符串。
     # final 表示不会再有新输入，此时不完整的编码尾部也必须报错，不能永远当作等待分片。
-    def locate(buffer, final: false, offset: 0)
+    def locate(buffer, final: false, offset: 0, captures: true)
       case value
       when String
         offset = buffer.index(value, offset)
@@ -42,7 +43,7 @@ module Expect
 
         # 直接使用正则的字节范围，避免为转换字符偏移创建前缀切片；捕获组也返回字节串。
         offset, finish = found.byteoffset(0)
-        return [offset, finish - offset, found.captures.map { |capture| capture&.b }]
+        return [offset, finish - offset, captures ? found.captures.map { |capture| capture&.b } : []]
       end
       nil
     end

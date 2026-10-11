@@ -11,6 +11,7 @@ require_relative "expect/pattern_list"
 require_relative "expect/matcher"
 require_relative "expect/cleanup"
 require_relative "expect/session"
+require_relative "expect/responder"
 
 # PTY 会话的创建、匹配与转接入口；可变状态只属于返回的 Session。
 module Expect
@@ -149,7 +150,8 @@ module Expect
     end
 
     # 声明完成后固定模式；有参数块保留调用方 self，无参数块使用模式 DSL。
-    def run_expect(sessions, patterns, timeout, deadline:, consume:, reset_timeout_on_read:, &block)
+    def run_expect(sessions, patterns, timeout, deadline:, consume:, reset_timeout_on_read:,
+                   match_by_position: false, &block)
       timeout = duration(timeout)
       deadline = Float(deadline) unless deadline.nil?
       raise ArgumentError, "deadline must be finite" if deadline && !deadline.finite?
@@ -159,7 +161,7 @@ module Expect
       if block
         block.parameters.empty? ? pattern_list.instance_exec(&block) : block.call(pattern_list)
       end
-      Matcher.new(pattern_list, timeout, deadline:, consume:, reset_timeout_on_read:).run
+      Matcher.new(pattern_list, timeout, deadline:, consume:, reset_timeout_on_read:, match_by_position:).run
     end
   end
 end

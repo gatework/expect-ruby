@@ -263,3 +263,22 @@ RelayWriter 在底层确认短写后先推进游标，再提交目标 Session �
 | 总期限和目标写期限、连续中断不延长写超时                 | relay_recovery_test                                               |
 
 保留独立的 Matcher、Relay、write、wait 期限合同；仅为去重而统一事件循环会扩大上述状态交接的影响范围。
+
+## 自动应答编排
+
+Responder 只持有已复制的模式、静态回复与借用动作块，每次等待快照声明并新建局部计数，不保存 Session 或匹配运行状态。
+通过既有 PatternList 与 Matcher 执行，不维护第二套读取循环。只有此单会话入口启用按字节位置选择，普通 expect 保持声明优先级；
+同位置完成模式先于应答规则。计数及零宽保护在匹配记录后、发送前检查，失败不重试部分写入。应答使用保留期限的继续符号。
+完整输出由既有 transcript 交付，最终 Result 不额外拼接或保留所有中间输出，内存仍受匹配窗口和调用方归档策略控制。
+新增回归入口为 responder_test，普通匹配的无回调快照省略由 scan_reuse_test 覆盖。
+
+## 软关闭失败与快照分配
+
+直接 soft_close 的读尾循环进入 Cleanup 作用域，退出时始终调用同一 close_resources(force: false)。正常完成沿用自然阶段
+剩余预算并返回 Process::Status/nil；读尾或交付失败时自然等待预算归零，避免无限等待妨碍异常传播。TERM 策略、借用 IO、
+未回收 PID 及主异常优先级保持既有合同，参数校验位于清理作用域之外。Cleanup 的内部 report_completion 只在该入口报告
+受保护主体实际完成的状态，取消、线程终止和非局部退出不进入无限自然等待，不读取调用者 rescue 中遗留的 `$!`。回归入口为 soft_close_failure_test。
+
+Result 负责唯一一次文本副本和冻结；record_error 直接交付内部缓冲，不先调用公开 buffer 复制。继续回调前仍创建进展快照，
+回调后只读借用 scan_buffer 比较，不创建第二份临时副本。Pattern 的 captures: false 仅供正则转义取字节范围，
+不改变编码校验、零宽拒绝、Matcher 和 Responder 的捕获结果。回归入口为 scan_reuse_test、pattern_offset_test、write_contract_test。

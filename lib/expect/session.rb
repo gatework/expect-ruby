@@ -181,7 +181,8 @@ module Expect
       raise IOError, "closed Expect session" if closed? || writer.closed?
 
       begin
-        data = objects.map { |object| object.to_s.b }.join
+        # 单对象不需要中间数组与 join 副本；to_s、诊断和部分写入仍经过同一条路径。
+        data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join
         trace_data(:sending, data)
       rescue WriteTimeout
         # 转换或诊断中的嵌套写入不属于当前命令；此时尚未向 writer 发送任何字节。
@@ -252,20 +253,28 @@ module Expect
 
     # 先在自然退出期限内收集尾部输出，再关闭句柄并最多发送 TERM；不会发送 KILL。
     # 尚未退出时返回 nil 并保留 PID，调用方可以继续等待或随后硬关闭。
+    # 读尾或交付失败仍完成软关闭，保留主异常；失败路径跳过自然等待，不升级为 KILL。
     def soft_close(timeout: 15, term_timeout: 1)
       period = Expect.duration(timeout)
       term_timeout = Expect.duration(term_timeout)
       raise ArgumentError, "term_timeout must be finite" unless term_timeout
 
       deadline = period && (Expect.monotonic + period)
-      until eof?
-        remaining = deadline && [deadline - Expect.monotonic, 0].max
-        break if remaining&.zero? || !to_io.wait_readable(remaining)
-
-        read_available
+      status = nil
+      cleanup = lambda do |completed|
+        # 读尾失败后不再等待自然退出，尤其不能用 nil 预算无限阻塞异常传播。
+        remaining = completed ? (deadline && [deadline - Expect.monotonic, 0].max) : 0
+        status = close_resources(timeout: remaining, term_timeout:, force: false)
       end
-      close_resources(timeout: deadline ? [deadline - Expect.monotonic, 0].max : nil,
-                      term_timeout:, force: false)
+      Cleanup.always(cleanup, report_completion: true) do
+        until eof?
+          remaining = deadline && [deadline - Expect.monotonic, 0].max
+          break if remaining&.zero? || !to_io.wait_readable(remaining)
+
+          read_available
+        end
+      end
+      status
     end
 
     # 立即关闭句柄，再分阶段等待、TERM、KILL；不收集剩余输出，返回已回收状态或 nil。
@@ -323,7 +332,8 @@ module Expect
     # 记录超时、EOF 或原始 IO 异常，保留当前缓冲快照并清除旧匹配及捕获组。
     # @api private
     def record_error(error)
-      @last_result = Result.new(error:, before: buffer, session: self, captures: [])
+      # Result 自行复制冻结文本，无须先通过公开 buffer 再复制一遍。
+      @last_result = Result.new(error:, before: @buffer, session: self, captures: [])
     end
 
     # 输入结束时将剩余缓冲放入 before 并清空，尝试回收但不终止仍活跃的子进程。

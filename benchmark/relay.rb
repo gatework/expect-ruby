@@ -145,4 +145,17 @@ end
     pipes.flatten.each { |io| io.close unless io.closed? }
   end
 end
+# 转义回调不接收捕获组；验证带捕获正则仍返回相同的字节范围和停止动作。
+regexp = /(S)(T)(O)(P)/n
+handler = -> { false }
+sequences = { regexp => handler }
+text = "prefixSTOPtail".b
+history = "".b
+runner.measure("escape/capture-range", bytes: 0, inputs: { capture_groups: 4 }, iterations: 10_000,
+                                       verify: lambda { |result|
+                                         found, scanned, utf8 = result
+                                         ExpectBenchmark.check(found == [6, 4, handler] && scanned && !utf8)
+                                       }) do
+  Expect::Interaction.__send__(:scan_sequences, text, sequences, history, final: true)
+end
 runner.finish
