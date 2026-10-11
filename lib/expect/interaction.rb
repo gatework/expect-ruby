@@ -64,20 +64,14 @@ module Expect
       saved_self = outputs
       saved_source = [source.outputs, source.sequences.dup]
       terminal_state = prepare_interact_terminal(source) if raw
-      display = interact_display(source, output, terminal_state)
-      # 临时建立“用户输入 -> 子进程 -> 显示输出”的双向连接，原监听关系在 ensure 中恢复。
-      self.outputs = [display]
-      source.outputs = [self]
-      source.on_sequence(escape) unless escape.nil?
-      Relay.new([self, source], timeout).run
-    ensure
-      begin
-        if saved_self
-          self.outputs = saved_self
-          source.outputs, source.sequences = saved_source
-        end
-      ensure
-        restore_interact_terminal(terminal_state)
+      # 先持有恢复快照，再在同一清理作用域内切换终端；返回值交接中断不能留下 raw 模式。
+      Cleanup.always(-> { restore_interact(source, saved_self, saved_source, terminal_state) }) do
+        terminal_state&.first&.raw!
+        display = interact_display(source, output, terminal_state)
+        self.outputs = [display]
+        source.outputs = [self]
+        source.on_sequence(escape) unless escape.nil?
+        Relay.new([self, source], timeout).run
       end
     end
 
@@ -268,16 +262,20 @@ module Expect
       @interact_inputs[input] ||= Expect.open(input)
     end
 
-    # 只有 interact 知道哪个流是本地键盘；通用 interconnect 不修改终端模式。
+    # 只取得快照；实际 raw! 由持有快照的 interact 在清理作用域内执行。
     def prepare_interact_terminal(source)
       return unless source.tty?
 
-      state = nil
-      Cleanup.on_failure(-> { restore_interact_terminal(state) }) do
-        io = source.to_io
-        state = [io, io.console_mode]
-        io.raw!
-        state
+      io = source.to_io
+      [io, io.console_mode]
+    end
+
+    # 独立尝试每项恢复；常规恢复错误不能覆盖业务主异常，新的中断仍按 Cleanup 契约传播。
+    def restore_interact(source, saved_self, saved_source, terminal_state)
+      Cleanup.always(-> { restore_interact_terminal(terminal_state) }) do
+        Cleanup.always(-> { source.sequences = saved_source.last }) do
+          Cleanup.always(-> { source.outputs = saved_source.first }) { self.outputs = saved_self }
+        end
       end
     end
 

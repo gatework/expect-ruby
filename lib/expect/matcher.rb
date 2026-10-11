@@ -25,17 +25,7 @@ module Expect
     # 运行匹配状态机；内部 :retry 表示继续循环，最终返回一个 Result。
     def run
       @relay_buffers = {}.compare_by_identity
-      @sessions.each do |session|
-        buffer = session.interaction_buffer
-        if buffer
-          # 转义回调中的显式匹配临时接管读取，先消费转接已经预读的尾部。
-          @relay_buffers[session] = buffer
-          session.interaction_buffer = nil
-          session.restore_relay_buffer(buffer)
-          buffer.clear
-        end
-        session.reset_result
-      end
+      prepare_sessions
       loop do
         # 先消费已缓冲的匹配，再处理 EOF，最后读取；避免进程退出时丢失最后一个匹配。
         result = if !@expired_eof_continuation && !hard_expired? && (matched = find_match)
@@ -50,14 +40,38 @@ module Expect
         return result unless result == :retry
       end
     ensure
-      # 嵌套 expect 即使异常退出，也要把未消费尾部还给原 Relay 的同一个缓冲对象。
-      @relay_buffers.each do |session, buffer|
-        buffer.replace(session.take_buffer)
-        session.interaction_buffer = buffer
-      end
+      restore_relay_buffers
     end
 
     private
+
+    # 转义回调中的匹配临时接管预读尾部；缓冲登记和移交是一个不可拆开的状态变更。
+    # 仅内部所有权操作延迟异步取消，扫描、IO、日志及用户回调仍可立即中断。
+    def prepare_sessions
+      @sessions.each do |session|
+        if (buffer = session.interaction_buffer)
+          Thread.handle_interrupt(Object => :never) do
+            @relay_buffers[session] = buffer
+            session.interaction_buffer = nil
+            session.restore_relay_buffer(buffer)
+            buffer.clear
+          end
+        end
+        session.reset_result
+      end
+    end
+
+    # 先归还所有借用来源再交付新的取消；返回尾部与恢复原缓冲对象不能被中断拆开。
+    def restore_relay_buffers
+      return if @relay_buffers.empty?
+
+      Thread.handle_interrupt(Object => :never) do
+        @relay_buffers.each do |session, buffer|
+          buffer.replace(session.take_buffer)
+          session.interaction_buffer = buffer
+        end
+      end
+    end
 
     # 按声明组、会话、模式的顺序寻找首个匹配，不按文本中的出现位置重新排序。
     # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 声明优先级与单轮缓冲须在同一次扫描保持一致。

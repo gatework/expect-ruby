@@ -126,6 +126,20 @@ end
         Expect.interconnect(*sessions, timeout: 0)
       end
     end
+
+    # 环形 Session 目标都存在待发数据；只测背压读取源选择，不把内部调度样本当作完整转接吞吐。
+    sessions.each_with_index do |source, index|
+      source.outputs = [sessions[(index + 1) % count]]
+      source.queue_output("queued")
+    end
+    relay = Expect.const_get(:Relay).new(sessions, nil)
+    pending = sessions.flat_map(&:pending_writes)
+    expected_ids = sessions.map(&:object_id)
+    verify = ->(result) { ExpectBenchmark.check(result.map(&:object_id) == expected_ids) }
+    runner.measure("backpressure_sources/#{count}", bytes: 0, inputs: { sessions: count, pending: pending.size },
+                                                    iterations: 1000, verify:) do
+      relay.__send__(:read_sources, pending)
+    end
   ensure
     sessions.each(&:close)
     pipes.flatten.each { |io| io.close unless io.closed? }

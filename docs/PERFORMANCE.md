@@ -1,5 +1,37 @@
 # 性能基准
 
+## 背压读取源身份索引（2026-10-11）
+
+基线为 `1af23e6`（0.7.6）。Relay 原先对每个背压来源重新遍历所有待写 Session 目标；候选每轮建立一次身份 Hash，
+在多会话互为目标时减少重复遍历。来源顺序、共享 IO 去重、EOF 排除及解除双向背压的读取策略保持相同。
+
+macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20，冻结两套库源码，以同一份 `benchmark/relay.rb` 串行运行，
+每个工作负载预热并采样五次。下表为五个样本的中位数，读取源选择每样本执行 1,000 次：
+
+| 环形待写 Session 数 | 基线 ms | 候选 ms | 基线 → 候选分配对象 |
+|----------------------|--------:|--------:|--------------------:|
+| 1 | 0.524 | 0.567 | 7,001 → 8,001 |
+| 16 | 8.990 | 6.325 | 7,001 → 8,001 |
+| 64 | 73.516 | 23.719 | 7,001 → 8,001 |
+| 256 | 927.294 | 97.681 | 7,001 → 8,001 |
+
+64 和 256 来源的内部选择分别约快 3.1 和 9.5 倍；代价是每次选择增加一个对象，单来源微小负载略慢。
+这些样本只测 `read_sources`，不进行字节转发；`bytes: 0` 明确表示调度操作，不能换算为完整转接或设备吞吐。
+完整转接场景也执行输出断言：64 来源全部就绪的每百次操作为 30.520 → 30.561 ms，256 来源为
+122.002 → 123.075 ms；256 来源仅末个就绪为 58.313 → 62.413 ms。安全交接及索引有少量固定成本，
+不能声称所有工作负载都加速。每个选择样本的描述符端点保持不变；这不代表长期泄漏或峰值内存证明。
+
+```sh
+bundle exec ruby benchmark/relay.rb --library /path/to/baseline/lib --samples 5 --output tmp/review-20261011/relay-before-repeat.json
+bundle exec ruby benchmark/relay.rb --library /path/to/candidate/lib --samples 5 --output tmp/review-20261011/relay-after-final.json
+bundle exec ruby benchmark/relay.rb --library /path/to/baseline/lib --sessions 256 --samples 5 --output tmp/review-20261011/relay-256-before-repeat.json
+bundle exec ruby benchmark/relay.rb --library /path/to/candidate/lib --sessions 256 --samples 5 --output tmp/review-20261011/relay-256-after-final.json
+```
+
+基线库 SHA-256 为 `d3d1d4dcdfc9a636038b4676a7fc9991bbd4fc25f93e7e996fb1b9b1a71f2336`，候选为
+`da085bb9d7ce15b0b6310221d0bd9044c5942614b97085d647a2a0b77652ef18`；原始报告在忽略目录
+`tmp/review-20261011/`。未并行运行全量测试，没有 CPU 或网络隔离，不设置 CI 墙钟阈值。
+
 ## 共享字节前缀与流尾脱敏（2026-10-09）
 
 基线为 `ff9ae89`（0.7.5），候选将转义暂存与流尾脱敏的最长真前缀计算集中到内部 LiteralPrefix。

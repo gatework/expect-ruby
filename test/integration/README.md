@@ -20,6 +20,9 @@ SSH_HOST=192.0.2.10 SSH_USER=operator SSH_PORT=22 \
   EXPECT_LOG_DIR=tmp/device-check ruby test/integration/ssh_scripts.rb
 ```
 
+`SSH_KNOWN_HOSTS` 按单个文件路径传递，路径中的 `%` 会保留原字面值；包含 `${` 的路径会在启动 SSH 前报错，
+避免 OpenSSH 再次展开环境变量后读取另一个文件。请让启动脚本的 shell 先展开 `$HOME`，如上例所示。
+
 这是 POSIX shell 脚本测试；厂商专用 CLI（如交换机的 `show` 命令、分页提示符）需要对应设备的命令和预期输出，不能直接使用这些
 shell fixtures。
 

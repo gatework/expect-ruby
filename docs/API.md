@@ -114,6 +114,7 @@ DEBUG 关闭期间仍推进分片脱敏，但这些字节不会在重新启用�
 
 `interact(input: $stdin, escape: nil, output: nil, timeout: nil, raw: true)` 临时建立双向转接，退出后恢复
 outputs、转义和本地终端模式。
+各项恢复都会尝试；恢复中的常规错误不会覆盖已有的业务异常，没有业务异常时仍报告恢复错误。
 `output: nil` 使用默认输出，`escape: nil` 不注册退出序列；显式 false 不是缺省值，非法输出或转义会在转发前报错。
 `raw: false` 将终端设置留给调用方。transcript、logger 及自定义 writer 同步执行，应及时返回。
 

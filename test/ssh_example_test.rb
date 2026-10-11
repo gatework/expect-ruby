@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require_relative "../examples/support/ssh"
+require "open3"
 
 class SSHExampleTest < ExpectTest
   def test_loopback_uses_isolated_known_hosts_and_explicit_arguments
@@ -44,6 +45,38 @@ class SSHExampleTest < ExpectTest
     end
   end
 
+  def test_known_hosts_paths_remain_literal_after_openssh_expansion
+    ["/tmp/known%hosts", "/tmp/known%qhosts", "/tmp/known%%hosts", "/tmp/known hosts",
+     '/tmp/known"hosts', '/tmp/known\\hosts', "/tmp/known#hosts", "/tmp/$cash/known_hosts"].each do |path|
+      options = SSHExample.options("USER" => "alice", "SSH_KNOWN_HOSTS" => path)
+      arguments = SSHExample.arguments(options, directory: "/tmp/private", prompt: "> ")
+
+      assert_equal path, expanded_known_hosts(arguments)
+    end
+  end
+
+  def test_generated_known_hosts_path_preserves_percent_in_its_directory
+    options = SSHExample.options("USER" => "alice")
+    arguments = SSHExample.arguments(options, directory: "/tmp/private%hosts", prompt: "> ")
+
+    assert_equal "/tmp/private%hosts/known_hosts", expanded_known_hosts(arguments)
+  end
+
+  def test_known_hosts_paths_reject_openssh_environment_expansions_before_connecting
+    ["${USER}", "${UNSET_EXPECT_SSH_PATH}", "${unfinished"].each do |expression|
+      path = "/tmp/#{expression}/known_hosts"
+      options = SSHExample.options("USER" => "alice", "SSH_KNOWN_HOSTS" => path)
+      error = assert_raises(ArgumentError) do
+        SSHExample.arguments(options, directory: "/tmp/private", prompt: "> ")
+      end
+      assert_includes error.message, "known_hosts path"
+      assert_includes error.message, "${"
+
+      defaults = SSHExample.options("USER" => "alice")
+      assert_raises(ArgumentError) { SSHExample.arguments(defaults, directory: path, prompt: "> ") }
+    end
+  end
+
   def test_password_is_removed_from_environment_and_copied_without_printing
     original = "top secret"
     environment = { "EXPECT_PASSWORD" => original }
@@ -66,5 +99,31 @@ class SSHExampleTest < ExpectTest
       end
     end
     assert_raises(ArgumentError) { SSHExample.read_password(environment: {}, input: StringIO.new, output:) }
+  end
+
+  private
+
+  # -G parses configuration without connecting; drain both pipes while the child runs.
+  def expanded_known_hosts(arguments)
+    Open3.popen3({ "LC_ALL" => "C" }, arguments.first, "-G", *arguments.drop(1)) do |input, output, errors, child|
+      input.close
+      stdout = background { output.read }
+      stderr = background { errors.read }
+      unless child.join(5)
+        begin
+          Process.kill("KILL", child.pid)
+        rescue Errno::ESRCH
+          # The process may exit between the deadline and the signal.
+        end
+        flunk "ssh -G did not finish within 5 seconds"
+      end
+
+      assert child.value.success?, "ssh -G failed: #{stderr.value}"
+      setting = stdout.value.lines.find { |line| line.start_with?("userknownhostsfile ") }
+      refute_nil setting, "ssh -G did not report UserKnownHostsFile"
+      setting.delete_prefix("userknownhostsfile ").chomp
+    end
+  rescue Errno::ENOENT
+    skip "OpenSSH ssh is required to verify known_hosts path parsing"
   end
 end

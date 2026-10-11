@@ -43,6 +43,12 @@ module SSHExample
     # -o values are parsed again by OpenSSH; quote this single filename for ssh_config.
     # Shell escaping is different: OpenSSH preserves a shell-style \# escape literally.
     hosts_path = known_hosts || File.join(directory, "known_hosts")
+    if hosts_path.include?("${")
+      raise ArgumentError, "known_hosts path must not contain ${ expressions expanded by OpenSSH"
+    end
+
+    # Quotes do not disable percent tokens; %% represents one literal percent sign.
+    hosts_path = hosts_path.gsub("%", "%%")
     quoted_hosts_path = %("#{hosts_path.gsub(/[\\"]/) { |character| "\\#{character}" }}")
     ["ssh", "-F", "/dev/null", "-tt", "-p", port.to_s,
      "-o", "ConnectTimeout=5", "-o", "NumberOfPasswordPrompts=1",

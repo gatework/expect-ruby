@@ -142,21 +142,27 @@ module Expect
 
         @sessions.each { |session| session.relay_owner = @token }
       end
-      @sessions.each do |session|
-        @previous[session] = session.interaction_buffer
-        @buffers[session] = session.take_buffer
-        session.interaction_buffer = @buffers.fetch(session)
+      # take_buffer 已移出会话后，必须先登记到本轮账本才能交付异步取消；此处不执行 IO 或用户回调。
+      Thread.handle_interrupt(Object => :never) do
+        @sessions.each do |session|
+          @previous[session] = session.interaction_buffer
+          @buffers[session] = session.take_buffer
+          session.interaction_buffer = @buffers.fetch(session)
+        end
       end
     end
 
     # 未处理输入还给会话，已排队字节仍归游标；构造中断也只恢复已转移的缓冲及自己的标记。
     def restore_sources
-      @previous.each { |session, buffer| session.interaction_buffer = buffer }
-      @buffers.each { |session, buffer| session.restore_relay_buffer(buffer) }
-    ensure
-      OWNERSHIP_MUTEX.synchronize do
-        @sessions.each do |session|
-          session.relay_owner = nil if session.relay_owner.equal?(@token)
+      # 归还多来源缓冲和释放 token 属于同一交接，不能只恢复前几个来源就响应取消。
+      Thread.handle_interrupt(Object => :never) do
+        @previous.each { |session, buffer| session.interaction_buffer = buffer }
+        @buffers.each { |session, buffer| session.restore_relay_buffer(buffer) }
+      ensure
+        OWNERSHIP_MUTEX.synchronize do
+          @sessions.each do |session|
+            session.relay_owner = nil if session.relay_owner.equal?(@token)
+          end
         end
       end
     end
@@ -184,13 +190,13 @@ module Expect
     # 背压源暂停吸收新输入，限制排队增长；作为写入目标的会话仍需读取以解除双向等待。
     def read_sources(pending)
       # 输出目标可能也在等待我们读取；这些来源即使有待发送数据也必须继续排空。
-      targets = pending.filter_map do |output|
-        output.target if output.target.is_a?(Session)
+      targets = pending.each_with_object({}.compare_by_identity) do |output, index|
+        index[output.target] = true if output.target.is_a?(Session)
       end
       sources = @active.reject do |session|
-        session.pending_output? && targets.none? { |target| target.equal?(session) }
+        session.pending_output? && !targets.key?(session)
       end
-      (sources + targets).uniq { |session| session.to_io.object_id }.reject(&:eof?)
+      (sources + targets.keys).uniq { |session| session.to_io.object_id }.reject(&:eof?)
     end
 
     # 总期限结束时将可交付尾部转为发送游标，至多尝试一轮交付；余量由源会话保存。
