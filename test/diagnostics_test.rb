@@ -248,6 +248,26 @@ class DiagnosticsTest < ExpectTest
     refute second.closed?
   end
 
+  # rubocop:disable Style/SpecialGlobalVars -- 回归覆盖 Ruby 原生全局分隔符。
+  def test_transcript_multiple_objects_ignore_global_output_separator
+    session, = pipe_session
+    output = StringIO.new("".b)
+    session.transcript = output
+    session.redact("secret")
+    previous = $,
+    previous_verbose = $VERBOSE
+    $VERBOSE = nil
+    $, = "|"
+
+    assert_nil session.write_transcript("sec", nil, "ret", "中", "\xFF".b)
+    session.close
+    assert_equal "[FILTERED]中\xFF".b, output.string
+  ensure
+    $, = previous
+    $VERBOSE = previous_verbose
+  end
+  # rubocop:enable Style/SpecialGlobalVars
+
   def test_transcript_conversion_can_disable_the_target_without_writing_to_the_old_stream
     session, = pipe_session
     first = StringIO.new

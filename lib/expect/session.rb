@@ -182,7 +182,7 @@ module Expect
 
       begin
         # 单对象不需要中间数组与 join 副本；to_s、诊断和部分写入仍经过同一条路径。
-        data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join
+        data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join("") # rubocop:disable Style/RedundantArgument -- 显式空分隔符隔离全局 $,。
         check_writable!
         trace_data(:sending, data)
       rescue WriteTimeout

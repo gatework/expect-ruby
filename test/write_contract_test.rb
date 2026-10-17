@@ -4,6 +4,23 @@ require_relative "test_helper"
 require "minitest/mock"
 
 class WriteContractTest < ExpectTest
+  # rubocop:disable Style/SpecialGlobalVars -- 回归覆盖 Ruby 原生全局分隔符。
+  def test_multiple_objects_ignore_global_output_separator
+    session, sink = writable_session
+    previous = $,
+    previous_verbose = $VERBOSE
+    $VERBOSE = nil
+    $, = "|"
+
+    assert_equal 6, session.write("中", nil, "\xFF".b, "ab")
+    assert_equal "中\xFFab".b, sink.read(6)
+    assert_equal 0, session.write
+  ensure
+    $, = previous
+    $VERBOSE = previous_verbose
+  end
+  # rubocop:enable Style/SpecialGlobalVars
+
   def test_callbacks_that_close_borrowed_sessions_prevent_later_protocol_writes
     %i[conversion sending received].each do |boundary|
       client, peer = Socket.pair(:UNIX, :STREAM, 0)
