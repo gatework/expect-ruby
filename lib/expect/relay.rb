@@ -159,7 +159,10 @@ module Expect
       # 归还多来源缓冲和释放 token 属于同一交接，不能只恢复前几个来源就响应取消。
       Thread.handle_interrupt(Object => :never) do
         @previous.each { |session, buffer| session.interaction_buffer = buffer }
-        @buffers.each { |session, buffer| session.restore_relay_buffer(buffer) }
+        @buffers.each do |session, buffer|
+          session.restore_relay_buffer(buffer)
+          session.pending_writes.each(&:detach_pending_data)
+        end
       ensure
         OWNERSHIP_MUTEX.synchronize do
           @sessions.each do |session|

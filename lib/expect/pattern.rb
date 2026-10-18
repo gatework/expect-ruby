@@ -52,9 +52,12 @@ module Expect
 
     private
 
-    # 显式尾部窗口单独匹配，返回偏移仍属于原始缓冲；字节协议不做转码。
+    # 只匹配显式尾部窗口内的候选，返回偏移仍属于原始缓冲；字节协议不做转码。
     def locate_window(buffer, size, final:, captures:)
       start = buffer.bytesize - size
+      # 字面匹配没有锚点或回看，直接限制候选起点，复用原缓冲而不复制尾窗。
+      return locate(buffer, offset: start, final:, captures:) if value.is_a?(String)
+
       start = utf8_window_start(buffer, start, final:) if value.is_a?(Regexp) && value.fixed_encoding? &&
                                                           value.encoding == Encoding::UTF_8
       return nil unless start

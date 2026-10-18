@@ -71,7 +71,7 @@ end
 # 通过公开 expect 从真实管道逐块读取，覆盖未命中扫描与下一次追加的组合成本。
 # 输入和 EOF 必须完整保留；不能只测静态扫描而遗漏 String 共享存储的写时复制。
 (runner.smoke ? [65_536] : [1_048_576, 4_194_304, 16_777_216]).product(
-  [[:literal, nil], [:regexp, nil], [:regexp, 65_536]]
+  [[:literal, nil], [:literal, 65_536], [:regexp, nil], [:regexp, 65_536]]
 ).each do |size, (kind, window)|
   chunk = "x" * Expect.const_get(:READ_SIZE)
   expected = "x" * size

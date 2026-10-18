@@ -549,7 +549,8 @@ module Expect
 
       # 只累计匹配窗口裁剪，消费、清空及转接交接不算丢弃；关闭后仍可读取累计值。
       @buffer_discarded_bytes += @buffer.bytesize - limit
-      @buffer = @buffer.byteslice(-limit, limit)
+      # 小尾部不共享已丢弃前缀的底层存储，使上限同时约束长期保留的字节。
+      @buffer = @buffer.unpack1("a*", offset: @buffer.bytesize - limit)
       @buffer_generation += 1
       # 丢弃的前缀使当前窗口与已转发历史之间不再连续。
       @relay_history.clear

@@ -6,6 +6,14 @@ require "rbconfig"
 require_relative "../lib/expect/redactor"
 
 class RedactorTest < Minitest::Test
+  def test_small_retained_tail_does_not_keep_large_input_storage_alive
+    assert_small_retained_storage(:append)
+  end
+
+  def test_small_suppressed_tail_does_not_keep_large_input_storage_alive
+    assert_small_retained_storage(:suppress)
+  end
+
   def test_suppressed_prefix_drains_during_a_live_stream_without_releasing_private_bytes
     filter = Expect::Redactor.new(["secret"])
     assert_nil filter.suppress("private sec")
@@ -259,6 +267,25 @@ class RedactorTest < Minitest::Test
   end
 
   private
+
+  def assert_small_retained_storage(operation)
+    program = <<~RUBY
+      require "expect/redactor"
+      require "objspace"
+      filter = Expect::Redactor.new(["z" * 4096])
+      GC.start
+      before = ObjectSpace.memsize_of_all(String)
+      filter.#{operation}("x" * 8_388_608)
+      GC.start
+      retained = ObjectSpace.memsize_of_all(String) - before
+      abort "retained #{operation} storage: \#{retained} bytes" if retained > 1_048_576
+      expected = #{operation == :append ? '"x" * 4095' : '""'}
+      abort "incorrect retained tail" unless filter.finish == expected
+    RUBY
+    output, status = Open3.capture2e(RbConfig.ruby, "--disable-gems", "-I", File.expand_path("../lib", __dir__),
+                                     "-e", program)
+    assert status.success?, output
+  end
 
   # 独立参考模型：逐偏移比较完整秘密，再合并布尔掩码；不复用生产代码的扫描/输出实现。
   def reference_redact(input, patterns, partial:)

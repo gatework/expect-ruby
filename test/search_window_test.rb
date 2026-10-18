@@ -3,6 +3,42 @@
 require_relative "test_helper"
 
 class SearchWindowTest < ExpectTest
+  def test_literal_window_misses_do_not_allocate_a_tail_per_scan
+    pattern = Expect.const_get(:Pattern, false).new(value: "absent")
+    buffer = ("x" * 1_048_576).b
+    10.times { pattern.locate(buffer, search_window: 65_536) }
+    before = GC.stat(:total_allocated_objects)
+    1000.times { pattern.locate(buffer, search_window: 65_536) }
+    allocated = GC.stat(:total_allocated_objects) - before
+    assert_operator allocated, :<, 250, "repeated misses should search the original byte buffer"
+  end
+
+  def test_literal_window_matches_a_binary_tail_reference
+    random = Random.new(20_261_018)
+    session, = pipe_session
+    200.times do
+      buffer = random.bytes(random.rand(1..80))
+      window = random.rand(1..90)
+      pattern = if random.rand(2).zero?
+                  random.bytes(random.rand(0..8))
+                else
+                  buffer.byteslice(random.rand(buffer.bytesize), random.rand(0..8))
+                end
+      start = [buffer.bytesize - window, 0].max
+      offset = buffer.byteslice(start..).index(pattern)
+      session.buffer = buffer
+      result = session.expect(pattern, search_window: window, timeout: 0, consume: false)
+      if offset
+        assert_equal [buffer.byteslice(0, start + offset), pattern,
+                      buffer.byteslice((start + offset + pattern.bytesize)..)],
+                     [result.before, result.match, result.after]
+      else
+        assert result.timeout?
+      end
+      assert_equal buffer, session.buffer
+    end
+  end
+
   def test_window_limits_literals_and_regular_expressions_without_dropping_buffer
     ["old", /old/].each do |pattern|
       session, = pipe_session

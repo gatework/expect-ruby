@@ -146,12 +146,13 @@ module Expect
         cursor = ending
       end
       remaining = @pending.bytesize - length
-      @pending = @pending.byteslice(length, remaining)
-      @hidden = @hidden.byteslice(length, remaining)
+      # 尾部必须独占存储；共享切片会让几 KiB 的保留窗口继续持有整块输入及掩码。
+      @pending = @pending.unpack1("a*", offset: length)
+      @hidden = @hidden.unpack1("a*", offset: length)
       if @suppressed
         # 只追踪最后一个抑制字节的排空边界，避免每轮扫描字节图；跨块秘密掩码不受影响。
         @suppressed_until -= length
-        @suppressed = @suppressed_until.positive? ? @suppressed.byteslice(length, remaining) : nil
+        @suppressed = @suppressed_until.positive? ? @suppressed.unpack1("a*", offset: length) : nil
       end
       @scanned_bytes = remaining
       output

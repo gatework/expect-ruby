@@ -13,6 +13,7 @@ module Expect
       def initialize(target, data)
         @target = target
         @data = data
+        @data_start = 0
         @offset = 0
         @flushed = false
         restart_timeout
@@ -33,7 +34,14 @@ module Expect
       end
 
       # 数据交付完但 flush 失败仍未完成；重试只补 flush，不重新发送已接受的数据。
-      def done? = @offset == @data.bytesize && @flushed
+      def done? = @offset == @data_start + @data.bytesize && @flushed
+
+      # 退出共同循环后只保留未交付字节，解除小切片与原始大输入的共享存储。
+      # offset 始终累计本排队块的确认进度；data_start 记录当前独立后缀在原块中的起点。
+      def detach_pending_data
+        @data = @data.unpack1("a*", offset: @offset - @data_start)
+        @data_start = @offset
+      end
 
       # 每轮每目标至多一次写入；真实 IO 永不在此等待，交给 Relay 的共同 select。
       # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity -- 游标、短写、flush 和期限按单个目标推进。
@@ -41,8 +49,8 @@ module Expect
         return false if done?
         raise IOError, "closed Expect session" if target.is_a?(Session) && target.closed?
 
-        if @offset < @data.bytesize
-          bytes = @data.byteslice(@offset, READ_SIZE)
+        if @offset < @data_start + @data.bytesize
+          bytes = @data.byteslice(@offset - @data_start, READ_SIZE)
           count = io ? io.write_nonblock(bytes, exception: false) : target.write(bytes)
           if io && count == :wait_writable
             check_timeout! if check_timeout
@@ -56,7 +64,7 @@ module Expect
           # 先登记底层已接受的进度，再通知诊断；logger 失败后恢复只补未发送后缀。
           trace_delivery(bytes.byteslice(0, count)) if target.is_a?(Session)
         end
-        if @offset == @data.bytesize
+        if @offset == @data_start + @data.bytesize
           # write_nonblock 已直接写到底层；普通 write 对象仍遵守自身 flush 协议。
           target.flush if !io && target.respond_to?(:flush)
           @flushed = true

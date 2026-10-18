@@ -192,7 +192,8 @@ module Expect
       limit = [limit, 3].max if utf8
       return unless history.bytesize > limit
 
-      history.replace(history.byteslice(-limit, limit))
+      # 保留历史对象身份，但独立复制尾部，释放已经转发的大前缀存储。
+      history.replace(history.unpack1("a*", offset: history.bytesize - limit))
       return unless utf8
 
       history.slice!(0) while (byte = history.getbyte(0)) && (0x80..0xBF).cover?(byte)

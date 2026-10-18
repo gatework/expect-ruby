@@ -123,6 +123,34 @@ class RelayRecoveryTest < ExpectTest
     assert_equal "abcdef", received
   end
 
+  def test_repeated_timeouts_keep_cumulative_progress_after_detaching_pending_storage
+    source, = pipe_session
+    target, sink = sink_session(write_timeout: 0)
+    source.outputs = [target]
+    source.buffer = "abcdefg"
+    allowance = 2
+    original = target.writer.method(:write_nonblock)
+    target.writer.define_singleton_method(:write_nonblock) do |data, **options|
+      next :wait_writable if allowance.zero?
+
+      count = original.call(data.byteslice(0, allowance), **options)
+      allowance -= count
+      count
+    end
+
+    error = assert_raises(Expect::WriteTimeout) { Expect.interconnect(source, timeout: 1) }
+    assert_equal 2, error.bytes_written
+    assert_equal "ab", drain(sink)
+    allowance = 3
+    error = assert_raises(Expect::WriteTimeout) { Expect.interconnect(source, timeout: 1) }
+    assert_equal 5, error.bytes_written
+    assert_equal "cde", drain(sink)
+    allowance = 2
+    Expect.interconnect(source, timeout: 0)
+    assert_equal "fg", drain(sink)
+    refute source.pending_output?
+  end
+
   def test_large_non_consuming_match_hands_its_buffer_to_relay_intact
     source, writer = pipe_session
     payload = "#{(0..255).to_a.pack("C*") * 4096}END!".b
