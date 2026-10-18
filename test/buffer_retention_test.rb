@@ -83,7 +83,11 @@ class BufferRetentionTest < ExpectTest
       #{setup}
       GC.start
       before = ObjectSpace.memsize_of_all(String)
-      #{operation}
+      # 独立栈退出后再测量，避免保守 GC 将探针临时值误判为仍存活的输入。
+      Fiber.new do
+        #{operation}
+        nil
+      end.resume
       GC.start
       retained = ObjectSpace.memsize_of_all(String) - before
       abort "discarded storage retained: \#{retained} bytes" if retained > 1_048_576

@@ -275,7 +275,11 @@ class RedactorTest < Minitest::Test
       filter = Expect::Redactor.new(["z" * 4096])
       GC.start
       before = ObjectSpace.memsize_of_all(String)
-      filter.#{operation}("x" * 8_388_608)
+      # 不让探针自身的调用栈延长原始输入或已交付结果的寿命。
+      Fiber.new do
+        filter.#{operation}("x" * 8_388_608)
+        nil
+      end.resume
       GC.start
       retained = ObjectSpace.memsize_of_all(String) - before
       abort "retained #{operation} storage: \#{retained} bytes" if retained > 1_048_576
