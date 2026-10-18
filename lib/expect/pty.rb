@@ -170,12 +170,15 @@ module Expect
     def numeric_seconds(value)
       raise ArgumentError, "seconds must be a real Numeric" unless value.is_a?(Numeric) && !value.is_a?(Complex)
 
-      number = Float(value)
+      number = begin
+        Float(value)
+      rescue StandardError
+        # Numeric 子类也可自定义转换；只归一化转换失败，保留致命中断和原始 cause。
+        raise ArgumentError, "seconds must be a finite real Numeric"
+      end
       raise ArgumentError, "seconds must be finite" unless number.finite?
 
       number
-    rescue TypeError, RangeError
-      raise ArgumentError, "seconds must be a finite real Numeric"
     end
 
     # 按对象身份归属就绪描述符，不能用 IO 的值相等规则合并来源。

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.9.1 - 2026-10-18
+
+- 修复自定义 Numeric 转换失败时泄漏常规异常的问题；时间参数统一抛出 ArgumentError 并保留 cause，Interrupt/SystemExit 仍原样传播。
+
 ## 0.9.0 - 2026-10-18
 
 - **不兼容**：命令默认直接按 argv 执行，单字符串也只作为可执行文件名，需要 shell 语法时须显式传入 `shell: true`。

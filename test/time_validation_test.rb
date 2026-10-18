@@ -19,4 +19,36 @@ class TimeValidationTest < ExpectTest
     end
     assert session.expect("x", deadline: -1).timeout?
   end
+
+  def test_duration_normalizes_numeric_conversion_failures
+    original = ZeroDivisionError.new("cannot convert seconds")
+    error = assert_raises(ArgumentError) { Expect.duration(failing_seconds(original)) }
+    assert_same original, error.cause
+  end
+
+  def test_deadline_normalizes_conversion_failures_before_registration
+    session, = pipe_session
+    original = ZeroDivisionError.new("cannot convert seconds")
+    error = assert_raises(ArgumentError) do
+      session.expect(deadline: failing_seconds(original)) { flunk "unexpected registration" }
+    end
+    assert_same original, error.cause
+  end
+
+  def test_numeric_conversion_preserves_fatal_exceptions
+    session, = pipe_session
+    [Interrupt.new("cancelled"), SystemExit.new(7)].each do |original|
+      value = failing_seconds(original)
+      assert_same original, assert_raises(original.class) { Expect.duration(value) }
+      assert_same original, assert_raises(original.class) { session.expect("x", deadline: value) }
+    end
+  end
+
+  private
+
+  def failing_seconds(error)
+    Class.new(Numeric) do
+      define_method(:to_f) { raise error }
+    end.new
+  end
 end
