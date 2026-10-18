@@ -43,6 +43,9 @@ Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自
 ResourceOwner 不引用 Session、输出目标或用户回调。
 终结器通过 `@resources.method(:finalize)` 注册在 Session 上，绑定方法仅持有资源账本，允许会话和捕获它的回调循环一起回收。
 `Result` 使用 Data，复制冻结文本与捕获值，但不冻结来源或异常对象。
+`inspect` 与 `to_s` 只显示匹配序号和错误状态，不调用异常或来源对象的 inspect；原始字段仍保持协议字节。
+工厂块清理由 Cleanup 的 report_completion 区分正常完成与异常、取消或非局部退出，仅正常完成执行可选 graceful 读尾。
+判断不读取调用者 rescue 中遗留的 `$!`，正常返回 false/nil 仍视为完成。
 
 下列入口是内部协议，不属于用户接口；变更时同时检查调用方与失败恢复路径：
 

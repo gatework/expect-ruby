@@ -19,6 +19,8 @@ Session 构造器不接收命令或操作参数。同一会话只能启动一次
 `Expect.open(io, writer: io, own: false, graceful: false, **settings)` 适配真实可 select 的 IO，默认借用。
 `own: true` 接管关闭责任，包括初始化中已知设置的非法值导致的失败；未知关键字在 Ruby 方法入口拒绝，此时不接管 IO。
 `spawn`、`open` 无块时返回 Session，有块时返回块结果并确保按 `graceful:` 关闭；非局部返回也清理。
+工厂块正常返回时才执行 graceful 读尾；异常、线程取消以及 return/break/throw 等非局部退出直接硬关闭，避免读尾延迟退出。
+块正常返回 nil 或 false 仍属于正常完成；调用方 rescue 中已处理的异常不影响此判断。
 清理中的 StandardError 不覆盖本次作用域已有的主异常；没有主异常时照常传播。新发生的 Interrupt/SystemExit 不会被清理包装吞掉。
 
 `close(graceful: false)` 最终硬关闭兜底，返回 nil；`soft_close(timeout: 15, term_timeout: 1)` 收取尾部、关闭句柄并最多发送
@@ -65,6 +67,8 @@ nil 保留全缓冲扫描；指定时，字符串和正则只搜索最新的尾�
 固定 UTF-8 正则跳过边界切开的合法首字符，等待合法未完成尾字符；窗口内非法字节及 EOF 未完成字符仍报错。
 二进制正则按原始字节匹配。
 
+Result 的 `inspect` 与 `to_s` 仅显示匹配序号和错误状态，不打印原始文本、异常消息或来源对象。
+需要原始结果时显式读取字段；`redact` 不改变这些字段。
 Result 字段为 `number`、`error`、`match`、`before`、`after`、`session`、`captures`。对象、文本及捕获数组均不可变，未参与捕获为
 nil。
 错误为 nil、`:timeout`、`:eof` 或原始 IO 异常；来源会话与异常不复制、不冻结。使用 `matched?`、`timeout?`、`eof?` 查询，

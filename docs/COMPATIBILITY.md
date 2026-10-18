@@ -46,7 +46,8 @@ PID。`hard_close` 不等待输出，必要时 TERM、KILL 并回收子进程。
 
 Ruby 使用关键字指定各阶段期限，关闭方法返回 `Process::Status` 或 `nil`。`close(graceful: true)` 或工厂块的
 `graceful: true`
-先尝试软关闭，再在 `ensure` 中硬关闭；这对应原版销毁时可选软关闭、随后硬关闭的清理策略。`close` 返回 `nil`；GC
+先尝试软关闭，再在 `ensure` 中硬关闭；工厂块仅正常返回时读尾，异常、取消及非局部退出直接硬关闭。
+显式 `close(graceful: true)` 仍按调用参数读尾。`close` 返回 `nil`；GC
 兜底直接强制清理，不阻塞等待。
 
 ## 有意采用的 Ruby 语义

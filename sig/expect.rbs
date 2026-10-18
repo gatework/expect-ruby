@@ -238,6 +238,10 @@ module Expect
 
     def eof?: () -> bool
 
+    def inspect: () -> String
+
+    def to_s: () -> String
+
     def deconstruct: () -> [Integer?, result_error, String?, String?, String?, Session?, Array[String?]]
 
     def with: (

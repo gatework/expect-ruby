@@ -30,6 +30,22 @@ module Expect
             captures: captures.map { |value| value&.dup&.freeze }.freeze)
     end
 
+    # 诊断只显示匹配序号和错误状态，不检查原始文本、异常或来源对象。
+    # @return [String] 不包含协议内容的结果摘要。
+    def inspect
+      state = if error.nil? then "none"
+              elsif error.equal?(:eof) then "eof"
+              elsif error.equal?(:timeout) then "timeout"
+              else "exception"
+              end
+      index = number.is_a?(Integer) ? number.to_s : "nil"
+      "#<#{self.class} number=#{index} error=#{state}>"
+    end
+
+    # Data 的默认 to_s 独立于 inspect；字符串插值同样只使用安全摘要。
+    # @return [String] 与 inspect 相同的结果摘要。
+    def to_s = inspect
+
     # 是否命中文本；EOF 和超时没有模式序号。
     def matched? = !number.nil?
 

@@ -1,5 +1,20 @@
 # 验证记录
 
+## 2026-10-18：结果诊断与工厂异常清理
+
+基线为 `832cb39`，起始工作区干净。Result 的 inspect/to_s 改为仅显示匹配序号和错误状态，不检查文本、捕获、
+异常消息或来源对象；原始字段及 Data 转换合同不变。spawn/open 复用 Cleanup 的实际完成状态，仅正常返回时执行
+可选 graceful 读尾，异常、线程取消和非局部退出直接硬关闭；正常返回 nil/false 和调用者 rescue 场景仍保留读尾。
+
+初始回归在基线得到 **10 runs / 56 assertions / 7 failures / 1 error**；另行复现 Data 默认 to_s 仍输出原文，
+该回归修复前失败。最终两份新增测试由独立复审运行得到 **12 runs / 185 assertions**，零失败、错误或跳过。
+覆盖真实工厂资源关闭、直属子进程回收、异常优先级、return/break/throw、Thread.kill/raise、正常读尾及原始字段读取。
+
+macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20 的最终 `bash script/ci` 退出 0：
+**620 runs / 10,203 assertions**，零失败、错误或跳过；102 文件 RuboCop、API/YARD/RBS、示例、七组基准 smoke、
+Gem 构建与 plain/Bundler 隔离安装全部通过。日志为 `tmp/ci/factory-result-hardening.log`。
+已有测试替身重定义和本机 RDoc 重复加载告警仍存在。本轮未运行其他平台或真实 SSH/设备验收，改动未提交或发布。
+
 ## 2026-10-09：0.7.6 发布候选
 
 归档关闭异常优先级修复和共享字节前缀优化至 0.7.6，同步版本常量与发布说明后，运行

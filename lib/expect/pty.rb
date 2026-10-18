@@ -66,12 +66,12 @@ module Expect
               timeout: nil, write_timeout: nil, buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
       session = nil
       spawned = false
-      cleanup = lambda do
+      cleanup = lambda do |completed|
         if session && (block_given? || !spawned)
-          session.cleanup_session(nil, writer: nil, own: false, graceful: spawned && graceful)
+          session.cleanup_session(nil, writer: nil, own: false, graceful: spawned && graceful && completed)
         end
       end
-      Cleanup.always(cleanup) do
+      Cleanup.always(cleanup, report_completion: true) do
         # 工厂在构造期间处理失败；成功对象的返回与登记不可被中断拆开。
         Thread.handle_interrupt(Object => :never) do
           session = SessionFactory.pty(timeout:, write_timeout:, buffer_limit:, logger:, transcript:, outputs:)
@@ -89,14 +89,14 @@ module Expect
       session = nil
       initialized = false
       constructing = false
-      cleanup = lambda do
+      cleanup = lambda do |completed|
         if session && (block_given? || !initialized)
-          session.cleanup_session(io, writer:, own:, graceful: initialized && graceful)
+          session.cleanup_session(io, writer:, own:, graceful: initialized && graceful && completed)
         elsif !session && own && !constructing
           ResourceOwner.close_handles(io, writer)
         end
       end
-      Cleanup.always(cleanup) do
+      Cleanup.always(cleanup, report_completion: true) do
         Thread.handle_interrupt(Object => :never) do
           constructing = true
           session = SessionFactory.io(io, writer:, own:, timeout:, write_timeout:, buffer_limit:,
