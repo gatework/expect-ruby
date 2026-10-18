@@ -87,6 +87,6 @@ class InitializationFailureTest < ExpectTest
   def initialization_errors = [Interrupt.new("injected initialization interruption"), SystemExit.new(17)]
 
   def without_ledger(failure, &)
-    Expect::ResourceOwner.stub(:new, ->(*, **) { raise failure }, &)
+    Expect.const_get(:ResourceOwner, false).stub(:new, ->(*, **) { raise failure }, &)
   end
 end

@@ -48,34 +48,25 @@ module Expect
     end
 
     # 等待自身输入，返回 Result；匹配消费和接收重置策略只对本轮有效。
-    def expect(*patterns, timeout: self.timeout, deadline: nil, consume: true, reset_timeout_on_read: false, &)
-      Expect.__send__(:run_expect, [self], patterns, timeout, deadline:, consume:, reset_timeout_on_read:, &)
+    def expect(*patterns, timeout: self.timeout, deadline: nil, consume: true, reset_timeout_on_read: false,
+               search_window: nil, &)
+      Expect.__send__(:run_expect, [self], patterns, timeout,
+                      deadline:, consume:, reset_timeout_on_read:, search_window:, &)
     end
 
     # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
-    def spawn(*command, env: {}, chdir: nil, raw: false)
+    def spawn(*command, env: {}, chdir: nil, raw: false, shell: false)
       validate_spawn!(command)
+      raise ArgumentError, "shell must be true or false" unless [true, false].include?(shell)
+      raise ArgumentError, "shell requires one command string" if shell && command.size != 1
 
       @slave.raw! if raw
-      from_child = to_parent = nil
-      Cleanup.always(-> { ResourceOwner.close_handles(from_child, to_parent) }) do
-        # 错误管道的写端在 exec 成功时自动关闭；父进程据此区分成功启动与 exec 前失败。
-        # 管道返回到多重赋值之间也属于接管区间，确保 ensure 始终能找到两个端点。
-        Thread.handle_interrupt(Object => :never) { from_child, to_parent = IO.pipe }
-        to_parent.close_on_exec = true
-        @command = command.map { |part| part.dup.freeze }.freeze
-        # 原生 fork 返回后先登记 PID，再交付线程中断或终止，避免清理时遗漏新子进程。
-        child = Thread.handle_interrupt(Object => :never) do
-          @resources.pid = fork do
-            # 子进程不继承父侧登记临界区，执行前仍可立即响应异步异常。
-            Thread.handle_interrupt(Object => :immediate) { exec_child(command, env:, chdir:, from_child:, to_parent:) }
-          end
+      @command = command.map { |part| part.dup.freeze }.freeze
+      Cleanup.on_failure(-> { hard_close }) do
+        child = @child_process.spawn(command, env:, chdir:, shell:) do |from_child, to_parent|
+          exec_child(command, env:, chdir:, from_child:, to_parent:, shell:)
         end
-        to_parent.close
-        @slave.close
-        failure = from_child.read
-        Cleanup.always(-> { hard_close }) { raise SpawnError, failure } unless failure.empty?
-        trace("spawned pid=#{child}", event: :spawned)
+        trace(event: :spawned) { "spawned pid=#{child}" }
         self
       end
     end
@@ -100,10 +91,7 @@ module Expect
 
     # 非阻塞回收并缓存子进程状态；未退出或仅适配 IO 时返回 nil。
     def process_status
-      @resources.reap
-    rescue Errno::EINTR
-      # 单次轮询被中断时状态仍未知；wait/close 会在原期限内继续，不在这里无限重试。
-      @resources.status
+      @child_process.status
     end
 
     # 已知进程退出码；尚未回收或信号退出时为 nil。
@@ -328,7 +316,7 @@ module Expect
       end
       # 诊断回调可能嵌套等待；恢复本次结果后再交给正式模式回调，不能返回内层等待的结果。
       result = @last_result
-      trace("matched pattern #{pattern.number}")
+      trace { "matched pattern #{pattern.number}" }
       @last_result = result
     end
 
@@ -400,6 +388,7 @@ module Expect
     def initialize_io(reader, writer:, slave: nil, own: false, timeout: nil, write_timeout: nil,
                       buffer_limit: nil, logger: nil, transcript: nil, outputs: [])
       @resources = ResourceOwner.new(reader, writer:, slave:, own:)
+      @child_process = ChildProcess.new(@resources)
       raise ArgumentError, "reader must be a real IO" unless reader.is_a?(IO) && !reader.closed?
       raise ArgumentError, "writer must be a real IO" unless writer.is_a?(IO) && !writer.closed?
 
@@ -444,28 +433,9 @@ module Expect
       raise ArgumentError, "command is empty" if command.first.empty?
     end
 
-    # 子进程独占控制终端；成功 exec 关闭错误管道，失败时回传后立即退出。
-    def exec_child(command, env:, chdir:, from_child:, to_parent:)
-      from_child.close
-      Process.setsid
-      # 创建独立进程会话后重新打开 slave，使它成为子进程的控制终端。
-      File.open(@tty_name, File::RDWR) do |terminal|
-        # 重定向操作系统的标准描述符；即使宿主替换过 Ruby 标准流，也能正确连接子进程。
-        # rubocop:disable Style/GlobalStdStream
-        STDIN.reopen(terminal)
-        STDOUT.reopen(terminal)
-        STDERR.reopen(terminal)
-        # rubocop:enable Style/GlobalStdStream
-      end
-      @resources.close_handles
-      Dir.chdir(chdir) if chdir
-      exec(env, *command, close_others: true)
-    rescue Exception => error # rubocop:disable Lint/RescueException -- 子进程回传启动异常后立即退出。
-      begin
-        to_parent.write("#{error.class}: #{error.message}")
-      ensure
-        exit! 127
-      end
+    # 保留 Session 子类的启动钩子；进程对象管理控制终端和错误协议。
+    def exec_child(command, **)
+      @child_process.exec_child(command, **)
     end
 
     # EINTR 未确认交付时不移动游标；其他写入计数必须落在当前块范围内。
@@ -559,28 +529,9 @@ module Expect
       wait_for_child(1, signal: "KILL")
     end
 
-    # 每阶段只计算一次期限；回收或信号被中断后仍沿用剩余预算，零预算也先做一次尝试。
+    # Session 的 sleep 钩子保留给受控时钟；期限与信号状态属于进程对象。
     def wait_for_child(period, signal: nil)
-      deadline = period && (Expect.monotonic + period)
-      loop do
-        status = process_status
-        return status if status || !pid || @resources.owner != Process.pid
-
-        begin
-          signal_child(signal) if signal
-          signal = nil
-        rescue Errno::EINTR
-          # 下轮先回收再重试信号，避免在无限等待或持续中断时忙等。
-          nil
-        end
-        # ESRCH 后可能已完成回收；即使预算耗尽，也要返回刚获得的状态。
-        return process_status unless pid
-
-        remaining = deadline && (deadline - Expect.monotonic)
-        return nil if remaining && remaining <= 0
-
-        sleep(remaining ? [0.01, remaining].min : 0.01)
-      end
+      @child_process.wait(period, signal:) { |pause| sleep(pause) }
     end
 
     # 只结束读取方向并冲刷接收记录；EOF 不代表子进程已经退出或写端已经关闭。
@@ -602,15 +553,6 @@ module Expect
       @buffer_generation += 1
       # 丢弃的前缀使当前窗口与已转发历史之间不再连续。
       @relay_history.clear
-    end
-
-    # 仅由资源创建者向仍未回收的子进程发送信号；若进程刚好退出，则尝试回收。
-    def signal_child(signal)
-      return unless pid && @resources.owner == Process.pid
-
-      Process.kill(signal, pid)
-    rescue Errno::ESRCH
-      @resources.reap
     end
   end
 end

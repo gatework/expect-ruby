@@ -12,7 +12,7 @@ begin
     patterns = Array.new(count) { |index| /missing#{index}/ }
     index = hit == :first ? 0 : count - 1
     patterns[index] = /END/ unless hit == :miss
-    matcher = Expect::Matcher.new(Expect::PatternList.new([session], patterns), 0)
+    matcher = Expect.const_get(:Matcher, false).new(Expect::PatternList.new([session], patterns), 0)
     verify = lambda do |result|
       valid = if hit == :miss
                 result.nil?
@@ -29,7 +29,7 @@ begin
   sizes.each do |size|
     prefix = "中" * (size / 3)
     session.buffer = "#{prefix}😀终tail"
-    matcher = Expect::Matcher.new(Expect::PatternList.new([session], [/😀(终)(x)?/]), 0)
+    matcher = Expect.const_get(:Matcher, false).new(Expect::PatternList.new([session], [/😀(终)(x)?/]), 0)
     verify = lambda do |result|
       ExpectBenchmark.check(result && result[2] == [prefix.bytesize, 7, ["终".b, nil]])
     end
@@ -50,7 +50,7 @@ begin
                                              inputs: { initial_bytes: size, chunks:, patterns: 32, kind: },
                                              iterations: 5, verify:) do
       session.buffer = "x" * size
-      matcher = Expect::Matcher.new(Expect::PatternList.new([session], patterns), nil)
+      matcher = Expect.const_get(:Matcher, false).new(Expect::PatternList.new([session], patterns), nil)
       ExpectBenchmark.check(matcher.__send__(:find_match).nil?)
       chunks.times do
         writer.write("x" * 1024)
@@ -70,14 +70,16 @@ end
 
 # 通过公开 expect 从真实管道逐块读取，覆盖未命中扫描与下一次追加的组合成本。
 # 输入和 EOF 必须完整保留；不能只测静态扫描而遗漏 String 共享存储的写时复制。
-(runner.smoke ? [65_536] : [1_048_576, 4_194_304, 16_777_216]).each do |size|
-  chunk = "x" * Expect::READ_SIZE
+(runner.smoke ? [65_536] : [1_048_576, 4_194_304, 16_777_216]).product(
+  [[:literal, nil], [:regexp, nil], [:regexp, 65_536]]
+).each do |size, (kind, window)|
+  chunk = "x" * Expect.const_get(:READ_SIZE)
   expected = "x" * size
   verify = lambda do |result|
     ExpectBenchmark.check(result.eof? && result.before == expected)
   end
-  runner.measure("growing/#{size}", bytes: size, inputs: { size:, chunk_bytes: chunk.bytesize },
-                                    iterations: 1, verify:) do
+  inputs = { size:, kind:, search_window: window, chunk_bytes: chunk.bytesize }
+  runner.measure("growing/#{size}/#{kind}/#{window || :full}", bytes: size, inputs:, iterations: 1, verify:) do
     input, output = IO.pipe
     source = Expect.open(input)
     sender = Thread.new do
@@ -85,7 +87,8 @@ end
     ensure
       output.close
     end
-    result = source.expect("never-present", :eof, timeout: 30)
+    pattern = kind == :literal ? "never-present" : /never-present/
+    result = source.expect(pattern, :eof, timeout: 30, search_window: window)
     ExpectBenchmark.check(sender.join(5), "producer did not complete")
     sender.value
     result
@@ -106,7 +109,7 @@ end
     # 每轮交替反转来源组，确保同一会话真实出现在多个非相邻组。
     8.times { |index| list.on(/missing/, from: index.even? ? sessions : sessions.reverse) }
     # 单会话的相邻相同组会合并；保持普通单会话路径作为对照。
-    matcher = Expect::Matcher.new(list, 0)
+    matcher = Expect.const_get(:Matcher, false).new(list, 0)
     runner.measure("groups/#{count}", bytes: 4096 * count, inputs: { sessions: count, groups: list.groups.size },
                                       verify: lambda { |result|
                                         ExpectBenchmark.check(result.nil?)

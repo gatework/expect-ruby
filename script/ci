@@ -29,7 +29,7 @@ bundler_gem="$(bundle exec ruby -e 'print Gem.loaded_specs.fetch("bundler").cach
 
 # 独立安装可用本次解析的运行依赖缓存；Ruby 4 的 Logger 不再是默认 gem。
 # 只复制实际运行依赖，不让开发依赖或宿主 GEM_PATH 掩盖安装遗漏。
-bundle exec ruby -Ilib -rexpect -rfileutils -e '
+bundle exec ruby -Ilib -rexpect/pty -rfileutils -e '
   Gem.loaded_specs.fetch("expect-pty").runtime_dependencies.each do |dependency|
     spec = Gem.loaded_specs.fetch(dependency.name)
     next if spec.default_gem?
@@ -53,6 +53,9 @@ require "expect/pty"
 require "rbconfig"
 
 spec = Gem.loaded_specs.fetch("expect-pty")
+abort "ambiguous gem entry point shipped" if File.file?(File.join(spec.full_gem_path, "lib/expect.rb"))
+require "expect"
+abort "stdlib IO#expect missing" unless IO.method_defined?(:expect)
 # 临时目录可能经由符号链接访问，先统一为实际路径再检查。
 install_root = File.realpath(ENV.fetch("GEM_HOME"))
 abort "gem was loaded outside the isolated install" unless File.realpath(spec.full_gem_path).start_with?("#{install_root}/")
@@ -68,7 +71,7 @@ spec.runtime_dependencies.each do |dependency|
 end
 
 # 检查实际使用的标准库已在包元数据中声明，默认 gem 可加载不能代替依赖声明。
-%w[io-console logger stringio].each do |name|
+%w[io-console json logger stringio].each do |name|
   abort "undeclared runtime dependency: #{name}" unless spec.runtime_dependencies.any? { |dependency| dependency.name == name }
 end
 child = 'STDOUT.sync = true; puts "ready"; puts "reply:#{$stdin.gets&.strip}"'

@@ -108,4 +108,5 @@ module Expect
       @pid = nil
     end
   end
+  private_constant :ResourceOwner
 end

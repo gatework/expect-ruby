@@ -38,7 +38,7 @@ counts.each do |count|
                                          iterations: 10, verify:) do
       ready_count = 0
       pipes.each { |pipe| pipe.last.write(marker) }
-      Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
+      Timeout.timeout(10) { Expect.const_get(:Matcher, false).new(list, 5).run }
     end
     runner.measure("declare_and_ready/#{count}", bytes: count * marker.bytesize, inputs: { sessions: count },
                                                  iterations: 10, verify:) do
@@ -66,7 +66,7 @@ counts.each do |count|
     runner.measure("all_eof/#{count}", bytes: count * 4, inputs: { sessions: count }, iterations: 10, verify:) do
       ended.clear
       sessions.each { |source| source.buffer = "tail" }
-      Timeout.timeout(10) { Expect::Matcher.new(list, 5).run }
+      Timeout.timeout(10) { Expect.const_get(:Matcher, false).new(list, 5).run }
     end
     # 公开入口每次重新声明，计入规则编译，不能只证明复用冻结列表的调度收益。
     runner.measure("declare_and_eof/#{count}", bytes: count * 4, inputs: { sessions: count },

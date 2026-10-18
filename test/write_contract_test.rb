@@ -103,10 +103,10 @@ class WriteContractTest < ExpectTest
   def test_count_is_checked_against_the_attempted_chunk_not_the_total_input
     session, = writable_session
     session.writer.stub(:write_nonblock, lambda { |chunk, **|
-      assert_equal Expect::READ_SIZE, chunk.bytesize
+      assert_equal Expect.const_get(:READ_SIZE), chunk.bytesize
       chunk.bytesize + 1
     }) do
-      assert_raises(IOError) { session.write("x" * (Expect::READ_SIZE + 1)) }
+      assert_raises(IOError) { session.write("x" * (Expect.const_get(:READ_SIZE) + 1)) }
     end
   end
 

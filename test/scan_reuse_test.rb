@@ -91,7 +91,7 @@ class ScanReuseTest < ExpectTest
     first.buffer = "ready"
     list = Expect::PatternList.new
     list.on("missing", from: first).on("other", from: second).on("ready", from: first)
-    matcher = Expect::Matcher.new(list, 0)
+    matcher = Expect.const_get(:Matcher, false).new(list, 0)
     borrows = 0
     original = first.method(:scan_buffer)
     first.stub(:scan_buffer, lambda {

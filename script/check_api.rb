@@ -3,7 +3,7 @@
 require "yard"
 require "rbs"
 require "pathname"
-require_relative "../lib/expect"
+require_relative "../lib/expect/pty"
 
 # 从真实方法查找链校验接口；YARD 标记的内部协议不属于发布契约。
 module APICheck

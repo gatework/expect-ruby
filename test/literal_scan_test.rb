@@ -6,7 +6,7 @@ class LiteralScanTest < ExpectTest
   def test_new_bytes_can_complete_a_previously_missing_literal
     session, writer = pipe_session
     list = Expect::PatternList.new([session], ["password:", "word:"])
-    matcher = Expect::Matcher.new(list, nil)
+    matcher = Expect.const_get(:Matcher, false).new(list, nil)
     session.buffer = "prefix pass"
     assert_nil matcher.__send__(:find_match)
     writer.write("word:")
@@ -19,7 +19,7 @@ class LiteralScanTest < ExpectTest
   def test_later_text_for_an_earlier_pattern_keeps_declaration_priority
     session, writer = pipe_session
     list = Expect::PatternList.new([session], %w[preferred ready])
-    matcher = Expect::Matcher.new(list, nil)
+    matcher = Expect.const_get(:Matcher, false).new(list, nil)
     session.buffer = "ready"
     assert_equal 2, matcher.__send__(:find_match)[1].number
     writer.write(" preferred")
@@ -30,7 +30,7 @@ class LiteralScanTest < ExpectTest
   def test_destructive_buffer_changes_invalidate_old_misses
     session, writer = pipe_session
     list = Expect::PatternList.new([session], ["start", "token", /END/])
-    matcher = Expect::Matcher.new(list, nil)
+    matcher = Expect.const_get(:Matcher, false).new(list, nil)
     session.buffer = "x" * 100
     assert_nil matcher.__send__(:find_match)
     session.buffer = "start"
@@ -54,7 +54,7 @@ class LiteralScanTest < ExpectTest
     session, writer = pipe_session
     patterns = ["abc", "bc", "\0\xff".b, /END/n]
     list = Expect::PatternList.new([session], patterns)
-    matcher = Expect::Matcher.new(list, nil)
+    matcher = Expect.const_get(:Matcher, false).new(list, nil)
     random = Random.new(40_033)
     chunks = ["a", "b", "c", "x", "END", "\0", "\xff".b]
     150.times do
@@ -73,7 +73,7 @@ class LiteralScanTest < ExpectTest
         writer.write(chunks.sample(random:))
         session.__send__(:read_available)
       end
-      expected = Expect::Matcher.new(list, nil).__send__(:find_match)
+      expected = Expect.const_get(:Matcher, false).new(list, nil).__send__(:find_match)
       actual = matcher.__send__(:find_match)
       assert_equal signature(expected), signature(actual), "buffer=#{session.buffer.inspect}"
     end
@@ -83,7 +83,7 @@ class LiteralScanTest < ExpectTest
     session, = pipe_session
     session.buffer = "prefix ready"
     list = Expect::PatternList.new([session], ["missing"])
-    matcher = Expect::Matcher.new(list, nil)
+    matcher = Expect.const_get(:Matcher, false).new(list, nil)
     assert_nil matcher.__send__(:find_match)
     assert_raises(FrozenError) { list.on("prefix") }
     assert_nil matcher.__send__(:find_match)

@@ -36,7 +36,7 @@ module ExpectBenchmark
         raise ArgumentError, "counts must be positive"
       end
 
-      require File.join(@library, "expect")
+      require File.join(@library, "expect/pty")
       @results = []
     end
 

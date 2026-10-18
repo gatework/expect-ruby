@@ -80,7 +80,7 @@ class InterfaceContractTest < ExpectTest
   end
 
   def test_spawn_preserves_single_string_shell_and_literal_argv_semantics
-    Expect.spawn("printf FIRST; printf SECOND", raw: true) do |session|
+    Expect.spawn("printf FIRST; printf SECOND", raw: true, shell: true) do |session|
       assert session.expect("FIRSTSECOND", timeout: 2).matched?
     end
     text = "FIRST; printf SECOND"

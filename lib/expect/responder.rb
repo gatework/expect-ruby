@@ -31,7 +31,8 @@ module Expect
     # 等待完成模式或 EOF，同时自动处理提示；timeout 沿用会话默认值，应答不重置期限。
     # 完成块使用 PatternList DSL；Result 只描述最后一次匹配，全文请用会话 transcript 保存。
     # 每次等待快照规则，回调修改规则仅影响后续等待；不接管或关闭会话。
-    def expect(session, *patterns, timeout: (session.timeout if session.is_a?(Session)), deadline: nil, &block)
+    def expect(session, *patterns, timeout: (session.timeout if session.is_a?(Session)), deadline: nil,
+               search_window: nil, &block)
       raise ArgumentError, "responder requires a Session" unless session.is_a?(Session)
 
       raise ArgumentError, "provide patterns or a pattern block, not both" if block && !patterns.empty?
@@ -39,7 +40,7 @@ module Expect
       rules = @rules.dup.freeze
       Expect.__send__(
         :run_expect, [session], [], timeout, deadline:, consume: true,
-                                             reset_timeout_on_read: false, match_by_position: true
+                                             reset_timeout_on_read: false, match_by_position: true, search_window:
       ) do |list|
         patterns.each do |pattern|
           case pattern

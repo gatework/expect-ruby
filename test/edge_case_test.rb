@@ -229,7 +229,7 @@ class EdgeCaseTest < ExpectTest
 
   def assert_gc_reclaims_abandoned_child(transcript_cycle: false)
     script = <<~RUBY
-      require "expect"
+      require "expect/pty"
       require "rbconfig"
       def abandoned
         session = Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", "sleep 60")

@@ -130,8 +130,11 @@ module Expect
     end
 
     # 向标准 Logger 提交不可变事件，不包含会话对象；格式化由 logger 完成。
-    def trace(message, severity: Logger::INFO, event: :matched)
-      logger&.add(severity, { event:, pid:, fd: fileno, message: message.freeze }.freeze, "Expect")
+    def trace(message = nil, severity: Logger::INFO, event: :matched)
+      return unless logger
+
+      message = yield if block_given?
+      logger.add(severity, { event:, pid:, fd: fileno, message: message.freeze }.freeze, "Expect")
     end
 
     # 结束当前日志片段并交付过滤器尾部；重复调用不会重放已释放字节，写入异常原样传播。

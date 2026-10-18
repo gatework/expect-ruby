@@ -2,11 +2,15 @@
 
 Expect::Session 本身是公开接口；本文所列状态与标为 `@api private` 的方法供 Matcher、Relay 和生命周期协作使用，不是用户契约。
 
+Matcher、ResourceOwner、Relay、Relay::Writer、ChildProcess、SessionFactory 和 READ_SIZE 使用私有常量限定内部入口。
+Session 的协作方法按下表的显式协议供这些组件调用；`@api private` 标记不改变 Ruby 方法可见性。
+
 ## 模块职责
 
 | 模块                                            | 职责                                                             |
 |-------------------------------------------------|------------------------------------------------------------------|
-| `expect.rb`                                     | 无状态模块工厂、来源就绪查询与 DSL 构建                          |
+| `pty.rb`                                        | 无状态模块工厂、来源就绪查询与 DSL 构建                          |
+| `child_process.rb`、`session_factory.rb`         | 直属子进程启动与监管；部分构造对象清理和不可中断移交             |
 | `session.rb`                                    | PTY 生命周期、缓冲、直接读写和结果状态；组合记录、诊断及交互模块 |
 | `cleanup.rb`                                    | 异常优先级与始终/失败清理作用域                                  |
 | `pattern.rb`、`pattern_list.rb`、`result.rb`    | 字节定位、声明顺序及原生结果值                                   |
@@ -14,7 +18,7 @@ Expect::Session 本身是公开接口；本文所列状态与标为 `@api privat
 | `matcher.rb`                                    | 一次等待的匹配、事件派发和期限                                   |
 | `resource_owner.rb`                             | 所属 IO 与直属子进程的所有权账本和 GC 兜底                       |
 | `logging.rb`                                    | 借用 logger/transcript/outputs 及同步输出；不拥有目标            |
-| `interaction.rb`、`relay.rb`、`relay_writer.rb` | 人工接管、转义处理、共同调度和各目标发送游标                     |
+| `interaction.rb`、`relay.rb`、`relay/writer.rb` | 人工接管、转义处理、共同调度和各目标发送游标                     |
 
 `redactor.rb` 提供公共 `Expect::Redactor` 字节过滤接口，供会话日志、各方向诊断及上层库共用，不持有 IO，也不接管协议缓冲。
 
@@ -23,7 +27,7 @@ Expect::Session 本身是公开接口；本文所列状态与标为 `@api privat
 诊断复用 Ruby Logger 的级别、格式和输出协议，终端设置复用 io/console，文件打开与关闭交给调用方的 File.open，结果值复用 Data。
 这些能力不再由本库维护配置门面、日志文件所有权或 stty 命令包装。
 
-PTY 控制终端建立、exec 错误管道握手和有限期限的子进程回收继续由 Session 与 ResourceOwner 负责：会话需要在启动前设置
+PTY 控制终端建立、exec 错误管道握手和有限期限的子进程回收由 ChildProcess 执行，ResourceOwner 保持唯一资源账本：会话需要在启动前设置
 slave 的 raw 模式，
 父进程需要在交付会话前确认 exec 是否成功，关闭时还需保留直属子进程归属及分阶段回收策略。Open3 的普通管道不能替代这些终端语义。
 Redactor 则处理分片原始字节中的秘密、跨块前缀和重叠区间；它与 ActiveSupport::ParameterFilter 的参数键值过滤职责不同，不相互替代。
@@ -35,7 +39,8 @@ Session 组合 Logging 与 Interaction；timeout、write_timeout、buffer_limit�
 Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自持有 raw/graceful 参数，不把操作策略保存成配置层。
 回调、链式返回与 Result.session 始终是该 Session 本身。终端操作直接使用 Ruby io/console，不启动 stty。
 
-运行状态只属于 Session；ResourceOwner 不引用 Session、输出目标或用户回调。
+缓冲与交互状态属于 Session；ChildProcess 只引用 ResourceOwner，不复制 PID/状态、不回指 Session。
+ResourceOwner 不引用 Session、输出目标或用户回调。
 终结器通过 `@resources.method(:finalize)` 注册在 Session 上，绑定方法仅持有资源账本，允许会话和捕获它的回调循环一起回收。
 `Result` 使用 Data，复制冻结文本与捕获值，但不冻结来源或异常对象。
 
@@ -50,6 +55,17 @@ Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自
 | `interaction_buffer`、`restore_relay_buffer`                 | Matcher、Relay           | 嵌套匹配及转接退出时把未消费字节交还原所有者           |
 | `sequences`、`relay_history`、`relay_callback`               | Relay、转义扫描          | 已识别转义只回调一次，已发送前缀不重放                 |
 | `queue_output`、`pending_writes`、`propagate`                | Relay、转义扫描          | 每个目标独立保存短写进度；同步传播只用于普通匹配       |
+| `cleanup_session`                                           | 工厂、构造器             | 部分构造失败时先按已登记账本清理，否则关闭显式所属端点 |
+
+这些跨对象入口保留显式调用，不用统一 private 后再 send 绕过边界。模块的实际实现辅助方法仍放在 private 区段，
+私有常量阻止内部类型成为常规公开入口，API 检查器与 RBS 排除协作协议。SessionFactory 集中部分构造窗口，
+外层工厂在不可中断区间登记接管责任并接收成功对象；进入前仍负责 own:true 的 IO，进入后由工厂清理，避免遗漏或重复关闭。
+构造和设置回调恢复立即中断，不把用户代码包在整个不可中断区间内。
+
+启动错误只传 JSON 标量，不反序列化任意异常对象；非法诊断字节替换为有效 UTF-8，errno 保持。
+等待先非阻塞回收，再从 1ms 退避至最多 10ms，每阶段沿用原始单调期限，EINTR 不重置预算。
+显式 search_window 使用独立的尾部副本并恢复完整缓冲偏移；不能直接 byteslice 共享整段存储，
+否则后续追加会发生全缓冲写时复制。nil 路径保留字面未命中缓存与完整正则语义。
 
 | 状态                  | 所有者与修改入口                                                                      | 交接、超时与关闭                                                                                                                               |
 |-----------------------|---------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -57,12 +73,13 @@ Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自
 | `@received_bytes`     | Session 累计 `read_available` 实际接收的字节数                                    | 在日志与同步输出回调之前登记；缓冲消费、赋值、裁剪及 Matcher/Relay 交接不改变计数，空轮询与 EOF 不计入进展 |
 | `@receiving`          | Session 在接收诊断、记录与同步输出期间设置                                           | 同会话递归读取抛出 ReentrancyError；拒绝内层读取不能解除外层保护，交付结束或异常后由 ensure 释放                                               |
 | `@interaction_buffer` | Relay 当前持有的待处理输入；转接背压读取也追加到这里                                  | 转义回调内的 Matcher 临时移回 `@buffer`；Matcher 的 ensure 将余下字节交回 Relay。Relay 的 ensure 恢复上层交互状态，并把未处理字节还给普通缓冲  |
-| `@pending_writes`     | 源会话持有的各目标发送游标；`queue_output` 创建，RelayWriter 推进                     | 超时或写失败后保留原目标和已交付位置；重入续发，不重放成功前缀。关闭放弃剩余交付并清空队列，不关闭借用目标                                     |
+| `@pending_writes`     | 源会话持有的各目标发送游标；`queue_output` 创建，Relay::Writer 推进                     | 超时或写失败后保留原目标和已交付位置；重入续发，不重放成功前缀。关闭放弃剩余交付并清空队列，不关闭借用目标                                     |
 | `@relay_history`      | 源会话的正则转义历史窗口；普通转发及超时排出尾部时更新                                | 同一规则下连续输入跨次转接保留；规则改变、输入消费、改写或裁剪后清空。窗口遵守 buffer_limit 或内部默认上限，固定 UTF-8 正则不保留开头的孤立续字节。关闭清空 |
 | `@relay_callback`     | 已识别转义但尚未交付完前缀时，源会话暂存的回调                                        | 保存可 call 对象或 nil；无回调转义使用 STOP lambda。所有前缀目标交付完成后执行一次；超时保留，关闭释放。不能在等待写入后重新扫描这段已识别转义 |
 
 普通转接每轮仍最多排队 16 KiB；排队后将借用缓冲替换为未处理后缀，保持对象身份，不逐块原地删除前缀。
 已排队字节、公开 Result 快照与后续缓冲修改保持隔离，不能以改变交付顺序或丢弃余量换取性能。
+固定 UTF-8 正则的历史预算至少为 3 字节，保留未完成字符前缀；只裁掉窗口开头的孤立续字节。两至四字节字符的合法分片可跨超时接续，非法续字节及 EOF 时未完成字符仍抛 EncodingError，回归见 `relay_utf8_history_test`。
 
 匹配优先级始终是“声明组 → 会话 → 模式”，不是文本位置；来源去重、相邻组比较及 EOF 归属均按会话对象身份，
 不能由自定义 `==` / `eql?` / `hash` 合并独立来源。就绪查询与转接的 IO 归属及去重同样使用对象身份。多个会话包装同一 IO
@@ -230,7 +247,7 @@ write_transcript 在参数 to_s 全部完成后绑定目标及过滤器；转换
 
 诊断的 DEBUG 级别关闭不切断原始匹配上下文。Redactor 的内部 suppress 同步推进秘密区间并标记不可输出字节；
 后续 append、规则更新、finish 都不得释放关闭期间的原文。未使用 suppress 的普通过滤路径不分配这份额外标记。
-RelayWriter 在底层确认短写后先推进游标，再提交目标 Session 的发送诊断，复用直接 write 的发送过滤器；失败不回退已接受字节。
+Relay::Writer 在底层确认短写后先推进游标，再提交目标 Session 的发送诊断，复用直接 write 的发送过滤器；失败不回退已接受字节。
 诊断中的嵌套 WriteTimeout 对外报告本游标进度，通过 cause 保留内层异常；普通直接 write 的发送诊断仍在写入前记录尝试内容。
 
 ## 生命周期与错误边界

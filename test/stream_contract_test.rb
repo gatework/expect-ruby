@@ -75,16 +75,16 @@ class StreamContractTest < ExpectTest
   def test_shared_reader_is_read_once_before_matching_a_bounded_window
     Tempfile.create("expect-shared-reader") do |io|
       io.binmode
-      io.write("READY#{"x" * ((Expect::READ_SIZE * 2) - 5)}")
+      io.write("READY#{"x" * ((Expect.const_get(:READ_SIZE) * 2) - 5)}")
       io.rewind
-      sources = Array.new(2) { Expect.open(io, buffer_limit: Expect::READ_SIZE) }
+      sources = Array.new(2) { Expect.open(io, buffer_limit: Expect.const_get(:READ_SIZE)) }
       @sessions.concat(sources)
 
       result = Expect.expect("READY", from: sources, timeout: 0)
 
       assert result.matched?
       assert_same sources.first, result.session
-      assert_equal Expect::READ_SIZE, io.pos
+      assert_equal Expect.const_get(:READ_SIZE), io.pos
       assert_equal 0, sources.first.buffer_discarded_bytes
       assert_empty sources.last.buffer
     end

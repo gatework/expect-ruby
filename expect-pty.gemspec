@@ -20,6 +20,7 @@ Gem::Specification.new do |spec|
   # 显式声明可独立升级的标准库 gem，供应用的 Bundler 解析完整运行时依赖。
   # pty 是 Ruby 自带的 POSIX 扩展，不是独立 gem。
   spec.add_dependency "io-console", ">= 0.6"
+  spec.add_dependency "json", ">= 2.0"
   spec.add_dependency "logger", ">= 1.6"
   spec.add_dependency "stringio", ">= 3.0"
   spec.metadata["rubygems_mfa_required"] = "true"

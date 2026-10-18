@@ -62,7 +62,7 @@ class ProcessTest < ExpectTest
   end
 
   def test_string_command_supports_shell_semantics
-    session = Expect.spawn("printf 'shell-one'; printf 'shell-two'")
+    session = Expect.spawn("printf 'shell-one'; printf 'shell-two'", shell: true)
     @sessions << session
     assert_equal 1, session.expect("shell-oneshell-two", timeout: 2).number
   end

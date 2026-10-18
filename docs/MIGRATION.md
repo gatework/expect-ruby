@@ -1,5 +1,17 @@
 # 迁移说明
 
+## 0.8.x → 0.9.0：启动与时间参数
+
+- 始终使用 `require "expect/pty"`，Gemfile 指定 `require: "expect/pty"`。本库删除 `lib/expect.rb` 后，
+  `require "expect"` 恢复加载标准库的 IO#expect；两者可按任意顺序加载。
+- `Expect.spawn("echo A; echo B")` 改为 `Expect.spawn("echo A; echo B", shell: true)`；
+  常规命令优先拆成 `Expect.spawn("echo", argument)`。单字符串默认只查找同名可执行文件，含空格的路径无需 shell 转义。
+- timeout、write_timeout、delay、deadline 等秒数不再接受字符串；在应用输入边界明确解析后传入 Numeric。
+  nil 仍表示无期限，相对秒数须非负，deadline 允许已过期的负数，非法值统一为 ArgumentError。
+- 启动错误仍 rescue `Expect::SpawnError`，通过 `errno` 或 `cause` 判断系统原因。
+  错误消息中不可编码字节替换为 Unicode 替代字符，原始 errno 保留。
+- `search_window:` 是可选的每次等待参数，默认 nil 保持全缓冲扫描；与 buffer_limit 的区别见 API。
+
 ## 0.6.x → 0.7.0
 
 0.7.0 主动移除门面和旧配置接口，不提供兼容别名。最低版本仍为 Ruby 3.4，`require "expect/pty"` 和不可变 Result 保持不变。
@@ -65,4 +77,4 @@ end
 - 模式进入匹配器后冻结，运行中不能追加或替换本轮规则。
 - Gem 仅携带源码、RBS 与使用文档；测试、示例、基准和发布脚本从仓库取得。
 - 0.6.0 曾保留外层 Expect 门面和布尔配置，这两部分已由 0.7.0 的 Session 与操作关键字替代。
-- 单字符串命令保留 Ruby 自动 shell 语义；多参数命令按 argv 传入。
+- 0.7.0 当时保留单字符串自动 shell 语义；0.9.0 的变更见上文。

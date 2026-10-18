@@ -7,12 +7,13 @@ module Expect
   class Matcher
     # 固定本次参与的会话及初始期限；已处理 EOF 的会话仅从本次等待中移除。
     def initialize(patterns, timeout, deadline: nil, consume: true, reset_timeout_on_read: false,
-                   match_by_position: false)
+                   match_by_position: false, search_window: nil)
       @patterns = patterns.finalize!
       @sessions = patterns.sessions
       @groups = patterns.text_groups
       @consume = consume
       @match_by_position = match_by_position
+      @search_window = search_window
       @reset_timeout_on_read = reset_timeout_on_read
       @timeout = Expect.duration(timeout)
       # 相对期限可因接收或 continue 重算，总期限始终固定；两者共用单调时钟。
@@ -97,7 +98,9 @@ module Expect
             return nil if hard_expired?
             next if stalled && stalled[:patterns].key?(pattern)
 
-            position = if pattern.value.is_a?(String)
+            position = if @search_window
+                         pattern.locate(buffer, final: session.eof?, search_window: @search_window)
+                       elsif pattern.value.is_a?(String)
                          locate_literal(session, pattern, buffer)
                        else
                          pattern.locate(buffer, final: session.eof?)
@@ -277,4 +280,5 @@ module Expect
       :retry
     end
   end
+  private_constant :Matcher
 end

@@ -21,7 +21,9 @@ module Expect
     # buffer 应为二进制字符串，offset 仅用于字面扫描；正则始终看到完整窗口以保留锚点语义。
     # captures 为 false 时只求字节范围，转义扫描不分配随后丢弃的捕获字符串。
     # final 表示不会再有新输入，此时不完整的编码尾部也必须报错，不能永远当作等待分片。
-    def locate(buffer, final: false, offset: 0, captures: true)
+    def locate(buffer, final: false, offset: 0, captures: true, search_window: nil)
+      return locate_window(buffer, search_window, final:, captures:) if search_window && buffer.bytesize > search_window
+
       case value
       when String
         offset = buffer.index(value, offset)
@@ -49,6 +51,37 @@ module Expect
     end
 
     private
+
+    # 显式尾部窗口单独匹配，返回偏移仍属于原始缓冲；字节协议不做转码。
+    def locate_window(buffer, size, final:, captures:)
+      start = buffer.bytesize - size
+      start = utf8_window_start(buffer, start, final:) if value.is_a?(Regexp) && value.fixed_encoding? &&
+                                                          value.encoding == Encoding::UTF_8
+      return nil unless start
+
+      # byteslice 会与完整缓冲共享存储，使下次追加复制整段；unpack 只复制本轮尾窗。
+      position = locate(buffer.unpack1("a*", offset: start), final:, captures:)
+      position[0] += start if position
+      position
+    end
+
+    # 只跳过被窗口边界切开的合法 UTF-8 字符，不隐藏窗口内的非法字节。
+    def utf8_window_start(buffer, start, final:)
+      lead = start
+      lead -= 1 while lead.positive? && start - lead < 3 && (buffer.getbyte(lead) & 0xc0) == 0x80
+      first = buffer.getbyte(lead)
+      width = if first.between?(0xc2, 0xdf) then 2
+              elsif first.between?(0xe0, 0xef) then 3
+              elsif first.between?(0xf0, 0xf4) then 4
+              else 1
+              end
+      character = buffer.byteslice(lead, width).dup.force_encoding(Encoding::UTF_8)
+      return start unless lead < start && lead + width > start
+      return lead + width if character.valid_encoding?
+
+      validate_incomplete_suffix!(character, final:)
+      nil
+    end
 
     # 仅容忍末尾尚未收全的 UTF-8 字符，其他非法编码直接报错，不静默替换接收字节。
     # 转码仅用于区分“不完整尾部”和“非法字节”，结果不回写缓冲，也不做编码归一化。

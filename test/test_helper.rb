@@ -6,7 +6,7 @@ require "stringio"
 require "tempfile"
 require "tmpdir"
 require "socket"
-require_relative "../lib/expect"
+require_relative "../lib/expect/pty"
 require_relative "support/terminal_probe"
 
 class ExpectTest < Minitest::Test

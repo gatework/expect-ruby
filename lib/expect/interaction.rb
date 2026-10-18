@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "relay_writer"
+require_relative "relay/writer"
 require_relative "relay"
 require_relative "literal_prefix"
 
@@ -188,6 +188,8 @@ module Expect
     # 已转发历史有界保留，固定 UTF-8 正则不能从续字节开始匹配。
     def self.trim_history(history, data, limit:, utf8:)
       history << data
+      # 四字节 UTF-8 字符在下一片到来前最多需要保留三个字节；小窗口不能截掉这段编码状态。
+      limit = [limit, 3].max if utf8
       return unless history.bytesize > limit
 
       history.replace(history.byteslice(-limit, limit))
@@ -204,14 +206,12 @@ module Expect
     def queue_output(data)
       @pending_writes = @outputs.map do |target|
         if target.is_a?(InteractOutput)
-          RelayWriter.new(target.target, target.render(data))
+          Relay::Writer.new(target.target, target.render(data))
         else
-          RelayWriter.new(target, data)
+          Relay::Writer.new(target, data)
         end
       end
     end
-
-    public
 
     # 仅供转接内部保存和恢复注册表，避免公开可变 Hash 绕过 on_sequence 的校验。
     # @api private

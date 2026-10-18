@@ -36,7 +36,7 @@ begin
                                                 iterations: 1, verify: verify_stalled) do
       calls = 0
       session.buffer = "x"
-      Expect::Matcher.new(list, 0, consume: false).run
+      Expect.const_get(:Matcher, false).new(list, 0, consume: false).run
     end
   end
 
@@ -56,7 +56,7 @@ begin
     runner.measure("matching/eof/#{count}", bytes: 0, inputs: { sessions: count, shared_io: true },
                                             iterations: 1, verify: verify_eof) do
       calls = 0
-      Expect::Matcher.new(list, nil).run
+      Expect.const_get(:Matcher, false).new(list, nil).run
     end
   end
 

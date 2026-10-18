@@ -34,7 +34,7 @@ Expect.spawn("ruby", "-e", program) do |session|
 end
 ~~~
 
-The block closes the session and reaps its child process, including when the block raises. Use separate command arguments for untrusted input; a single command string follows Ruby shell semantics.
+The block closes the session and reaps its child process, including when the block raises. Commands execute directly with separate argv entries, including a single executable string. Shell syntax requires explicit `shell: true` with one command string; never pass untrusted input into that string.
 
 ## Features
 

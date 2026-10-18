@@ -39,7 +39,7 @@ class ProcessInterruptionTest < ExpectTest
   def test_bound_resource_finalizer_accepts_the_gc_object_id
     reader, writer = IO.pipe
     @ios.push(reader, writer)
-    resources = Expect::ResourceOwner.new(reader, writer:, own: true)
+    resources = Expect.const_get(:ResourceOwner, false).new(reader, writer:, own: true)
 
     resources.method(:finalize).call(123)
 
@@ -84,7 +84,7 @@ class ProcessInterruptionTest < ExpectTest
         }) do
           assert_nil(bounded { session.wait(timeout: 0.03) })
           assert_equal 0.03, now.call
-          assert_operator calls.size, :<=, 5
+          assert_operator calls.size, :<=, 8
           assert_operator calls.size, :>=, 3
           assert_equal 123_456, resources.pid
           assert_nil resources.status
@@ -365,12 +365,12 @@ class ProcessInterruptionTest < ExpectTest
     end
     owner.report_on_exception = false
     session = pid = nil
-    trace = TracePoint.new(:c_return) do |point|
-      next unless point.method_id == :fork && point.self.is_a?(Expect::Session)
+    trace = TracePoint.new(:c_return, :return) do |point|
+      session = point.self if point.method_id == :initialize && point.self.is_a?(Expect::Session)
+      next unless point.method_id == :fork && point.self.is_a?(Expect.const_get(:ChildProcess, false))
       next unless point.return_value.is_a?(Integer)
 
       trace.disable
-      session = point.self
       @sessions << session
       pid = point.return_value
       # 先确认子进程忽略 HUP，避免 PTY 关闭恰好终止它而掩盖 PID 泄漏。

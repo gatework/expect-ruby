@@ -68,7 +68,7 @@ class PatternCompilationTest < ExpectTest
     2.times do
       seen.clear
       [first, second, third].each { |source| source.buffer = "tail" }
-      result = Expect::Matcher.new(list, nil).run
+      result = Expect.const_get(:Matcher, false).new(list, nil).run
 
       assert result.eof?
       assert_same third, result.session
@@ -124,7 +124,7 @@ class PatternCompilationTest < ExpectTest
       Expect.continue
     end
 
-    result = Expect::Matcher.new(list, nil).run
+    result = Expect.const_get(:Matcher, false).new(list, nil).run
 
     assert result.eof?
     assert_same third, result.session

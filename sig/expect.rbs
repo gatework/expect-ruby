@@ -1,6 +1,6 @@
 # 公开 Session 接口；内部匹配与转接协议在源码中标记为 @api private。
 module Expect
-  type duration = Numeric | String
+  type duration = Numeric
   type pattern = String | Regexp | :eof | :timeout
   type result_error = :eof | :timeout | Exception | nil
   type result_fields = { number: Integer?, error: result_error, match: String?, before: String?, after: String?, session: Session?, captures: Array[String?] }
@@ -21,6 +21,9 @@ module Expect
   CONTINUE_WITHOUT_RESET: :continue_without_reset
 
   class SpawnError < StandardError
+    attr_reader errno: Integer?
+
+    def initialize: (?String message, ?errno: Integer?) -> void
   end
 
   class ReentrancyError < StandardError
@@ -33,12 +36,12 @@ module Expect
   end
 
   def self.spawn: (
-      *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
+      *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?shell: bool, ?graceful: bool,
       ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
       ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
     ) -> Session
     | [A] (
-      *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?graceful: bool,
+      *String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?shell: bool, ?graceful: bool,
       ?timeout: duration?, ?write_timeout: duration?, ?buffer_limit: Integer?,
       ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
     ) { (Session) -> A } -> A
@@ -66,7 +69,7 @@ module Expect
 
   def self.expect: (
       *pattern patterns, ?from: (Session | Array[Session]), ?timeout: duration?, ?deadline: duration?,
-      ?consume: bool, ?reset_timeout_on_read: bool
+      ?consume: bool, ?reset_timeout_on_read: bool, ?search_window: Integer?
     ) ?{ (PatternList) -> untyped } -> Result
 
   class Session
@@ -75,10 +78,10 @@ module Expect
         ?logger: _Logger?, ?transcript: _Writer?, ?outputs: Array[_Writer]
       ) -> void
 
-    def spawn: (*String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool) -> Session
+    def spawn: (*String command, ?env: Hash[String, String?], ?chdir: String?, ?raw: bool, ?shell: bool) -> Session
 
     def expect: (
-        *pattern patterns, ?timeout: duration?, ?deadline: duration?, ?consume: bool, ?reset_timeout_on_read: bool
+        *pattern patterns, ?timeout: duration?, ?deadline: duration?, ?consume: bool, ?reset_timeout_on_read: bool, ?search_window: Integer?
       ) ?{ (PatternList) -> untyped } -> Result
 
     def after: () -> String?
@@ -272,7 +275,7 @@ module Expect
     def on: ((String | Regexp) pattern, ?reply: String?, ?limit: Integer?)
       ?{ (Session) -> untyped } -> Responder
 
-    def expect: (Session session, *pattern patterns, ?timeout: duration?, ?deadline: duration?)
+    def expect: (Session session, *pattern patterns, ?timeout: duration?, ?deadline: duration?, ?search_window: Integer?)
       ?{ (PatternList) -> untyped } -> Result
 
     def inspect: () -> String

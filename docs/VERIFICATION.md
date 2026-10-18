@@ -165,7 +165,7 @@ macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20 上运行 `bash script/ci`，退出 0�
 ## 2026-10-06：流式组件的性能与恢复边界
 
 基线为 `1003584ba9a679d172b66cae6378d04e6f61dc21`，本轮修改留在工作区，版本保持 0.7.2，未提交或发布。
-按 ruby-rails 与 Waza 的深度审查流程复核 Matcher、Session、Logging/Redactor、Interaction/Relay/RelayWriter 的调用链与失败恢复。
+按 ruby-rails 与 Waza 的深度审查流程复核 Matcher、Session、Logging/Redactor、Interaction/Relay/Relay::Writer 的调用链与失败恢复。
 并行评审代理因额度或运行权限错误未返回结论；匹配、日志与转接范围由主流程串行补完，不把失败的代理任务记为独立评审通过。
 
 | 边界 | 修复及可复现证据 |
@@ -534,7 +534,7 @@ LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ruby -EUTF-8 script/release.rb --dry-run --a
 
 - 构造所有权：核对 new/open/spawn/stty 四条入口。new/open 补账本之前的兜底；spawn 继续委托 new，stty 保留已有独立兜底。
 - 进程回收：核对主会话、finalizer、stty 正常等待与异常回收。主会话/GC 修复 EINTR；stty 继续使用自身阶段策略，不合并账本。
-- 写入进度：核对直接 write、RelayWriter、logging.emit 三处。后两者已有计数验证，仅补直接 write。
+- 写入进度：核对直接 write、Relay::Writer、logging.emit 三处。后两者已有计数验证，仅补直接 write。
 - 发布文本：本地入口与 workflow 共用 UTF-8 读取，notes 显式 UTF-8 写出；ASCII 校验和与 Git/Gem 二进制比较保持原状。
 - 内部命名：统一为 `cleanup(failed:)`、`close_resources`、`close_child`、`mark_eof`；库、测试和文档无旧私有入口调用或别名。
 - 兼容性：同源活跃 Relay 现在明确报 `ReentrancyError`，异常适配计数报 IOError；普通顺序恢复、嵌套 Matcher、匹配顺序和期限默认值不变。
@@ -655,7 +655,7 @@ IO 接续、背压读取 EINTR、写超时进度和 EOF 截断编码问题。修
 
 - `interconnect` 的期限原先只约束读取循环，同步 `target.write` 可以无限阻塞；`Relay` 现统一 select
   读写并保留总期限，超时后的前缀刷新也只尝试非阻塞写入。
-- 原先只有单次 `write` 的局部偏移，转发失败后重新发送整个源缓冲；`RelayWriter` 现按目标保留游标，成功目标不重放，短写入继续后缀，flush
+- 原先只有单次 `write` 的局部偏移，转发失败后重新发送整个源缓冲；`Relay::Writer` 现按目标保留游标，成功目标不重放，短写入继续后缀，flush
   异常只重试 flush。转义回调等待前缀交付，剩余输入与待发送数据分别保留。
 - `interact` 原先每次新建输入包装器；现由连接持有并按原始 IO 身份复用，关闭连接时不等键盘 EOF、不关闭借用
   IO。关闭路径也先通过有界测试复现等待，再修复并复验。
@@ -673,7 +673,7 @@ timeout，新增测试验证异常透传、缓冲保留及全局配置不变，�
 | Linux aarch64，Ruby 3.2.11 | 217 项 / 857 断言，0 失败、错误、跳过；RuboCop 42 文件无违规 | 对话示例、Gem 构建、隔离安装及真实 PTY 对话通过 |
 
 Linux 从 gemspec 文件白名单及锁文件构造独立源码快照，只读挂载后复制到容器，使用 Bundler 4.0.20、锁定依赖及
-`BUNDLE_FROZEN=true`；未读取或分发工作区设备日志。检查构建包包含 `relay.rb`、转接写入器（现名 `relay_writer.rb`
+`BUNDLE_FROZEN=true`；未读取或分发工作区设备日志。检查构建包包含 `relay.rb`、转接写入器（现名 `relay/writer.rb`
 ）、原有重命名模块和新增回归测试，不含 `tmp/` 或 `.git/`。macOS 构建时存在本机 RDoc 多版本重复常量警告，命令成功退出，隔离安装与
 PTY 验证通过。工作区原有 16 处样式问题只作相应格式修正。
 
@@ -918,3 +918,35 @@ socket 清理。
 调用与迁移说明已同步至 README、兼容性表和示例；`send(data)` 需改为 `write(data)`，多重赋值需显式使用 `result.to_a`，`puts`
 返回 `nil`。不冲突的 Expect.pm 入口继续作为兼容入口保留。本轮未重新连接真实 SSH、运行 Perl 上游差分或触发远端
 CI；历史验证记录不作为这些路径本轮实测的证明。
+
+## 2026-10-18：启动、搜索窗口与生命周期加固
+
+基于包含既有 WIP 的完整快照隔离实施。基线为 564 tests / 9499 assertions；最终在 macOS arm64、Ruby 4.0.6 上
+执行 `bash script/ci`：596 tests / 9590 assertions，零失败、错误、跳过；99 个 Ruby 文件 lint 通过，API/RBS、两个示例、
+七组 benchmark smoke、gem 构建及 plain/Bundler 独立安装均通过。包内确认没有 lib/expect.rb，加载本库后仍可加载标准库 IO#expect。
+Ruby 3.4 与 Linux 本轮未运行，保留原有 CI 矩阵声明，不据此声称跨平台验收。
+
+新回归覆盖直接 argv、显式 shell、含元字符的可执行路径、两种加载顺序、ENOENT/EACCES/chdir 的 errno/cause、
+非法路径字节、Numeric 时间校验、搜索窗口的完整缓冲偏移/UTF-8/二进制/零宽/跨读取、轮询退避和无 logger 的惰性消息。
+每个主要缺陷先复现失败再修复。独立审查另发现并修复两项问题：工厂接管前取消泄漏 owned IO，以及 UTF-8 窗口切到合法未完成字符时提前报错。
+复查 45 tests / 180 assertions 通过，包含真实 Thread.raise/Thread.kill 资源关闭探针。
+
+性能对照均为本机合成输入，不是设备吞吐或生产基准：同一管道逐块写入 6MiB 的 x，每块 16KiB，等待未命中字面量/正则与 EOF，
+检查全部字节保留。每项五次中位数；关闭项先完成 cat 原始终端往返，再仅计 hard_close，十五次中位数。
+
+| 场景 | WIP 基线 | 候选 |
+|---|---:|---:|
+| 字面量，全缓冲 | 4.51ms | 4.25ms |
+| 正则，全缓冲 | 47.04ms | 44.02ms |
+| 正则，显式 64KiB search_window | 不支持 | 6.88ms |
+| cat hard_close | 14.96ms | 1.49ms |
+| 无 logger 的 10,000 次 record_match，预热后分配对象数 | 150,001 | 140,001 |
+
+初版尾窗使用 byteslice，共享底层存储使后续追加复制完整缓冲，反而约 137ms；改用 unpack1 的独立尾窗副本后才取得上述结果。
+未启用窗口的路径不引入切片，保留完整语义和字面未命中缓存。持续增长输入的字面量、全缓冲正则与窗口正则已纳入
+`bundle exec ruby benchmark/matching.rb`，smoke 只校验正确性，不设时间阈值。
+
+保留现有公开 duration/monotonic/redact 名称，避免在安全修复中再增加弃用迁移。未对 Redactor 加入缺少本轮收益证据的掩码缓存。
+内部跨对象协作保留显式方法调用，按 INTERNAL_CONTRACTS 分类；没有为了隐藏入口统一改为 private/send。
+新增 JSON 为受控启动错误协议的实际运行依赖，独立安装检查同时验证其声明和可加载性。
+本轮未提交、推送、发布或运行真实 SSH；版本号保持现有开发基线，未把本地打包当作发布。

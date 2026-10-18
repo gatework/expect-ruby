@@ -5,13 +5,16 @@
 
 ## 创建与关闭
 
-`Expect.spawn(*command, env: {}, chdir: nil, raw: false, graceful: false, **settings)` 创建并启动 PTY。
+`Expect.spawn(*command, env: {}, chdir: nil, raw: false, shell: false, graceful: false, **settings)` 创建并启动 PTY。
 `settings` 是下文列出的六个显式会话关键字的统称，并非任意配置 Hash。需要预设终端时先 `Expect::Session.new(**settings)`，
-通过 `session.slave` 使用原生终端方法，再调用 `session.spawn(*command, env: {}, chdir: nil, raw: false)`。
+通过 `session.slave` 使用原生终端方法，再调用 `session.spawn(*command, env: {}, chdir: nil, raw: false, shell: false)`。
 Session 构造器不接收命令或操作参数。同一会话只能启动一次。
 
-单字符串遵循 Ruby 的自动 shell 语义；多个独立参数按 argv 执行。外部输入应作为独立参数传入。
-启动失败抛出 `Expect::SpawnError`；工厂失败时回收尚未交付的会话。
+命令默认直接按可执行文件名与 argv 执行，单字符串也只作为文件名。需要 shell 语法时显式指定
+`shell: true`，仅接受一个字符串并交给 `/bin/sh -c`；外部输入应作为独立 argv 传入。
+启动失败抛出 `Expect::SpawnError`；系统错误的 `errno` 和 `cause` 保存错误编号与相应 `SystemCallError`。
+通过 `error.cause.is_a?(Errno::ENOENT)` 判断原因，外层仍为 SpawnError。非系统错误保留描述，不按任意类名恢复异常。
+工厂失败时回收尚未交付的会话。
 
 `Expect.open(io, writer: io, own: false, graceful: false, **settings)` 适配真实可 select 的 IO，默认借用。
 `own: true` 接管关闭责任，包括初始化中已知设置的非法值导致的失败；未知关键字在 Ruby 方法入口拒绝，此时不接管 IO。
@@ -28,7 +31,7 @@ nil。
 
 ## 匹配与回调
 
-`session.expect(*patterns, timeout: session.timeout, deadline: nil, consume: true, reset_timeout_on_read: false)` 返回不可变
+`session.expect(*patterns, timeout: session.timeout, deadline: nil, consume: true, reset_timeout_on_read: false, search_window: nil)` 返回不可变
 `Expect::Result`。
 `Expect.expect` 使用相同操作关键字，另加 `from:` 指定默认来源；其 timeout 默认 nil。模式为 String、Regexp、`:eof` 或
 `:timeout`，
@@ -54,6 +57,13 @@ result => { number:, captures: }
 回调中的嵌套等待实际读入新字节时，即使缓冲内容与之前相同也会恢复匹配；仅同值赋回缓冲不算新输入。
 `reset_timeout_on_read: true` 使每次读取重置本轮相对期限。`deadline` 是单调时钟绝对秒数，不被输入或回调延长。
 IO 期限不打断用户代码或单次正则；不可信正则应使用 Ruby `Regexp` 自身的 timeout。
+
+`search_window` 为正 Integer 字节数或 nil，只作用于本次等待，包括 Responder 的完成模式与应答规则。
+nil 保留全缓冲扫描；指定时，字符串和正则只搜索最新的尾部窗口。它不限制接收缓冲内存，也不丢弃旧字节，
+结果的 before/after 和消费范围仍相对于完整缓冲。长输出建议同时按业务需要设置 `buffer_limit` 并用 transcript 保存全文。
+窗口必须容纳完整提示与跨读取片段，窗口之外的模式可能错过；正则的锚点、前瞻和后顾只看到独立窗口。
+固定 UTF-8 正则跳过边界切开的合法首字符，等待合法未完成尾字符；窗口内非法字节及 EOF 未完成字符仍报错。
+二进制正则按原始字节匹配。
 
 Result 字段为 `number`、`error`、`match`、`before`、`after`、`session`、`captures`。对象、文本及捕获数组均不可变，未参与捕获为
 nil。
@@ -89,7 +99,7 @@ end
   静态字符串复制并冻结，块收到带 `before`、`match`、`captures` 的 Session；块返回值忽略，应答后继续等待。
 - `reply` 原样发送，行确认自行包含 `\n` 或 `\r`，分页可发送空格；空回复合法但不产生字节。
   不内置通用“全部确认”规则，调用方应按目标设备及业务选择精确提示和回复。
-- `expect(session, *patterns, timeout: session.timeout, deadline: nil)` 仅处理一个 Session；也可使用与 `expect` 相同的
+- `expect(session, *patterns, timeout: session.timeout, deadline: nil, search_window: nil)` 仅处理一个 Session；也可使用与 `expect` 相同的
   PatternList 块声明完成模式、EOF 和 timeout 回调。位置参数模式与块不能同时提供。
 - 自动应答与完成模式按最早的字节位置处理；同位置时完成模式先于应答，多个应答按声明顺序。
   不按正则长度推测未完成提示，不在未知提示上猜测回复。仅将成功匹配的文本视为完成，业务错误输出需由调用方注册为终止模式并检查。
@@ -122,6 +132,7 @@ end
 操作参数 `raw`、`consume`、`reset_timeout_on_read`、`graceful` 不持久化为会话设置。
 `buffer` 返回副本，`buffer=` 复制并应用上限，`clear_buffer` 移交并清空缓冲；`buffer_discarded_bytes` 累计窗口裁剪量，匹配消费不计入。
 显式替换/清空、实际裁剪和消费输入会清除正则转义历史；非消费匹配、未裁剪的等待与内部缓冲交接保持连续历史。
+正则转接历史默认保留至多 65,536 字节，设置 `buffer_limit` 后采用该上限。存在固定 UTF-8 正则时，历史预算至少为 3 字节，以保留四字节字符尚未接收完整的前缀；这不扩大普通匹配缓冲的上限，也不延迟协议转发。
 
 `write(*objects)` 按 to_s 写字节并返回字节数，`<<` 返回 Session，`puts` 遵循 Ruby IO 换行与数组规则并返回 nil。
 `send_slow(*objects, delay:)` 按字符延迟发送并收取回复。背压超时抛出 `Expect::WriteTimeout`，`bytes_written` 仅标识本次调用已确认进度，
@@ -165,5 +176,7 @@ outputs、转义和本地终端模式。
 `raw: false` 将终端设置留给调用方。transcript、logger 及自定义 writer 同步执行，应及时返回。
 
 `Expect.monotonic` 读取单调时钟，`Expect.duration` 校验秒数，`Expect.readable_sessions(*sources, timeout: 0)` 返回就绪来源。
+时间参数只接受有限实数 Numeric 或 nil，拒绝字符串、Complex、布尔值及非有限数，非法值统一抛 ArgumentError。
+相对期限必须非负，deadline 允许负数表示已到期。
 Matcher、Relay、资源账本和标为 `@api private` 的 Session 协作方法不是用户契约。RBS 覆盖公开声明；`rbs validate` 不验证 Ruby
 方法体。
