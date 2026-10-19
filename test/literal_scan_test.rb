@@ -3,6 +3,36 @@
 require_relative "test_helper"
 
 class LiteralScanTest < ExpectTest
+  def test_scan_matches_plain_string_search_across_sliding_window_operations
+    scan = Expect.const_get(:LiteralScan).new
+    random = Random.new(75_041)
+    buffer = "".b
+    generation = 0
+    literals = ["ab", "baba", "\0\xff".b, "z", ""].map { |literal| literal.b.freeze }
+
+    300.times do
+      chunk = Array.new(random.rand(0..16)) { [97, 98, 0, 255].sample(random:) }.pack("C*")
+      case random.rand(4)
+      when 0
+        buffer << chunk
+      when 1
+        count = random.rand(0..buffer.bytesize)
+        buffer = buffer.byteslice(count..)
+        scan.advance(count)
+      when 2
+        buffer = chunk
+        generation += 1
+      else
+        scan.reset
+      end
+      literals.each do |literal|
+        expected = buffer.index(literal)
+        actual = scan.index(buffer, literal, generation:)
+        expected.nil? ? assert_nil(actual) : assert_equal(expected, actual)
+      end
+    end
+  end
+
   def test_new_bytes_can_complete_a_previously_missing_literal
     session, writer = pipe_session
     list = Expect::PatternList.new([session], ["password:", "word:"])

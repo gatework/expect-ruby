@@ -2,7 +2,7 @@
 
 Expect::Session 本身是公开接口；本文所列状态与标为 `@api private` 的方法供 Matcher、Relay 和生命周期协作使用，不是用户契约。
 
-Matcher、ResourceOwner、Relay、Relay::Writer、ChildProcess、SessionFactory 和 READ_SIZE 使用私有常量限定内部入口。
+Matcher、LiteralScan、ResourceOwner、Relay、Relay::Writer、ChildProcess、SessionFactory 和 READ_SIZE 使用私有常量限定内部入口。
 Session 的协作方法按下表的显式协议供这些组件调用；`@api private` 标记不改变 Ruby 方法可见性。
 
 ## 模块职责
@@ -15,6 +15,7 @@ Session 的协作方法按下表的显式协议供这些组件调用；`@api pri
 | `cleanup.rb`                                    | 异常优先级与始终/失败清理作用域                                  |
 | `pattern.rb`、`pattern_list.rb`、`result.rb`    | 字节定位、声明顺序及原生结果值                                   |
 | `literal_prefix.rb`                             | 转义暂存与流尾脱敏共享的字节前缀计算，不持有会话或 IO              |
+| `literal_scan.rb`                               | 匹配与转接共享的字面未命中范围，只保存规则与整数进度，不持有输入或 IO |
 | `matcher.rb`                                    | 一次等待的匹配、事件派发和期限                                   |
 | `resource_owner.rb`                             | 所属 IO 与直属子进程的所有权账本和 GC 兜底                       |
 | `logging.rb`                                    | 借用 logger/transcript/outputs 及同步输出；不拥有目标            |
@@ -168,8 +169,9 @@ Session.allocate 或资源账本构造本身也可能被中断。会话未建立
 清理中新发生的 Interrupt/SystemExit 等非 StandardError 不吞掉。
 内部动作使用 `close_resources`、`close_child`、`mark_eof` 等直接名称，不保留旧私有方法别名。
 
-显式关闭遇到 IOError/SystemCallError 时，继续尝试其他句柄、交互包装器、过滤尾部和子进程清理，最后传播首个清理错误；外围
-Cleanup 仍按上述主异常规则处理。失败资源继续持有，后续关闭可重试。GC
+显式关闭遇到 IOError/SystemCallError 时，继续尝试其他句柄、交互包装器、过滤尾部和子进程清理，最后传播首个清理错误。
+子进程清理同样经过首错误累积器，后发生的系统错误不能覆盖已保存的句柄错误，新的 Interrupt/SystemExit 仍传播。
+外围 Cleanup 仍按上述主异常规则处理。失败资源继续持有，后续关闭可重试。GC
 终结器独立尝试句柄关闭和非阻塞回收，常规清理错误不向外传播。终结器不能强引用会话本身。
 
 Session 的资源关闭与 Logging 的 `finish_logging` 使用嵌套 Cleanup 作用域：进程等待或句柄关闭已失败时，日志中的
@@ -188,12 +190,19 @@ detach 成功才移交 PID，失败则保留未知 PID/status。每个操作仍�
 
 ## 缓冲裁剪与字面扫描
 
+`buffer_bytesize` 直接读取当前主缓冲的字节数，不创建 String 快照、不推进 I/O 或匹配。它不统计 Relay 暂时接管的输入、待写队列或正则历史；主缓冲恢复后即反映恢复字节。`buffer` 继续返回防御性副本，外部容量检查无须借用内部 `scan_buffer`。
+
 `buffer_discarded_bytes` 随会话累计，只在匹配窗口执行 `trim_buffer` 时增加。读取、`buffer=`
 、降低上限和下一次匹配应用上限都可能触发裁剪；匹配消费、清空、EOF 和 Relay 交接不计入，关闭后仍保留计数。它是可观察的丢弃量，不是缓冲满事件，也不提供全文归档。
 
-`@buffer_generation` 仅在替换、消费、清空、裁剪和 Relay 恢复时递增，同代次只追加。Matcher
-按会话与模式对象身份记录字面未命中的代次、字节数及模式值；新增输入只回看模式长度减一的重叠区。无新字节可跳过重复扫描，代次或模式值改变则从头扫描。缓存只活在一次
-Matcher 中，不保留文本副本。正则仍扫描完整窗口，不推断其长度、锚点或前瞻范围。
+`@buffer_generation` 仅在替换、消费、清空、裁剪和 Relay 恢复时递增，同代次只追加。Matcher 与 Relay
+按来源身份分别持有 LiteralScan；该对象按冻结规则身份记录未命中的绝对字节尾端。新增输入只回看模式长度减一的重叠区，
+Relay 移出已扫描安全前缀时只推进累计字节基点，不重扫余量，也不逐规则调整偏移。代次变化、转义消费及延迟回调前清空旧进度；
+换规则后新规则没有旧缓存。扫描对象只活在一次 Matcher/Relay 中，不保留输入副本；普通转接仍每轮排队至多 16 KiB，
+使输出回调换规则或换目标在下一块生效。正则仍扫描完整上下文，不推断其长度、锚点或前瞻范围；有界历史变化可能使原先未命中变成命中。
+
+Matcher 与 Relay 的活跃来源均按身份 Hash 保持声明顺序；EOF 继续只删除对应来源，不重扫全部剩余来源，
+不合并值相等的独立会话，也不改变停止回调和后续未处理输入的归属。
 
 ## 相对期限与总期限
 

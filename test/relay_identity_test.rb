@@ -53,4 +53,48 @@ class RelayIdentityTest < ExpectTest
     assert_empty source.buffer
     assert_equal "unread", source.to_io.read_nonblock(100)
   end
+
+  def test_many_equal_eof_sources_continue_once_in_declaration_order
+    reader, = pipe_session
+    calls = []
+    sources = Array.new(128) do |index|
+      Expect.open(reader.to_io).tap do |source|
+        @sessions << source
+        source.close
+        source.on_sequence(:eof) do
+          calls << index
+          true
+        end
+      end
+    end
+    equalize_sessions(*sources)
+
+    assert_nil Expect.interconnect(*sources, sources.first)
+    assert_equal (0...sources.size).to_a, calls
+    refute reader.closed?
+  end
+
+  def test_eof_continuation_keeps_the_next_stopping_source_and_its_tail
+    sources = Array.new(3) { pipe_session.first }
+    equalize_sessions(*sources)
+    sources.each(&:close)
+    calls = []
+    sources[0].on_sequence(:eof) do
+      calls << 0
+      true
+    end
+    sources[1].on_sequence(:eof) do
+      calls << 1
+      false
+    end
+    sources[2].on_sequence(:eof) do
+      calls << 2
+      true
+    end
+    sources[2].buffer = "unprocessed"
+
+    assert_same sources[1], Expect.interconnect(*sources)
+    assert_equal [0, 1], calls
+    assert_equal "unprocessed", sources[2].buffer
+  end
 end

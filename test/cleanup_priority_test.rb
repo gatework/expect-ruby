@@ -71,6 +71,46 @@ class CleanupPriorityTest < ExpectTest
     assert_nil session.close
   end
 
+  def test_handle_failure_survives_a_later_process_cleanup_failure
+    session = child("sleep 60", raw: true)
+    primary = IOError.new("handle close failed first")
+    secondary = Errno::EINVAL.new("process wait failed second")
+    calls = prepare_pending_logs(session, logger: nil, transcript: nil)
+    waits = 0
+
+    session.to_io.stub(:close, -> { raise primary }) do
+      session.stub(:wait, lambda { |**|
+        waits += 1
+        raise secondary
+      }) do
+        assert_same primary, assert_raises(IOError) { session.hard_close(timeout: 0) }
+      end
+    end
+    assert_equal 1, waits
+    assert_equal %i[logger transcript], calls
+    assert session.closed?
+    refute session.to_io.closed?
+    assert session.pid
+    session.hard_close(timeout: 0)
+    assert session.to_io.closed?
+    assert_nil session.pid
+  end
+
+  def test_fatal_process_cleanup_failure_overrides_an_earlier_handle_failure
+    [Interrupt.new("wait interrupted"), SystemExit.new(17)].each do |fatal|
+      session = child("sleep 60", raw: true)
+      calls = prepare_pending_logs(session, logger: nil, transcript: nil)
+      session.to_io.stub(:close, -> { raise IOError, "handle close failed" }) do
+        session.stub(:wait, ->(**) { raise fatal }) do
+          assert_same fatal, assert_raises(fatal.class) { session.hard_close(timeout: 0) }
+        end
+      end
+      assert_equal %i[logger transcript], calls
+      session.hard_close(timeout: 0)
+      assert_nil session.pid
+    end
+  end
+
   def test_new_fatal_log_failure_is_not_hidden_by_a_process_failure
     session = child("sleep 60", raw: true)
     failure = Interrupt.new("logger interrupted")

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "literal_scan"
+
 module Expect
   # 驱动一次单会话或多会话匹配，管理模式优先级、EOF 和共享期限，不接管 IO 所有权。
   # 调度只在扫描、回调和 IO 操作之间检查期限，不强行中断用户代码或单次正则计算。
@@ -124,27 +126,10 @@ module Expect
     # 仅复用同一缓冲代次中的字面未命中。保留模式长度减一的重叠区，覆盖跨读取命中。
     # 不保存整个文本，也不对正则推断扫描窗口；回调替换、消费或转接恢复会改变代次。
     def locate_literal(session, pattern, buffer)
-      @literal_misses ||= {}.compare_by_identity
-      misses = (@literal_misses[session] ||= {}.compare_by_identity)
-      previous = misses[pattern]
-      generation = session.buffer_generation
-      # 模式已冻结；缓冲代次未变意味着只有尾部追加。
-      offset = if previous && previous[0] == generation
-                 return nil if previous[1] == buffer.bytesize
-
-                 [previous[1] - pattern.value.bytesize + 1, 0].max
-               else
-                 0
-               end
-      position = pattern.locate(buffer, offset:)
-      if position
-        misses.delete(pattern)
-      else
-        entry = (misses[pattern] ||= [])
-        entry[0] = generation
-        entry[1] = buffer.bytesize
-      end
-      position
+      @literal_scans ||= {}.compare_by_identity
+      scan = (@literal_scans[session] ||= LiteralScan.new)
+      offset = scan.index(buffer, pattern.value, generation: session.buffer_generation)
+      [offset, pattern.value.bytesize, []] if offset
     end
 
     # 先记录并消费匹配，再执行回调；回调可选择结束、重置期限或保留期限继续。

@@ -58,6 +58,21 @@ begin
       calls = 0
       Expect.const_get(:Matcher, false).new(list, nil).run
     end
+
+    # EOF 回调继续时每个来源只派发一次，重复实参也不能重复派发。
+    sources.each do |source|
+      source.on_sequence(:eof) do
+        calls += 1
+        true
+      end
+    end
+    runner.measure("relay/eof/#{count}", bytes: 0, inputs: { sessions: count, shared_io: true },
+                                         iterations: 1, verify: lambda { |result|
+                                           ExpectBenchmark.check(result.nil? && calls == count)
+                                         }) do
+      calls = 0
+      Expect.interconnect(*sources, sources.first)
+    end
   end
 
   responses = Expect::Responder.new

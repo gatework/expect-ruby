@@ -626,3 +626,54 @@ macOS arm64 / Ruby 4.0.6，每个场景在独立进程处理 8MiB 合成输入�
 
 独立尾部复制使极细分片有额外 CPU 代价，不能宣称所有负载都更快；本轮优先确保有界窗口不保留已丢弃的大块存储。
 五样本原始报告保存在 `tmp/retention-review/perf-{baseline,candidate}-{1,2}.json`，不设 CI 时间阈值。
+
+
+## 共享字面扫描与批量 EOF（2026-10-18）
+
+基线为 `5ee6a6a`（0.9.3），候选将 Matcher 和 Relay 的连续字节窗口未命中进度归一为私有 LiteralScan，
+同时将 Relay 活跃来源改为身份 Hash。Hash 保持插入顺序并可按对象身份比较，见 [Ruby 3.4 Hash 文档](https://docs.ruby-lang.org/en/3.4/Hash.html)。
+候选不改变普通转接每轮至多排队 16 KiB 的边界，规则及目标切换仍在下一块生效。
+
+macOS arm64 / Ruby 4.0.6，使用相同 `benchmark/relay.rb` 驱动，按基线、候选、候选、基线串行采样；
+每轮五个样本，大缓冲场景每样本一次操作，初始化在计时外，输入重置和转接在计时内，每次采样均验证完整输出。
+下表为每轮中位数（毫秒），两组数字分别表示两轮：
+
+| 字面未命中转接输入 | 基线 | 候选 |
+|---|---:|---:|
+| 1 MiB | 16.834 / 8.574 | 1.087 / 0.980 |
+| 4 MiB | 189.052 / 142.159 | 3.070 / 2.949 |
+| 16 MiB | 2112.194 / 2524.492 | 12.151 / 11.617 |
+
+无计时阈值的回归同时计量实际 String#index 搜索范围：1 MiB 未命中输入由累计搜索 34,078,720 字节降至 1,048,576 字节。
+追加输入仅重扫可跨旧尾部的重叠范围；替换、裁剪、嵌套 Matcher 消费及转义动作会清除旧进度。
+
+同机 `benchmark/dispatch.rb`，五样本、每样本一次批量 EOF 派发，来源在采样前建立并关闭，所有回调继续；
+重复实参不重复派发，断言回调次数和返回结果。下表是最终候选的中位数（毫秒）：
+
+| 来源数 | 基线 | 候选 |
+|---|---:|---:|
+| 500 | 4.024 | 0.649 |
+| 2000 | 58.106 | 2.383 |
+| 4000 | 229.188 | 4.846 |
+
+EOF 场景的稳定分配数未增加（4000 来源两边均为 24,023 个对象）。其他负载不是全部更快：
+16 MiB 无转义转接为基线 7.324 / 6.860 ms、候选 7.603 / 7.193 ms，分配约 31,783 → 32,808 个对象，
+来源选择与缓存查询有少量额外成本。共享 Matcher 路径的多模式流场景分配约 581 → 550 个对象/次；
+耗时没有一致改善，因此不声称普通匹配全面提速。
+
+任意正则仍扫描完整上下文。历史裁剪可改变锚点结果，不能把字面未命中缓存套用到正则；
+大预缓冲加未命中正则仍有重复扫描成本。也不能一次排队所有余量，否则输出回调中的新停止规则或目标切换会失效。
+这些边界有回归保护，本轮不改变其公开语义。以上仅是本机合成负载，不代表真实设备吞吐，不设 CI 墙钟阈值。
+
+复现命令：
+
+```sh
+bundle exec ruby benchmark/relay.rb --library /path/to/baseline/lib --samples 5 --output tmp/review/relay-baseline.json
+bundle exec ruby benchmark/relay.rb --samples 5 --output tmp/review/relay-candidate.json
+bundle exec ruby benchmark/dispatch.rb --samples 5 --output tmp/review/dispatch-candidate.json
+```
+
+原始报告保存于忽略目录 `tmp/oop-review-20261018/relay-{baseline,candidate}-{1,2}.json`、
+`dispatch-{baseline,final}.json` 与 `matching-{baseline,candidate}.json`。
+基线库 SHA-256：`7c0dfa4b16d5645da6fb0c08e7de67180f7364372f6eae7c65ea8ad524f1c349`；
+候选：`804cf113eb2a0ee8a8bf3ebbf611e2173523c08b6cf36cc74db73d66e022953f`。

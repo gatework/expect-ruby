@@ -134,7 +134,7 @@ end
 | outputs                | []     | 复制可写目标数组，原样转发接收字节   |
 
 操作参数 `raw`、`consume`、`reset_timeout_on_read`、`graceful` 不持久化为会话设置。
-`buffer` 返回副本，`buffer=` 复制并应用上限，`clear_buffer` 移交并清空缓冲；`buffer_discarded_bytes` 累计窗口裁剪量，匹配消费不计入。
+`buffer` 返回副本；只检查容量时使用 `buffer_bytesize`，以常数时间取得当前未消费主缓冲的字节数，不复制正文、不读取 IO，也不包含 Relay 待写数据或历史窗口。`buffer=` 复制并应用上限，`clear_buffer` 移交并清空缓冲；`buffer_discarded_bytes` 累计窗口裁剪量，匹配消费不计入。
 显式替换/清空、实际裁剪和消费输入会清除正则转义历史；非消费匹配、未裁剪的等待与内部缓冲交接保持连续历史。
 正则转接历史默认保留至多 65,536 字节，设置 `buffer_limit` 后采用该上限。存在固定 UTF-8 正则时，历史预算至少为 3 字节，以保留四字节字符尚未接收完整的前缀；这不扩大普通匹配缓冲的上限，也不延迟协议转发。
 

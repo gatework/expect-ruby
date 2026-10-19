@@ -12,7 +12,8 @@ module Expect
     # 这里只校验参数；run 取得所有来源后才转移缓冲，不关闭或接管任何外部 IO。
     def initialize(sessions, timeout)
       @sessions = sessions.uniq(&:object_id)
-      @active = @sessions.dup
+      # 按对象身份保留声明顺序；每个 EOF 仅删除自身，避免逐个重扫剩余来源。
+      @active = @sessions.each_with_object({}.compare_by_identity) { |session, active| active[session] = true }
       period = Expect.duration(timeout)
       @deadline = period && (Expect.monotonic + period)
       # 零超时保留首轮缓冲及一次轮询；正预算在扫描和每次回调之间重新检查。
@@ -20,6 +21,7 @@ module Expect
       @token = Object.new
       @buffers = {}.compare_by_identity
       @previous = {}.compare_by_identity
+      @literal_scans = {}.compare_by_identity
     end
 
     # 每轮先处理转义和已排队输出，再共同选择读写；停止返回来源会话，总期限到达返回 nil。
@@ -52,7 +54,7 @@ module Expect
     def dispatch_sources
       idle = []
       queued = false
-      @active.dup.each do |session|
+      @active.each_key do |session|
         return [:timeout, idle, queued] if dispatch_expired?
 
         next if session.pending_output?
@@ -72,7 +74,7 @@ module Expect
         callback = session.sequences[:eof]
         return [session, idle, queued] unless callback&.call
 
-        @active.delete_if { |active| active.equal?(session) }
+        @active.delete(session)
         return [:timeout, idle, queued] if dispatch_expired?
       end
       [nil, idle, queued]
@@ -82,11 +84,18 @@ module Expect
     def dispatch_input(session)
       if (callback = session.relay_callback)
         session.relay_callback = nil
+        @literal_scans[session]&.reset
         return :stopped unless callback.call
         return :timeout if dispatch_expired?
       end
 
-      Interaction.queue_input(session, @buffers.fetch(session), final: session.eof?, deadline: @dispatch_deadline)
+      # 正则与空规则不分配字面缓存；回调可追加规则，每轮按当前声明选择。
+      literal_scan = @literal_scans[session]
+      if !literal_scan && session.sequences.any? { |key, _handler| key.is_a?(String) }
+        literal_scan = (@literal_scans[session] ||= LiteralScan.new)
+      end
+      Interaction.queue_input(session, @buffers.fetch(session), final: session.eof?, deadline: @dispatch_deadline,
+                                                                literal_scan:)
     end
 
     # 共同等待来源与目标，每轮读每个就绪来源一次；EINTR 返回原期限循环。
@@ -198,7 +207,7 @@ module Expect
       targets = pending.each_with_object({}.compare_by_identity) do |output, index|
         index[output.target] = true if output.target.is_a?(Session)
       end
-      sources = @active.reject do |session|
+      sources = @active.each_key.reject do |session|
         session.pending_output? && !targets.key?(session)
       end
       (sources + targets.keys).uniq { |session| session.to_io.object_id }.reject(&:eof?)

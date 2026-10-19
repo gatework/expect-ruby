@@ -75,6 +75,23 @@ begin
     end
   end
 
+  # 大预读余量与未命中字面转义组合，校验分块出队不会反复扫描已排除的前缀。
+  session.on_sequence("NEVER")
+  (runner.smoke ? [65_536] : [1_048_576, 4_194_304, 16_777_216]).each do |bytes|
+    buffered_payload = "x" * bytes
+    verify = lambda do |result|
+      ExpectBenchmark.check(result.equal?(session) && buffered_output.string == buffered_payload)
+      ExpectBenchmark.check(session.buffer.empty? && !session.pending_output?)
+    end
+    runner.measure("prebuffered_literal/#{bytes}", bytes:, inputs: { size: bytes, escapes: 1 }, verify:,
+                                                   iterations: 1) do
+      buffered_output.string = "".b
+      session.buffer = buffered_payload
+      Timeout.timeout(30) { Expect.interconnect(session, timeout: 25) }
+    end
+  end
+  session.__send__(:sequences=, {})
+
   normal = StringIO.new("".b)
   slow = StringIO.new("".b)
   slow.define_singleton_method(:write) { |data| super(data.byteslice(0, 17)) }

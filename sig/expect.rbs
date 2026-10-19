@@ -102,6 +102,8 @@ module Expect
 
     def buffer: () -> String
 
+    def buffer_bytesize: () -> Integer
+
     def buffer=: (String value) -> void
 
     def clear_buffer: () -> String

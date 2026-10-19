@@ -3,6 +3,7 @@
 require_relative "relay/writer"
 require_relative "relay"
 require_relative "literal_prefix"
+require_relative "literal_scan"
 
 # 为会话补充人工接管和多路 IO 转接；核心会话定义位于 session.rb。
 module Expect
@@ -81,14 +82,17 @@ module Expect
     # 将待处理输入排入唯一的转接发送队列；返回 :ready、:queued、:stopped 或 :timeout。
     # 字面序列暂存潜在前缀，正则序列结合历史匹配；final 为真时不再等待后续字节。
     # @api private
-    def self.queue_input(session, buffer, final: false, deadline: nil)
+    def self.queue_input(session, buffer, final: false, deadline: nil, literal_scan: nil)
       loop do
         sequences = session.sequences.except(:eof)
         history = session.relay_history
-        found, regexp_scanned, utf8_regexp = scan_sequences(buffer, sequences, history, final:)
+        found, regexp_scanned, utf8_regexp = scan_sequences(
+          buffer, sequences, history, final:, literal_scan:, generation: session.buffer_generation
+        )
         return :timeout if expired?(deadline)
 
         if found
+          literal_scan&.reset
           result = handle_escape(session, buffer, history, found)
           return result unless result == :ready
           return :timeout if expired?(deadline)
@@ -108,7 +112,10 @@ module Expect
         end
         # 排队前缀与尾部可共享原字节；替换窗口而非删除前缀，避免逐块复制整个余量。
         # 保留缓冲对象身份，嵌套 Matcher 仍把尾部交回 Relay 借用的同一个对象。
-        buffer.replace(buffer.byteslice(count..)) if count.positive?
+        if count.positive?
+          buffer.replace(buffer.byteslice(count..))
+          literal_scan&.advance(count)
+        end
         return count.positive? ? :queued : :ready
       end
     end
@@ -134,7 +141,7 @@ module Expect
     end
 
     # 单轮正则共用一个组合文本；回调返回后下一轮重新取得规则和历史。
-    def self.scan_sequences(buffer, sequences, history, final:)
+    def self.scan_sequences(buffer, sequences, history, final:, literal_scan: nil, generation: nil)
       text = nil
       utf8_regexp = false
       earliest = nil
@@ -153,7 +160,7 @@ module Expect
           # 历史前缀已实时转发，不能撤回；负偏移表示本次只需消费转义尚未转发的部分。
           offset -= history.bytesize
         else
-          offset = buffer.index(key)
+          offset = literal_scan ? literal_scan.index(buffer, key, generation:) : buffer.index(key)
           next unless offset
 
           length = key.bytesize

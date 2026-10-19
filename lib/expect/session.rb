@@ -130,6 +130,10 @@ module Expect
     # 返回缓冲副本，防止调用方原地修改绕过裁剪规则。
     def buffer = @buffer.dup
 
+    # 读取当前未消费主缓冲的字节数，不复制正文、不读取 IO，也不包含转接中的待写数据。
+    # @return [Integer] 当前主缓冲占用的字节数。
+    def buffer_bytesize = @buffer.bytesize
+
     # Matcher 仅在无回调的当前扫描借用原字节，避免副本使下一次追加复制整个窗口。
     # 不得修改或跨读取、回调保留；公开 buffer 和继续回调的快照仍独立复制。
     # @api private
@@ -508,7 +512,7 @@ module Expect
         @pending_writes&.clear
         @relay_history&.clear
         @relay_callback = nil
-        status = close_child(timeout:, term_timeout:, force:)
+        status = cleanup.call { close_child(timeout:, term_timeout:, force:) }
         raise failure if failure
 
         status
