@@ -58,6 +58,22 @@ class RedactorTest < Minitest::Test
     assert_equal "plain", Expect::Redactor.redact("plain", [])
   end
 
+  def test_empty_rules_preserve_ownership_suppression_and_later_mask_boundaries
+    filter = Expect::Redactor.new(["x"])
+    assert_equal "[FILTERED]", filter.append("x")
+    filter.patterns = []
+    input = +"visible"
+    output = filter.append(input)
+    input.replace("changed")
+    assert_equal "visible".b, output
+    assert_equal Encoding::BINARY, output.encoding
+    refute_predicate output, :frozen?
+    assert_nil filter.suppress("private")
+    filter.patterns = ["x"]
+    assert_equal "[FILTERED]", filter.append("x")
+    assert_empty filter.finish
+  end
+
   def test_one_shot_redaction_does_not_treat_an_ordinary_suffix_as_a_secret_prefix
     assert_equal "pass", Expect::Redactor.redact("pass", ["password"])
     assert_equal "[REDACTED]!", Expect::Redactor.redact("password!", ["password"], replacement: "[REDACTED]")

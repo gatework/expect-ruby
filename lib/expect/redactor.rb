@@ -74,6 +74,13 @@ module Expect
     def append_chunk(data, visible:)
       raise ArgumentError, "data must be a String" unless data.is_a?(String)
 
+      # 没有规则且旧尾部已排空时，原样交付独立字节副本，不构造等长掩码。
+      # 非空明文会分隔隐藏区间；空分片不能改变以后重新启用规则时的边界。
+      if @patterns.empty? && @pending.empty?
+        @masking = false unless data.empty?
+        return visible ? data.b : "".b
+      end
+
       unless visible || data.empty?
         @suppressed ||= "\0" * @pending.bytesize
         @suppressed_until = @pending.bytesize + data.bytesize

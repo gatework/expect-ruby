@@ -27,6 +27,13 @@ runner = ExpectBenchmark::Runner.new("redactor")
 size = runner.smoke ? 512 : 65_536
 plain = "x" * size
 RedactorBenchmark.measure(runner, "empty_rules", plain, [], plain)
+RedactorBenchmark.measure(runner, "empty_rules_stream", plain, [], plain, chunk_size: 4096)
+runner.measure("empty_rules_suppressed", bytes: plain.bytesize, inputs: { secrets: 0, suppressed: true },
+                                         verify: ->(output) { ExpectBenchmark.check(output.empty?) }) do
+  filter = Expect::Redactor.new([])
+  filter.suppress(plain)
+  filter.finish
+end
 RedactorBenchmark.measure(runner, "no_match", plain, ["secret"], plain)
 RedactorBenchmark.measure(runner, "no_match_many", plain, %w[secret password token credential], plain)
 RedactorBenchmark.measure(runner, "sparse", "#{plain}secret!", ["secret"], "#{plain}[FILTERED]!")
