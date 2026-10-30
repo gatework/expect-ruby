@@ -67,7 +67,7 @@ nil 保留全缓冲扫描；指定时，字符串和正则只搜索最新的尾�
 固定 UTF-8 正则跳过边界切开的合法首字符，等待合法未完成尾字符；窗口内非法字节及 EOF 未完成字符仍报错。
 二进制正则按原始字节匹配。
 
-Result 的 `inspect` 与 `to_s` 仅显示匹配序号和错误状态，不打印原始文本、异常消息或来源对象。
+Result 的 `inspect`、`to_s` 与 `pretty_print`（包括 `PP.pp`）仅显示匹配序号和错误状态，不打印原始文本、异常消息或来源对象。
 需要原始结果时显式读取字段；`redact` 不改变这些字段。
 Result 字段按顺序为 `status`、`match_number`、`error`、`match`、`before`、`after`、`session`、`captures`。
 状态为 `:matched`、`:timeout`、`:eof` 或 `:error`；`error` 只保存原始异常或 nil，等待超时和 EOF 均不是异常。
@@ -75,6 +75,9 @@ Result 字段按顺序为 `status`、`match_number`、`error`、`match`、`befor
 其余状态没有编号、match、after 或捕获，只有 `:error` 状态携带异常。参数、编码与回调异常仍按原规则直接抛出。
 
 对象、文本及捕获数组均不可变，未参与的捕获为 nil；来源会话与异常不复制、不冻结。
+文本与捕获容器重建为普通 String/Array，不继承调用方子类、附加状态或单例行为，也不冻结调用方输入。
+手工构造结果保留原始字节与编码；协议缓冲、字面规则、回复、转义及脱敏配置使用普通二进制字符串副本。
+写入仍先执行一次 `to_s`，随后固定普通字节副本；启动参数在修改终端前校验，实际执行与 `command` 使用同一快照。
 使用 `to_h`、位置/键模式解构或 `with` 构造新结果；构造必须指定 status，new、[]、with 都拒绝矛盾状态与非字符串文本。
 没有字段 writer、旧 number 或 to_a。会话的 `last_result`、`before`、`after`、`match`、`match_number`、`captures`、`error`
 读取最近结果；最近等待状态使用 `last_result.status`，与输入 EOF、IO 关闭、进程状态分别查询。

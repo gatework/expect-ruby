@@ -30,7 +30,7 @@ module Expect
 
       # 只改变显示字节，不改写匹配输入；记住上一块的 CR，避免分块的 CRLF 被扩成 CRCRLF。
       def render(data)
-        bytes = data.to_s.b
+        bytes = String.new(data.to_s).force_encoding(Encoding::BINARY)
         rendered = bytes.gsub(/(?<!\r)\n/n, "\r\n")
         rendered = rendered.byteslice(1..) if @previous_carriage_return && bytes.start_with?("\n")
         @previous_carriage_return = bytes.end_with?("\r")
@@ -49,7 +49,7 @@ module Expect
     def on_sequence(sequence, &block)
       key = case sequence
             when :eof, Regexp then sequence
-            when String then sequence.b.freeze
+            when String then String.new(sequence).force_encoding(Encoding::BINARY).freeze
             else raise ArgumentError, "sequence must be a String, Regexp or :eof"
             end
       raise ArgumentError, "escape sequence must not be empty" if key == ""

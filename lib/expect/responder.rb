@@ -17,14 +17,16 @@ module Expect
     # limit 是本规则在一次 expect 中允许的应答次数，nil 不限；规则文本和静态回复复制冻结。
     def on(pattern, reply: nil, limit: nil, &block)
       raise FrozenError, "responder is frozen" if frozen?
+
+      pattern = String.new(pattern).force_encoding(Encoding::BINARY).freeze if pattern.is_a?(String)
+      reply = String.new(reply).force_encoding(Encoding::BINARY).freeze if reply.is_a?(String)
       unless (pattern.is_a?(String) && !pattern.empty?) || pattern.is_a?(Regexp)
         raise ArgumentError, "response pattern must be a nonempty String or Regexp"
       end
 
       validate_action!(reply, limit, block)
 
-      pattern = pattern.b.freeze if pattern.is_a?(String)
-      @rules << [pattern, reply&.b&.freeze, limit, block].freeze
+      @rules << [pattern, reply, limit, block].freeze
       self
     end
 

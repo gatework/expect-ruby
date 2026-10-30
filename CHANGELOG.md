@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.10.1 - 2026-10-30
+
+- Normalize result, buffer and rule snapshots to plain String/Array values without freezing caller input or retaining attached behavior. Preserve raw bytes, encodings and borrowed object identity.
+- Make Result pretty_print use the safe summary, and execute the same validated argument snapshot exposed by Session#command.
+- Preserve to_s conversion and confirmed write progress while normalizing protocol and transcript bytes before callbacks.
+
 ## 0.10.0 - 2026-10-30
 
 - 最低 Ruby 升级至 4.0.6；Result 明确区分 matched、timeout、eof、error，编号统一为 match_number，error 只保存原始异常。构造和 with 拒绝矛盾状态，旧 number 字段移除。

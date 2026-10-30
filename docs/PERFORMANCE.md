@@ -721,3 +721,32 @@ bundle exec ruby benchmark/dispatch.rb --samples 5 --output tmp/review/dispatch-
 `dispatch-{baseline,final}.json` 与 `matching-{baseline,candidate}.json`。
 基线库 SHA-256：`7c0dfa4b16d5645da6fb0c08e7de67180f7364372f6eae7c65ea8ad524f1c349`；
 候选：`804cf113eb2a0ee8a8bf3ebbf611e2173523c08b6cf36cc74db73d66e022953f`。
+
+## 2026-10-30：普通字符串快照边界
+
+基线为本轮开始时的 0.10.0（提交 a94cb0af3f1c59a3a509700c2ca5e91ac0f6df0c），使用相同基准脚本及规模，按 baseline/candidate/candidate/baseline 串行运行，每进程两次样本，每次一次完整操作，取四个样本中位数。RVM Ruby 4.0.6 / Linux x86_64。候选源码摘要：`bf1d806350923914e796d668ec510f9d2fc9b27957dd6576685f7eac781e59e9`。测试与性能测量未并行运行。
+
+所有场景均校验输出、匹配次序或交付字节。以下列出代表性场景及仍存在的成本，全部 116 个场景记录保存在 `.foundation-review-20261030/`。
+
+| 场景 | 基线 ms | 候选 ms | 基线分配 | 候选分配 |
+| --- | ---: | ---: | ---: | ---: |
+| matching: growing/16777216/literal/full | 51.158 | 49.497 | 15497.0 | 15497.0 |
+| matching: growing/16777216/regexp/full | 2475.757 | 2504.567 | 16519.0 | 16519.0 |
+| matching: growing/16777216/regexp/65536 | 70.011 | 72.138 | 17540.0 | 17540.0 |
+| relay: prebuffered/16777216 | 29.481 | 32.881 | 30758.0 | 30758.0 |
+| relay: prebuffered_literal/16777216 | 36.131 | 36.273 | 30760.0 | 30760.0 |
+| redactor: empty_rules | 0.049 | 0.037 | 15.5 | 15.5 |
+| redactor: overlap_4096 | 149.185 | 149.797 | 20.0 | 20.0 |
+| redactor: stream_1 | 6.886 | 9.992 | 21763.0 | 21763.0 |
+| redactor: stream_4096 | 0.281 | 0.279 | 532.0 | 532.0 |
+| redactor: mixed_lengths_stream_64 | 0.748 | 0.826 | 664.0 | 792.0 |
+| logging: short_writes | 2.602 | 2.549 | 12292.0 | 12292.0 |
+| dispatch: matching/eof/500 | 2.863 | 4.035 | 7507.0 | 7507.0 |
+| dispatch: matching/eof/2000 | 12.819 | 15.282 | 30007.0 | 30007.0 |
+| dispatch: matching/eof/4000 | 31.299 | 35.130 | 60007.0 | 60007.0 |
+
+协议文本采用 `String.new(value).force_encoding(Encoding::BINARY)`，先取得普通字符串，再修改它自己的编码；结果字段只使用 String.new 后冻结，保留原编码。没有新增生产类型或快照缓存。最初的编码关键字形式在一万次转换中分配约三万个对象，改用当前形式后约一万个；16 MiB 读取场景的分配已恢复至基线。
+
+长字节流和 4 KiB 分片脱敏总体接近基线；1 字节分片脱敏及大量 EOF 结果创建仍有成本：本机分别约 +45%、+12–41% 耗时。混合长度、64 字节分片的脱敏分配也有增加，详见原始样本。保留这些结果，不将完整性索引的收益外推至 PTY 或声称所有场景加速。四样本微基准不能代替稳定环境的容量测试，绝对毫秒数仅用于本轮对照。
+
+复现使用 benchmark/matching.rb、relay.rb、redactor.rb、logging.rb、dispatch.rb 的 `--library PATH --samples 2 --iterations 1 --output FILE`；比较顺序与汇总脚本一并保存在验证目录。

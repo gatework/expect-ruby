@@ -15,11 +15,12 @@ module Expect
 
     # 复制冻结替换文本与规则；pending 保存尚不能安全输出的原字节，hidden 用 0/1 标记遮盖。
     def initialize(patterns, replacement: "[FILTERED]")
+      replacement = String.new(replacement).force_encoding(Encoding::BINARY) if replacement.is_a?(String)
       unless replacement.is_a?(String) && !replacement.empty?
         raise ArgumentError, "replacement must be a nonempty String"
       end
 
-      @replacement = replacement.b.freeze
+      @replacement = replacement.freeze
       self.patterns = patterns
       @pending = "".b
       @hidden = "".b
@@ -28,11 +29,16 @@ module Expect
 
     # 更新后续匹配规则并保留已有尾部与掩码；不能追溯修改已经交付给日志目标的内容。
     def patterns=(patterns)
+      if patterns.is_a?(Array)
+        patterns = Array.new(patterns).map! do |pattern|
+          pattern.is_a?(String) ? String.new(pattern).force_encoding(Encoding::BINARY).freeze : pattern
+        end
+      end
       unless patterns.is_a?(Array) && patterns.all? { |pattern| pattern.is_a?(String) && !pattern.empty? }
         raise ArgumentError, "patterns must be an Array of nonempty Strings"
       end
 
-      @patterns = patterns.map { |pattern| pattern.b.freeze }.uniq.freeze
+      @patterns = patterns.uniq.freeze
       @lookbehind = [(@patterns.map(&:bytesize).max || 0) - 1, 0].max
       @scanned_bytes = 0
     end
@@ -74,11 +80,12 @@ module Expect
     def append_chunk(data, visible:)
       raise ArgumentError, "data must be a String" unless data.is_a?(String)
 
+      data = String.new(data).force_encoding(Encoding::BINARY)
       # 没有规则且旧尾部已排空时，原样交付独立字节副本，不构造等长掩码。
       # 非空明文会分隔隐藏区间；空分片不能改变以后重新启用规则时的边界。
       if @patterns.empty? && @pending.empty?
         @masking = false unless data.empty?
-        return visible ? data.b : "".b
+        return visible ? data : "".b
       end
 
       unless visible || data.empty?
@@ -86,7 +93,7 @@ module Expect
         @suppressed_until = @pending.bytesize + data.bytesize
       end
       @suppressed << ((visible ? "\0" : "\1") * data.bytesize) if @suppressed
-      @pending << data.b
+      @pending << data
       @hidden << ("\0" * data.bytesize)
       mark_secrets
       release([@pending.bytesize - @lookbehind, 0].max)

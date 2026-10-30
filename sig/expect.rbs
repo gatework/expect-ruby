@@ -253,6 +253,8 @@ module Expect
 
     def deconstruct: () -> [result_status, Integer?, result_error, String?, String?, String?, Session?, Array[String?]]
 
+    def pretty_print: (untyped printer) -> void
+
     def with: (
         ?status: result_status,
         ?match_number: Integer?,

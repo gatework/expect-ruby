@@ -28,11 +28,12 @@ module Expect
     # 秘密仅作用于本会话的接收记录和诊断，不改写匹配或 outputs 的协议字节。
     # 先校验全部值再发布；注册是追加操作，应在首次通信前完成，不能追溯已交付的日志。
     def redact(*secrets)
+      secrets.map! { |secret| secret.is_a?(String) ? String.new(secret).force_encoding(Encoding::BINARY).freeze : secret }
       unless secrets.any? && secrets.all? { |secret| secret.is_a?(String) && !secret.empty? }
         raise ArgumentError, "secrets must be nonempty Strings"
       end
 
-      @secrets = ((@secrets || []) + secrets.map { |secret| secret.b.freeze }).uniq.freeze
+      @secrets = ((@secrets || []) + secrets).uniq.freeze
       @transcript_redactor.patterns = @secrets if @transcript_redactor
       @diagnostic_redactors.each_value { |redactor| redactor.patterns = @secrets }
       self
@@ -53,7 +54,11 @@ module Expect
       return unless transcript
 
       # 单对象沿用 Session#write 的转换路径，省去数组与 join；转换后仍重新取得目标。
-      data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join("") # rubocop:disable Style/RedundantArgument -- 显式空分隔符隔离全局 $,。
+      data = if objects.size == 1
+               String.new(objects.first.to_s).force_encoding(Encoding::BINARY)
+             else
+               objects.map { |object| String.new(object.to_s).force_encoding(Encoding::BINARY) }.join("") # rubocop:disable Style/RedundantArgument -- 显式空分隔符隔离全局 $,。
+             end
       # to_s 可切换或禁用记录目标；整条记录与其过滤尾部必须属于转换完成后的同一目标。
       target = transcript
       return unless target

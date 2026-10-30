@@ -6,7 +6,8 @@ module Expect
   Pattern = Data.define(:match_number, :value, :callback) do
     # 复制字符串模式；Regexp 和 callable 只引用，不取得外部对象的生命周期。
     def initialize(value:, match_number: nil, callback: nil)
-      super(value: value.is_a?(String) ? value.b.freeze : value, match_number:, callback:)
+      value = String.new(value).force_encoding(Encoding::BINARY).freeze if value.is_a?(String)
+      super
     end
 
     # 将匹配会话或超时会话数组交给回调；额外上下文由调用方闭包保存。

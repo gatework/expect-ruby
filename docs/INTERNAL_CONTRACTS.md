@@ -336,3 +336,7 @@ Responder 只持有已复制的模式、静态回复与借用动作块，每次�
 Result 负责唯一一次文本副本和冻结；record_error 直接交付内部缓冲，不先调用公开 buffer 复制。继续回调前仍创建进展快照，
 回调后只读借用 scan_buffer 比较，不创建第二份临时副本。Pattern 的 captures: false 仅供正则转义取字节范围，
 不改变编码校验、零宽拒绝、Matcher 和 Responder 的捕获结果。回归入口为 scan_reuse_test、pattern_offset_test、write_contract_test。
+
+## 普通值边界（2026-10-30 后续打磨）
+
+String.new 与 Array.new 在保存输入前建立普通值容器，不能通过输入的 b、dup、map 取得副本。Result 保留文本编码，协议规则和缓冲使用二进制编码；快照成员不保留附加状态。输入校验基于这些普通值，失败不发布新规则。Session 的 command 与 exec 参数共用已校验快照。外部 IO、回调、来源和异常继续按既有所有权借用。PP 的 Data 展示入口显式使用安全摘要。

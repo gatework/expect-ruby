@@ -28,9 +28,10 @@ module Expect
                    session: nil, captures: [])
       raise ArgumentError, "captures must be an Array" unless captures.is_a?(Array)
 
+      captures = Array.new(captures)
       validate_outcome!(status, match_number, error, match, after, captures)
       super(status:, match_number:, error:, session:, match: copy_text(match), before: copy_text(before),
-            after: copy_text(after), captures: captures.map { |value| copy_text(value) }.freeze)
+            after: copy_text(after), captures: captures.map! { |value| copy_text(value) }.freeze)
     end
 
     # 诊断只显示匹配序号和错误状态，不检查原始文本、异常或来源对象。
@@ -40,6 +41,11 @@ module Expect
     # Data 的默认 to_s 独立于 inspect；字符串插值同样只使用安全摘要。
     # @return [String] 与 inspect 相同的结果摘要。
     def to_s = inspect
+
+    # PP 使用同一摘要，不展开正文、异常或借用的来源对象。
+    # @param printer [PP] Ruby 标准 pretty printer。
+    # @return [void]
+    def pretty_print(printer) = printer.text(inspect)
 
     # 是否命中文本；EOF 和超时没有模式序号。
     def matched? = status == :matched
@@ -61,7 +67,7 @@ module Expect
 
       raise ArgumentError, "result text must be a String or nil" unless value.is_a?(String)
 
-      value.dup.freeze
+      String.new(value).freeze
     end
 
     # 状态是唯一判据；new、[] 和 with 都经过同一边界，不能产生相互矛盾的结果。

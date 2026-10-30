@@ -56,12 +56,14 @@ module Expect
 
     # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
     def spawn(*command, env: {}, chdir: nil, raw: false, shell: false)
+      # 参数快照先于终端修改；公开记录与子进程使用同一份普通字符串。
+      command = command.map { |part| part.is_a?(String) ? String.new(part).freeze : part }.freeze
       validate_spawn!(command)
       raise ArgumentError, "shell must be true or false" unless [true, false].include?(shell)
       raise ArgumentError, "shell requires one command string" if shell && command.size != 1
 
       @slave.raw! if raw
-      @command = command.map { |part| part.dup.freeze }.freeze
+      @command = command
       Cleanup.on_failure(-> { hard_close }) do
         child = @child_process.spawn(command, env:, chdir:, shell:) do |from_child, to_parent|
           exec_child(command, env:, chdir:, from_child:, to_parent:, shell:)
@@ -147,7 +149,7 @@ module Expect
     def buffer=(value)
       raise ArgumentError, "buffer must be a String" unless value.is_a?(String)
 
-      @buffer = value.b
+      @buffer = String.new(value).force_encoding(Encoding::BINARY)
       @buffer_generation += 1
       @relay_history.clear
       trim_buffer
@@ -174,7 +176,11 @@ module Expect
 
       begin
         # 单对象不需要中间数组与 join 副本；to_s、诊断和部分写入仍经过同一条路径。
-        data = objects.size == 1 ? objects.first.to_s.b : objects.map { |object| object.to_s.b }.join("") # rubocop:disable Style/RedundantArgument -- 显式空分隔符隔离全局 $,。
+        data = if objects.size == 1
+                 String.new(objects.first.to_s).force_encoding(Encoding::BINARY)
+               else
+                 objects.map { |object| String.new(object.to_s).force_encoding(Encoding::BINARY) }.join("") # rubocop:disable Style/RedundantArgument -- 显式空分隔符隔离全局 $,。
+               end
         check_writable!
         trace_data(:sending, data)
       rescue WriteTimeout
@@ -375,7 +381,7 @@ module Expect
 
       return mark_eof if data.nil?
 
-      data = data.b
+      data = String.new(data).force_encoding(Encoding::BINARY)
       buffer << data
       @received_bytes += data.bytesize
       trim_buffer if trim
