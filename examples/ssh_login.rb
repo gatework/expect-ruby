@@ -15,19 +15,19 @@ begin
   Dir.mktmpdir("expect-ssh-") do |dir|
     arguments = SSHExample.arguments(options, directory: dir, prompt: "EXPECT_SHELL> ")
     Expect.spawn(*arguments, raw: true) do |session|
-      prompt = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).number
-      abort "SSH password prompt not received (#{session.error || "authentication rejected"})" unless prompt == 1
+      prompt = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).match_number
+      abort "SSH password prompt not received (#{session.last_result.status})" unless prompt == 1
       session.write(password, "\n")
       password.replace("\0" * password.bytesize)
 
       # 认证后执行命令；标记由远端拼接两个引用参数生成，
       # 避免终端的命令回显被误判为执行结果。
-      login = session.expect("EXPECT_SHELL> ", /Permission denied/i, timeout: 10).number
-      abort "SSH login failed (#{session.error || "authentication rejected"})" unless login == 1
+      login = session.expect("EXPECT_SHELL> ", /Permission denied/i, timeout: 10).match_number
+      abort "SSH login failed (#{session.last_result.status})" unless login == 1
       token = SecureRandom.hex(12)
       session.write("printf '\\n%s%s\\n' 'EXPECT_OK_' '#{token}'; id -un; tty\n")
       marker = session.expect(/EXPECT_OK_#{Regexp.escape(token)}\r?\n/, timeout: 10)
-      abort "remote command did not run (#{session.error})" unless marker.matched?
+      abort "remote command did not run (#{session.last_result.status})" unless marker.matched?
       identity = session.expect(%r{([^\r\n]+)\r?\n(/dev/[^\r\n]+)\r?\n}, timeout: 5)
       abort "remote identity/TTY response missing" unless identity.matched?
       abort "unexpected SSH user" unless session.captures.first == user.b

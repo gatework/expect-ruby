@@ -36,7 +36,8 @@ Austin Schutz、Roland Giersig、Dave Jacoby，采用与 Perl 相同的许可。
 UTF-8、EOF/超时回调、绝对期限与接收重置、多会话、缓冲上限、慢速写入和背压、借用 writer 的接收记录、标准 Logger 诊断、outputs
 转发图、人工接管、跨读取转义及终端恢复。
 
-`expect` / `last_result` 返回不可变七字段 `Data`，匹配序号通过 `number` 读取。使用 `to_h` 或模式解构；
+`expect` / `last_result` 返回不可变八字段 `Data`，匹配序号通过 `match_number` 读取，等待结果通过 `status` 查询。
+`error` 只保存原始异常或 nil；EOF 与超时各有独立状态。使用 `to_h` 或模式解构；
 字段及文本快照不可修改，不提供 `to_a`。日志按实际读取时记录，转接与匹配切换不重复写日志；显式启用 `redact` 时过滤已注册秘密。
 
 ## 软关闭与硬关闭

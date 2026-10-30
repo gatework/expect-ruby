@@ -18,8 +18,8 @@ Session 的协作方法按下表的显式协议供这些组件调用；`@api pri
 | `literal_scan.rb`                               | 匹配与转接共享的字面未命中范围，只保存规则与整数进度，不持有输入或 IO |
 | `matcher.rb`                                    | 一次等待的匹配、事件派发和期限                                   |
 | `resource_owner.rb`                             | 所属 IO 与直属子进程的所有权账本和 GC 兜底                       |
-| `logging.rb`                                    | 借用 logger/transcript/outputs 及同步输出；不拥有目标            |
-| `interaction.rb`、`relay.rb`、`relay/writer.rb` | 人工接管、转义处理、共同调度和各目标发送游标                     |
+| `logging.rb`                                    | 借用 logger/transcript，记录与脱敏；同步 writer 交付供协议输出复用 |
+| `interaction.rb`、`relay.rb`、`relay/writer.rb` | 协议输出图、人工接管、转义处理、共同调度和各目标发送游标         |
 
 `redactor.rb` 提供公共 `Expect::Redactor` 字节过滤接口，供会话日志、各方向诊断及上层库共用，不持有 IO，也不接管协议缓冲。
 
@@ -37,6 +37,13 @@ Redactor 则处理分片原始字节中的秘密、跨块前缀和重叠区间�
 
 `Expect` 是模块，工厂返回真实的公开 `Session`，没有门面、连接转换、全局配置或默认值继承。
 Session 组合 Logging 与 Interaction；timeout、write_timeout、buffer_limit、logger、transcript、outputs 是显式实例设置。
+两模块各自初始化其状态；Session 仍统一负责资源取得、缓冲及初始化失败清理，没有新增状态容器或门面对象。
+Expect.run_expect 是标注 @api private 的显式协作入口，Session 与 Responder 直接调用；Relay::Writer 确认进度后调用
+record_sent 交付发送诊断。参数校验、声明构造与 Matcher 创建只维护一份实现。
+转义注册发布冻结快照，按值与键顺序比较规则，不能用忽略插入顺序的 Hash 相等性吞掉优先级变化。
+文本规则、正则包装及 UTF-8 标记在变更后首次使用时统一编译并一起发布，失败时下次使用重新编译；
+连续注册不反复编译整套规则。历史在实际扫描时比较规则，避免 interact 临时设置恢复切断跨次输入。
+未改变的正则包装跨注册复用，冻结快照不持有动态输入或 IO；LiteralScan 仍只在单次调度中保存扫描坐标。
 Matcher 持有本轮 consume/reset_timeout_on_read，spawn/interact/close 各自持有 raw/graceful 参数，不把操作策略保存成配置层。
 回调、链式返回与 Result.session 始终是该 Session 本身。终端操作直接使用 Ruby io/console，不启动 stty。
 
@@ -52,7 +59,7 @@ ResourceOwner 不引用 Session、输出目标或用户回调。
 
 | 会话内部入口                                                 | 使用方                   | 不变量                                                 |
 |--------------------------------------------------------------|--------------------------|--------------------------------------------------------|
-| `reset_result`、`record_match`、`record_eof`、`record_error` | Matcher                  | 先保存结果再执行回调；错误保留原始输入                 |
+| `reset_result`、`record_match`、`record_eof`、`record_timeout`、`record_error` | Matcher | 先保存结果再执行回调；事件与异常分别构造状态 |
 | `read_available`                                             | Matcher、Relay、写入背压 | 转接缓冲交接时禁止直接传播和裁剪；普通匹配缓冲需要裁剪 |
 | `scan_buffer`                                                | Matcher                  | 仅在当前无回调扫描借用；不得修改或跨读取、回调保存     |
 | `take_buffer`                                                | Matcher、Relay           | 移交未消费字节，保留连续转义历史；与公开 clear_buffer 的显式清空边界不同 |
@@ -225,7 +232,8 @@ send_slow 累计此前成功字符的字节数；仅当前字符 write 抛错时
 
 ## 诊断与脱敏归属
 
-`logging.rb` 分开处理 transcript、logger 和 outputs，全部借用且不进入资源账本。默认 transcript/logger 为 nil，outputs 为空。
+Logging 管理 transcript、logger，Interaction 管理协议 outputs；全部借用且不进入资源账本。
+默认 transcript/logger 为 nil，outputs 为空，同步 writer 的短写和 flush 协议继续共用 emit。
 logger 使用标准 `add` / `debug?` 协议，级别与格式由 Logger 控制；INFO 为生命周期和匹配，DEBUG 为原始收发内容。
 传给 add 的冻结事件 Hash 包含 event/pid/fd/message，message 字符串也冻结，不含会话对象。
 ActiveSupport 兼容对象可直接注入，不引入框架依赖，也不再包装 IO、callable 或 stderr 默认分支。

@@ -3,12 +3,11 @@
 require "logger"
 require_relative "redactor"
 
-# 借用标准 Logger、接收记录 writer 和协议输出 writer，不接管它们的生命周期。
+# 借用标准 Logger 和接收记录 writer，不接管它们的生命周期。
 # 脱敏只作用于诊断与接收记录，协议输出和匹配缓冲始终保留原始字节。
 module Expect
-  # 会话诊断、接收记录和协议转发的独立输出接口。
-  # 宿主 Session 初始化目标与过滤器状态，并提供 pid、fileno 作为诊断元数据。
-  # 三种输出各有边界：Logger 接收事件，transcript 接收脱敏字节，outputs 接收原协议字节。
+  # 会话诊断与接收记录接口；Session 构造时调用本模块初始化过滤器，并提供 pid、fileno 元数据。
+  # Logger 接收事件，transcript 接收脱敏字节；Interaction 的协议输出只复用同步 writer 交付。
   module Logging
     # 调用方提供的诊断 Logger 与接收记录 writer，均由调用方管理生命周期。
     attr_reader :logger, :transcript
@@ -68,25 +67,20 @@ module Expect
       nil
     end
 
-    # 返回副本，避免外部原地修改转发关系；stdout 与其他 writer 使用相同协议。
-    def outputs = @outputs.dup
-
-    # 先校验整个数组再替换，失败时保留原输出图。
-    def outputs=(targets)
-      unless targets.is_a?(Array) && targets.all? { |target| target.respond_to?(:write) }
-        raise ArgumentError, "outputs must be an Array of writers"
-      end
-
-      @outputs = targets.dup
-    end
-
-    # 原样转发协议字节，接收记录在读取时单独写入。
+    # 转接确认交付后记录发送字节；调用者已登记游标，诊断失败不能回退发送进度。
     # @api private
-    def propagate(data)
-      @outputs.each { |output| emit(output, data) }
+    def record_sent(data)
+      trace_data(:sending, data)
     end
 
     private
+
+    # 每个日志方向独立保留脱敏状态；协议缓冲及转发图属于 Session 与 Interaction。
+    def initialize_logging
+      @secrets = @transcript_redactor = nil
+      @diagnostic_redactors = {}
+      @logger = @transcript = nil
+    end
 
     # 关闭时两种记录都要尝试完成；后续 writer 的常规异常不能覆盖先发生的诊断异常。
     # 不关闭借用目标，新的 Interrupt/SystemExit 仍由 Cleanup 原样传播。

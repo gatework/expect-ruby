@@ -2,8 +2,9 @@
 module Expect
   type duration = Numeric
   type pattern = String | Regexp | :eof | :timeout
-  type result_error = :eof | :timeout | Exception | nil
-  type result_fields = { number: Integer?, error: result_error, match: String?, before: String?, after: String?, session: Session?, captures: Array[String?] }
+  type result_status = :matched | :timeout | :eof | :error
+  type result_error = Exception | nil
+  type result_fields = { status: result_status, match_number: Integer?, error: result_error, match: String?, before: String?, after: String?, session: Session?, captures: Array[String?] }
   type diagnostic_event = { event: Symbol, pid: Integer?, fd: Integer?, message: String }
 
   interface _Writer
@@ -189,7 +190,8 @@ module Expect
 
   class Result < Data
     def self.new: (
-        ?number: Integer?,
+        status: result_status,
+        ?match_number: Integer?,
         ?error: result_error,
         ?match: String?,
         ?before: String?,
@@ -197,10 +199,11 @@ module Expect
         ?session: Session?,
         ?captures: Array[String?]
       ) -> Result
-      | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
+      | (result_status, ?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
 
     def self.[]: (
-        ?number: Integer?,
+        status: result_status,
+        ?match_number: Integer?,
         ?error: result_error,
         ?match: String?,
         ?before: String?,
@@ -208,7 +211,7 @@ module Expect
         ?session: Session?,
         ?captures: Array[String?]
       ) -> Result
-      | (?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
+      | (result_status, ?Integer?, ?result_error, ?String?, ?String?, ?String?, ?Session?, ?Array[String?]) -> Result
 
     def self.members: () -> Array[Symbol]
 
@@ -216,7 +219,8 @@ module Expect
 
     def members: () -> Array[Symbol]
 
-    attr_reader number: Integer?
+    attr_reader status: result_status
+    attr_reader match_number: Integer?
     attr_reader error: result_error
     attr_reader match: String?
     attr_reader before: String?
@@ -225,7 +229,8 @@ module Expect
     attr_reader captures: Array[String?]
 
     def initialize: (
-        ?number: Integer?,
+        status: result_status,
+        ?match_number: Integer?,
         ?error: result_error,
         ?match: String?,
         ?before: String?,
@@ -236,6 +241,8 @@ module Expect
 
     def matched?: () -> bool
 
+    def error?: () -> bool
+
     def timeout?: () -> bool
 
     def eof?: () -> bool
@@ -244,10 +251,11 @@ module Expect
 
     def to_s: () -> String
 
-    def deconstruct: () -> [Integer?, result_error, String?, String?, String?, Session?, Array[String?]]
+    def deconstruct: () -> [result_status, Integer?, result_error, String?, String?, String?, Session?, Array[String?]]
 
     def with: (
-        ?number: Integer?,
+        ?status: result_status,
+        ?match_number: Integer?,
         ?error: result_error,
         ?match: String?,
         ?before: String?,

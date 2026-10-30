@@ -1,6 +1,6 @@
 # Ruby API
 
-支持 Ruby 3.4+ 和 Linux/macOS。加载入口为 `require "expect/pty"`，独立流过滤器可加载 `expect/redactor`。
+支持 Ruby 4.0.6+ 和 Linux/macOS。加载入口为 `require "expect/pty"`，独立流过滤器可加载 `expect/redactor`。
 `Expect` 是模块；`Expect::Session` 是公开的真实会话。工厂、回调、链式方法与 `Result#session` 使用同一个 Session。
 
 ## 创建与关闭
@@ -37,7 +37,7 @@ nil。
 `Expect::Result`。
 `Expect.expect` 使用相同操作关键字，另加 `from:` 指定默认来源；其 timeout 默认 nil。模式为 String、Regexp、`:eof` 或
 `:timeout`，
-位置模式与声明块不能混用。`number` 为从 1 开始的文本模式序号或 nil，事件声明也占序号；使用 `matched?` 判断成功。
+位置模式与声明块不能混用。`match_number` 为从 1 开始的文本模式序号或 nil，事件声明也占序号；使用 `matched?` 判断成功。
 
 ```ruby
 result = session.expect(timeout: 3) do |patterns|
@@ -47,7 +47,7 @@ result = session.expect(timeout: 3) do |patterns|
   end
   patterns.on(/hello (\w+)/)
 end
-result => { number:, captures: }
+result => { status: :matched, match_number:, captures: }
 ```
 
 无参数声明块在 PatternList 上运行，直接调用 `on`、`eof`、`timeout`；有参数块保留调用者 self。
@@ -69,11 +69,15 @@ nil 保留全缓冲扫描；指定时，字符串和正则只搜索最新的尾�
 
 Result 的 `inspect` 与 `to_s` 仅显示匹配序号和错误状态，不打印原始文本、异常消息或来源对象。
 需要原始结果时显式读取字段；`redact` 不改变这些字段。
-Result 字段为 `number`、`error`、`match`、`before`、`after`、`session`、`captures`。对象、文本及捕获数组均不可变，未参与捕获为
-nil。
-错误为 nil、`:timeout`、`:eof` 或原始 IO 异常；来源会话与异常不复制、不冻结。使用 `matched?`、`timeout?`、`eof?` 查询，
-使用 `to_h`、位置/键模式解构或 `with` 构造新结果；没有字段 writer 或 `to_a`。
-会话的 `last_result`、`before`、`after`、`match`、`match_number`、`captures`、`error` 读取最近结果。
+Result 字段按顺序为 `status`、`match_number`、`error`、`match`、`before`、`after`、`session`、`captures`。
+状态为 `:matched`、`:timeout`、`:eof` 或 `:error`；`error` 只保存原始异常或 nil，等待超时和 EOF 均不是异常。
+使用 `matched?`、`timeout?`、`eof?`、`error?` 查询。仅匹配状态具有正整数编号和字符串 match（包括零宽匹配的空串）；
+其余状态没有编号、match、after 或捕获，只有 `:error` 状态携带异常。参数、编码与回调异常仍按原规则直接抛出。
+
+对象、文本及捕获数组均不可变，未参与的捕获为 nil；来源会话与异常不复制、不冻结。
+使用 `to_h`、位置/键模式解构或 `with` 构造新结果；构造必须指定 status，new、[]、with 都拒绝矛盾状态与非字符串文本。
+没有字段 writer、旧 number 或 to_a。会话的 `last_result`、`before`、`after`、`match`、`match_number`、`captures`、`error`
+读取最近结果；最近等待状态使用 `last_result.status`，与输入 EOF、IO 关闭、进程状态分别查询。
 
 匹配、捕获按原始字节保存；文本显示时先 `dup` 再 `force_encoding`。固定 UTF-8 正则等待尾部字符收齐，非法编码抛出
 EncodingError。
@@ -95,7 +99,7 @@ end.freeze
 commands.each do |command|
   session.puts(command)
   result = rules.expect(session, "device>", timeout: 30, deadline: Expect.monotonic + 60)
-  raise "command incomplete: #{result.error}" unless result.matched?
+  raise "command incomplete: #{result.status}" unless result.matched?
 end
 ```
 

@@ -188,6 +188,8 @@ module Expect
     end
 
     # 声明完成后固定模式；有参数块保留调用方 self，无参数块使用模式 DSL。
+    # Session 与 Responder 共用的内部入口，不通过反射绕过方法边界。
+    # @api private
     def run_expect(sessions, patterns, timeout, deadline:, consume:, reset_timeout_on_read:,
                    match_by_position: false, search_window: nil, &block)
       unless search_window.nil? || (search_window.is_a?(Integer) && search_window.positive?)
@@ -205,5 +207,7 @@ module Expect
       Matcher.new(pattern_list, timeout, deadline:, consume:, reset_timeout_on_read:, match_by_position:,
                                          search_window:).run
     end
+
+    public :run_expect
   end
 end

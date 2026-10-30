@@ -5,6 +5,14 @@ require "open3"
 require_relative "../script/check_api"
 
 class APICheckTest < ExpectTest
+  def test_removed_methods_cannot_remain_in_the_public_signatures
+    builder = APICheck.prepare
+    definition = builder.build_instance(RBS::TypeName.parse("::Expect::Result"))
+    definition.methods[:number] = definition.methods.fetch(:match_number)
+    error = assert_raises(RuntimeError) { APICheck.validate_type!(Expect::Result, builder) }
+    assert_includes error.message, "Stale public RBS declaration: Expect::Result#number"
+  end
+
   def test_standalone_check_works_outside_the_project_root
     script = File.expand_path("../script/check_api.rb", __dir__)
     Dir.mktmpdir("expect-api-check") do |directory|

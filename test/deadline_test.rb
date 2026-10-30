@@ -16,7 +16,7 @@ class DeadlineTest < ExpectTest
   def test_class_api_and_nil_timeout_use_the_absolute_deadline
     session, writer = pipe_session
     with_clock([[4, writer, "ready"]]) do |clock|
-      assert_equal 1, Expect.expect("ready", from: session, timeout: nil, deadline: 5).number
+      assert_equal 1, Expect.expect("ready", from: session, timeout: nil, deadline: 5).match_number
       result = Expect.expect("missing", from: session, timeout: nil, deadline: 5)
       assert result.timeout?
       assert_equal 5, clock[0]
@@ -78,7 +78,7 @@ class DeadlineTest < ExpectTest
   def test_zero_relative_timeout_still_polls_with_a_future_hard_deadline
     session, writer = pipe_session
     writer.write("ready")
-    assert_equal 1, session.expect("ready", timeout: 0, deadline: Expect.monotonic + 1).number
+    assert_equal 1, session.expect("ready", timeout: 0, deadline: Expect.monotonic + 1).match_number
   end
 
   def test_repeated_interruptions_cannot_extend_a_deadline

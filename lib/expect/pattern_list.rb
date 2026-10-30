@@ -14,7 +14,7 @@ module Expect
       validate_sessions!(@default_sessions) unless @default_sessions.empty?
       # 保留空模式的默认会话组，使 expect(timeout:) 也能只收集输出而不匹配文本。
       @groups = @default_sessions.empty? ? [] : [[@default_sessions, []]]
-      @number = 0
+      @match_number = 0
       patterns.each do |value|
         case value
         when :eof then eof
@@ -140,8 +140,8 @@ module Expect
 
     # 按注册顺序分配从 1 开始的序号，文本模式与事件共用编号。
     def build(value, callback)
-      @number += 1
-      Pattern.new(number: @number, value:, callback:)
+      @match_number += 1
+      Pattern.new(match_number: @match_number, value:, callback:)
     end
 
     # 拒绝空来源和非 Session 对象，在任何 IO 读取之前暴露调用错误。

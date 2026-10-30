@@ -89,7 +89,7 @@ module Expect
 
       # 诊断可嵌套写入；外层只报告本游标的进度，原超时及其内层进度保留在 cause。
       def trace_delivery(data)
-        target.__send__(:trace_data, :sending, data)
+        target.record_sent(data)
       rescue WriteTimeout
         raise WriteTimeout.new("relay interrupted by a diagnostic timeout", bytes_written: @offset)
       end

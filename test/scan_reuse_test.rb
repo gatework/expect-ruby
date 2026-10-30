@@ -3,6 +3,71 @@
 require_relative "test_helper"
 
 class ScanReuseTest < ExpectTest
+  def test_registered_regexp_is_reused_across_reads_and_history_boundaries
+    session, producer = pipe_session
+    output = StringIO.new
+    session.outputs = [output]
+    session.on_sequence(/STOP/n)
+
+    producer.write("ST")
+    assert_nil Expect.interconnect(session, timeout: 0)
+    Expect.const_get(:Pattern).stub(:new, ->(*) { flunk "regexp recompiled while reading" }) do
+      producer.write("OPtail")
+      assert_same session, Expect.interconnect(session, timeout: 1)
+    end
+    assert_equal "ST", output.string
+    assert_equal "tail", session.buffer
+  end
+
+  def test_regexp_compilation_is_deferred_until_rules_are_used
+    session, = pipe_session
+    pattern = Expect.const_get(:Pattern)
+    pattern.stub(:new, ->(*) { flunk "compilation during registration" }) do
+      16.times { |index| session.on_sequence(/missing#{index}/n) }
+    end
+    original = pattern.method(:new)
+    compiled = []
+    pattern.stub(:new, lambda { |**fields|
+      compiled << fields.fetch(:value)
+      original.call(**fields)
+    }) do
+      session.buffer = "ready"
+      2.times { assert_nil Expect.interconnect(session, timeout: 0) }
+    end
+    assert_equal session.sequences.keys, compiled
+  end
+
+  def test_escape_registration_publishes_readonly_snapshots
+    session, = pipe_session
+    session.on_sequence(/STOP/n)
+    rules = session.sequences
+    assert_raises(FrozenError) { rules.clear }
+    session.on_sequence("DONE")
+    assert_equal [/STOP/n], rules.keys
+    assert_equal [/STOP/n, "DONE"], session.sequences.keys
+    assert session.text_sequences.frozen?
+    assert session.sequence_patterns.frozen?
+  end
+
+  def test_reordered_escape_snapshot_changes_the_tie_winner
+    session, = pipe_session
+    calls = []
+    session.on_sequence("STOP") do
+      calls << :literal
+      false
+    end
+    session.on_sequence(/STOP/n) do
+      calls << :regexp
+      false
+    end
+    session.sequences = session.sequences.to_a.reverse.to_h
+    session.buffer = "STOPtail"
+
+    assert_same session, Expect.interconnect(session, timeout: 1)
+    assert_equal [:regexp], calls
+    assert_equal "tail", session.buffer
+  end
+
   def test_each_stalled_declaration_runs_once_even_with_equal_pattern_values
     session, = pipe_session
     session.buffer = "x"
@@ -78,7 +143,7 @@ class ScanReuseTest < ExpectTest
     session.buffer = "retained output"
     result = nil
     session.stub(:buffer, -> { flunk "unnecessary intermediate error snapshot" }) do
-      result = session.record_error(:timeout)
+      result = session.record_timeout
     end
     session.buffer = "next output"
     assert_equal "retained output", result.before
@@ -101,7 +166,7 @@ class ScanReuseTest < ExpectTest
       2.times do
         result = matcher.__send__(:find_match)
         assert_same first, result[0]
-        assert_equal 3, result[1].number
+        assert_equal 3, result[1].match_number
         assert_equal [0, 5, []], result[2]
       end
     end
@@ -124,7 +189,7 @@ class ScanReuseTest < ExpectTest
       on("missing", from: second)
       on("finish", from: first) { |session| events << session.match }
     end
-    assert_equal 3, result.number
+    assert_equal 3, result.match_number
     assert_equal ["start", "nested ", "finish"], events
     assert_empty first.buffer
   end

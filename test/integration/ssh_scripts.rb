@@ -28,7 +28,7 @@ begin
     args = SSHExample.arguments(options, directory: temporary, prompt: ScriptProbe::PROMPT)
     session = Expect.spawn(*args, raw: true, write_timeout: 5)
     authentication = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10)
-    ScriptProbe.check(authentication.number == 1,
+    ScriptProbe.check(authentication.match_number == 1,
                       "SSH password prompt not received (#{authentication.error || "authentication rejected"})")
     session.write(password, "\n")
     runner = ScriptProbe::Runner.new(session, timeout: 10).ready!

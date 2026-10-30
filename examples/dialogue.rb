@@ -24,7 +24,7 @@ Expect.spawn(RbConfig.ruby, "-e", program, raw: true) do |session|
     end
     on(/Hello (\w+), code=(\d+)/)
   end
-  abort(result.error.to_s) unless result.matched?
+  abort(result.status.to_s) unless result.matched?
   puts session.match
   session.soft_close(timeout: 1)
 end

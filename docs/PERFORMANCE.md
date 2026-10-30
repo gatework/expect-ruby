@@ -1,5 +1,49 @@
 # 性能基准
 
+## 精简模块与转义规则复用（2026-10-30）
+
+基线为 0.9.6 / `5f1db127edbd5ce0b4a7551e68db29e3addd55d8` 的源码归档，候选为本轮未提交工作区。
+RVM Ruby 4.0.6 / Bundler 4.0.16 / Linux x86_64；同一驱动按基线、候选、候选、基线串行运行，
+每轮五次采样，期间没有并行项目测试。所有工作负载在预热和采样后校验行为。
+匹配基准只在校验或计时前适配旧 number/record_error 接口，不修改基线源码。
+
+| 每次操作 | 基线 ms（两轮） | 候选 ms（两轮） | 分配对象（约，基线 → 候选） |
+|---|---:|---:|---:|
+| 64 KiB 转接，无转义 | 0.176 / 0.163 | 0.180 / 0.167 | 168 → 157 |
+| 64 KiB 转接，16 个未命中正则 | 2.476 / 2.374 | 2.398 / 2.570 | 578 → 247 |
+| 16 MiB 转接，未命中字面规则 | 35.723 / 35.987 | 36.302 / 35.643 | 32,809 → 30,759 |
+| 普通日志完整写入 | 0.0166 / 0.0159 | 0.0161 / 0.0165 | 6 → 6 |
+
+16 个正则场景的稳定分配减少约 57%；普通匹配和日志分配没有增加。耗时波动没有证明稳定的整体提速，
+不把合成字节负载外推为真实设备或网络吞吐，也不设置 CI 墙钟阈值。
+
+规则注册发布冻结快照，首次使用统一编译并在后续读取复用。冻结快照有构造成本；
+`benchmark/scaling.rb` 分别计量 32 个借用会话的纯构造、注册 16 个规则，以及包含首次转接的完整路径，
+避免把延后编译当成没有成本。首次转接还包含 4 KiB 预置输入处理，不属于网络吞吐。
+
+| 构造批次（32 个会话） | 基线 ms（两轮） | 候选 ms（两轮） | 分配对象（约，基线 → 候选） |
+|---|---:|---:|---:|
+| 无规则，只构造 | 0.508 / 0.465 | 0.465 / 0.518 | 1,538 → 1,474 |
+| 每会话 16 条正则，只注册 | 0.976 / 0.985 | 1.628 / 1.822 | 1,538 → 3,010 |
+| 每会话 16 条正则，构造并首次转接 | 7.423 / 7.168 | 8.430 / 8.403 | 8,802 → 8,386 |
+
+冻结规则快照提高了多规则注册成本；包含首次编译及转接时分配略降，耗时仍增加约 14%–17%。
+因此本次缓存适合规则复用的持续会话，不声称一次性短会话更快。它以明确的快照边界和构造成本换取持续读取时较少的分配。
+
+复现使用同一候选驱动与显式源码路径：
+
+```sh
+bundle exec ruby benchmark/relay.rb --library /path/to/library/lib --samples 5 --iterations 5 --output tmp/relay.json
+bundle exec ruby benchmark/matching.rb --library /path/to/library/lib --samples 5 --iterations 1 --output tmp/matching.json
+bundle exec ruby benchmark/scaling.rb --library /path/to/library/lib --samples 5 --iterations 10 --output tmp/scaling.json
+bundle exec ruby benchmark/logging.rb --library /path/to/library/lib --samples 5 --iterations 10 --output tmp/logging.json
+```
+
+原始报告位于工作区 `.expect-review-20261030/performance/`，汇总为 `summary.json`。
+基线库 SHA-256：`fbfbb5f8af1ad78510ad44a570e3f33c9582317a75d22b9b0bda787b63f6bc78`；
+候选：`1e10dbd8023453f2216b284e54a35fe28b61ce2b6d56cf7d3311336b8f86571a`。
+
+
 ## 多来源 EOF 与持续脱敏恢复（2026-10-11，0.8.2）
 
 基线为 `d60bc0b`（0.8.1），macOS arm64 / Ruby 4.0.6 / Bundler 4.0.20。

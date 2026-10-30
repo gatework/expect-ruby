@@ -32,7 +32,7 @@ Expect.spawn(RbConfig.ruby, "--disable-gems", "-e", program, raw: true, write_ti
   ["set vlan 10", "save configuration"].each do |command|
     device.puts(command)
     result = rules.expect(device, "device>", timeout: 2, deadline: Expect.monotonic + 3)
-    abort "command failed: #{result.error}" unless result.matched? && result.before.include?("applied:#{command}")
+    abort "command failed: #{result.status}" unless result.matched? && result.before.include?("applied:#{command}")
 
     puts "completed: #{command}"
   end

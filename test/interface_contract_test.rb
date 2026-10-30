@@ -12,16 +12,18 @@ class InterfaceContractTest < ExpectTest
     result = Expect.expect(/ready(\d)/, from: session, timeout: 0)
     assert_instance_of Expect::Result, result
     assert_same result, session.last_result
-    assert_equal [result.before, result.after, result.match, result.number, result.captures, result.error],
+    assert_equal [result.before, result.after, result.match, result.match_number, result.captures, result.error],
                  snapshot(session)
     assert result.matched?
     assert session.expect("missing", timeout: 0).timeout?
-    assert_equal :timeout, session.error
+    assert_equal :timeout, session.last_result.status
+    assert_nil session.error
     assert_nil session.match_number
     assert_empty session.captures
     writer.close
     assert session.expect(:eof, timeout: 1).eof?
-    assert_equal :eof, session.error
+    assert_equal :eof, session.last_result.status
+    assert_nil session.error
     refute_respond_to session, :expect_result
     refute_respond_to Expect, :expect_result
   end
@@ -91,8 +93,9 @@ class InterfaceContractTest < ExpectTest
 
   def test_data_construction_and_copy_interfaces_keep_snapshots_immutable
     text = +"ready"
-    [Expect::Result.new(1, nil, text), Expect::Result[number: 1, match: text]].each do |result|
-      assert_equal 1, result.number
+    [Expect::Result.new(:matched, 1, nil, text),
+     Expect::Result[status: :matched, match_number: 1, match: text]].each do |result|
+      assert_equal 1, result.match_number
       assert_predicate result.match, :frozen?
       assert_equal Expect::Result.members, result.members
       assert_equal "ready", result.to_h { |key, value| [key.to_s, value] }.fetch("match")

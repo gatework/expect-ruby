@@ -62,7 +62,7 @@ class ReleaseTest < Minitest::Test
       assert_includes spec.files, path
     end
     assert_empty spec.files.grep(%r{\A(?:test/|benchmark/|examples/|script/|Gemfile|Rakefile|\.rubocop)})
-    assert_equal Gem::Requirement.new(">= 3.4"), spec.required_ruby_version
+    assert_equal Gem::Requirement.new(">= 4.0.6"), spec.required_ruby_version
   end
 
   def test_extracts_only_the_selected_version

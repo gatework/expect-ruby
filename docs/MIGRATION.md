@@ -1,5 +1,21 @@
 # 迁移说明
 
+## 0.9.x → 0.10.0：Ruby 4 与明确的等待结果
+
+- 最低运行环境为 Ruby 4.0.6，保留 Linux/macOS 支持；本地开发使用 RVM。
+- `result.number` 改为 `result.match_number`，与 Session 的快照访问器一致，不提供旧字段别名。
+- `result.error == :timeout` / `:eof` 改用 `result.timeout?` / `result.eof?`，或判断 `result.status`。
+  `error` 现在只保存原始异常或 nil；`session.error` 同样遵守此约定，最近等待状态为 `session.last_result.status`。
+- Result 的位置参数与解构在开头加入 status，第二项为 match_number；优先使用键模式。
+  手工构造匹配结果用 `Result.new(status: :matched, match_number: 1, match: "ready")`，
+  EOF 用 `Result.new(status: :eof, before: "tail")`，IO 错误用 `Result.new(status: :error, error: exception)`。
+- `new`、`[]`、`with` 校验状态一致性：修改匹配结果为超时还须清除编号、match、after、captures。
+  输入 EOF、IO 关闭、子进程退出继续独立表达，关闭和命令发送策略不变。
+- net-connector 使用配套 0.22.x；它在 PTY 适配层转换结果，上层设备事件和零基索引协议保持不变。
+
+内部保留既有类与混入模块。转义注册表改为冻结快照；内部恢复须使用 sequences=，避免绕过缓存更新。
+历史按实际扫描规则失效，临时 interact 注册与恢复仍支持同规则跨次接管。
+
 ## 0.8.x → 0.9.0：启动与时间参数
 
 - 始终使用 `require "expect/pty"`，Gemfile 指定 `require: "expect/pty"`。本库删除 `lib/expect.rb` 后，

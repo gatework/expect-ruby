@@ -38,9 +38,9 @@ module Expect
       raise ArgumentError, "provide patterns or a pattern block, not both" if block && !patterns.empty?
 
       rules = @rules.dup.freeze
-      Expect.__send__(
-        :run_expect, [session], [], timeout, deadline:, consume: true,
-                                             reset_timeout_on_read: false, match_by_position: true, search_window:
+      Expect.run_expect(
+        [session], [], timeout, deadline:, consume: true,
+                                reset_timeout_on_read: false, match_by_position: true, search_window:
       ) do |list|
         patterns.each do |pattern|
           case pattern

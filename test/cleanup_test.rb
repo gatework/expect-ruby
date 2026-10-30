@@ -357,7 +357,7 @@ class CleanupTest < ExpectTest
   def stubborn_child
     session = child('Signal.trap("HUP", "IGNORE"); Signal.trap("TERM", "IGNORE"); puts "ready"; sleep 60',
                     raw: true)
-    assert_equal 1, session.expect("ready", timeout: 2).number
+    assert_equal 1, session.expect("ready", timeout: 2).match_number
     session
   end
 end

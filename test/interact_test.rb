@@ -266,7 +266,7 @@ class InteractTest < ExpectTest
     assert_same source, session.interact(input: source, escape: "\x1d", output: StringIO.new, timeout: 2)
     assert session.alive?
     session.write("printf 'AFTER_LOCAL_EOF\\n'\n")
-    assert_equal 1, session.expect(/AFTER_LOCAL_EOF\r?\n/, timeout: 2).number
+    assert_equal 1, session.expect(/AFTER_LOCAL_EOF\r?\n/, timeout: 2).match_number
   end
 
   def test_raw_false_preserves_input_terminal_during_interaction

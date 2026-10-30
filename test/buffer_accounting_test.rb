@@ -10,7 +10,7 @@ class BufferAccountingTest < ExpectTest
     assert_equal 0, session.buffer_bytesize
     session.buffer = "中ab"
     assert_equal 5, session.buffer_bytesize
-    assert_equal 1, session.expect("中", timeout: 0).number
+    assert_equal 1, session.expect("中", timeout: 0).match_number
     assert_equal 2, session.buffer_bytesize
 
     writer.write("cd€")
@@ -19,7 +19,7 @@ class BufferAccountingTest < ExpectTest
     assert_equal 7, session.buffer_bytesize
     session.buffer_limit = 4
     assert_equal 4, session.buffer_bytesize
-    assert_equal 1, session.expect("d", timeout: 0, consume: false).number
+    assert_equal 1, session.expect("d", timeout: 0, consume: false).match_number
     assert_equal 4, session.buffer_bytesize
     session.buffer.clear
     assert_equal 4, session.buffer_bytesize
@@ -48,7 +48,7 @@ class BufferAccountingTest < ExpectTest
     session.buffer_limit = 2
     assert_equal "ef", session.buffer
     assert_equal 4, session.buffer_discarded_bytes
-    assert_equal 1, session.expect("e", timeout: 0).number
+    assert_equal 1, session.expect("e", timeout: 0).match_number
     assert_equal "f", session.clear_buffer
     session.close
     assert_equal 4, session.buffer_discarded_bytes
@@ -73,7 +73,7 @@ class BufferAccountingTest < ExpectTest
     session.transcript = write_target { |data| logged += data.bytesize }
     32.times do
       writer.write("x" * 4096)
-      assert_nil session.expect("missing", timeout: 0).number
+      assert_nil session.expect("missing", timeout: 0).match_number
       assert_equal 64, session.buffer.bytesize
     end
     assert_equal 131_072, logged
@@ -83,7 +83,7 @@ class BufferAccountingTest < ExpectTest
   def test_preserved_match_does_not_count_as_discard
     session, = pipe_session(buffer_limit: 4)
     session.buffer = "abcdef"
-    2.times { assert_equal 1, session.expect("ef", timeout: 0, consume: false).number }
+    2.times { assert_equal 1, session.expect("ef", timeout: 0, consume: false).match_number }
     assert_equal "cdef", session.buffer
     assert_equal 2, session.buffer_discarded_bytes
   end
@@ -99,7 +99,7 @@ class BufferAccountingTest < ExpectTest
     assert_equal "tail", session.buffer
     assert_equal 4, session.buffer_bytesize
     assert_equal 0, session.buffer_discarded_bytes
-    assert_equal 1, session.expect("il", timeout: 0).number
+    assert_equal 1, session.expect("il", timeout: 0).match_number
     assert_equal 0, session.buffer_bytesize
     assert_equal 2, session.buffer_discarded_bytes
     session.expect(timeout: 0)
@@ -115,7 +115,7 @@ class BufferAccountingTest < ExpectTest
     assert_equal "cdef", session.buffer
     assert_equal 2, session.buffer_discarded_bytes
     session.transcript = nil
-    assert_equal 1, session.expect("ef", timeout: 0).number
+    assert_equal 1, session.expect("ef", timeout: 0).match_number
     assert_equal 2, session.buffer_discarded_bytes
   end
 end

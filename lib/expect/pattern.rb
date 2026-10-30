@@ -3,10 +3,10 @@
 module Expect
   # 一个已编号的文本模式或事件及其回调；匹配结果统一使用字节偏移，便于精确消费 IO 缓冲。
   # @api private
-  Pattern = Data.define(:number, :value, :callback) do
+  Pattern = Data.define(:match_number, :value, :callback) do
     # 复制字符串模式；Regexp 和 callable 只引用，不取得外部对象的生命周期。
-    def initialize(value:, number: nil, callback: nil)
-      super(value: value.is_a?(String) ? value.b.freeze : value, number:, callback:)
+    def initialize(value:, match_number: nil, callback: nil)
+      super(value: value.is_a?(String) ? value.b.freeze : value, match_number:, callback:)
     end
 
     # 将匹配会话或超时会话数组交给回调；额外上下文由调用方闭包保存。

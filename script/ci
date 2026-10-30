@@ -120,7 +120,7 @@ begin
     abort "installed buffer byte query missing or incorrect" unless session.buffer_bytesize == 5
     expired = session.expect("ready", deadline: Expect.monotonic)
     abort "expired deadline consumed buffered text" unless expired.timeout? && session.buffer == "ready"
-    abort "zero timeout lost buffered text" unless session.expect("ready", timeout: 0).number == 1
+    abort "zero timeout lost buffered text" unless session.expect("ready", timeout: 0).match_number == 1
     abort "installed byte query retained consumed text" unless session.buffer_bytesize.zero?
     producer.write("secret!")
     producer.close

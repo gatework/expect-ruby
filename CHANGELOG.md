@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.10.0 - 2026-10-30
+
+- 最低 Ruby 升级至 4.0.6；Result 明确区分 matched、timeout、eof、error，编号统一为 match_number，error 只保存原始异常。构造和 with 拒绝矛盾状态，旧 number 字段移除。
+- 保留既有模块结构，将日志与转接状态初始化归回所属模块，协议输出归 Interaction 管理；等待与转接发送诊断使用显式内部协作入口。
+- 转义规则变更后首次使用时统一编译，读取期间复用正则包装与冻结文本规则快照；保持优先级、UTF-8、零宽校验、跨次 interact 历史和短写恢复契约。
+- API 检查同时拒绝已移除接口的残留 RBS 声明；同步迁移示例、签名和安装验证。
+
 ## 0.9.6 - 2026-10-23
 
 - 移除 io-console、json、logger 和 stringio 的额外版本下限，沿用 Ruby 3.4+ 的运行时要求。

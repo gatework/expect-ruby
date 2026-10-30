@@ -5,7 +5,7 @@ gemspec
 
 group :development, :test do
   gem "minitest", "~> 5.0", require: false
-  # 开发工具与最低 Ruby 3.4 同步验证。
+  # 开发工具与最低 Ruby 4.0.6 同步验证。
   gem "irb", require: false # YARD 使用 irb/notifier，Ruby 4 不再默认提供。
   gem "parallel", "~> 1.27", require: false
   gem "rake", "~> 13.0", require: false

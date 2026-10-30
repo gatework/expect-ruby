@@ -255,7 +255,7 @@ module Expect
     # 为活跃会话记录超时，回调接收全部活跃源；只有重置计时的继续符号能重新等待。
     # 已到总期限仍通知超时回调，但不接受继续请求，且不消费尚未匹配的字节。
     def handle_timeout
-      results = active_sessions.map { |session| session.record_error(:timeout) }
+      results = active_sessions.map(&:record_timeout)
       action = @patterns.timeout_pattern&.call(active_sessions)
       return results.first unless CONTINUE.equal?(action) && !hard_expired?
 

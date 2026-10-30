@@ -83,7 +83,7 @@ class ScriptLoggingTest < ExpectTest
   def test_crlf_terminal_output_preserves_exact_script_boundaries
     runner = shell_probe
     runner.session.write("stty opost onlcr\n")
-    assert_equal 1, runner.session.expect(ScriptProbe::PROMPT, timeout: 2).number
+    assert_equal 1, runner.session.expect(ScriptProbe::PROMPT, timeout: 2).match_number
     ["", "line\n", "no final newline", "two\n\n"].each do |output|
       result = runner.run("crlf", "printf %s #{Shellwords.escape(output)}",
                           expected_status: 0, expected_output: output)
@@ -109,12 +109,12 @@ class ScriptLoggingTest < ExpectTest
       File.open(path, "wb", 0o600) do |transcript|
         session.transcript = transcript
         session.write("printf 'BEFORE_TIMEOUT\\n'; sleep 0.15; printf 'AFTER_TIMEOUT\\n'\n")
-        assert_equal 1, session.expect("BEFORE_TIMEOUT\n", timeout: 2).number
-        assert_nil session.expect("AFTER_TIMEOUT", timeout: 0.02).number
-        assert_equal :timeout, session.error
+        assert_equal 1, session.expect("BEFORE_TIMEOUT\n", timeout: 2).match_number
+        assert_nil session.expect("AFTER_TIMEOUT", timeout: 0.02).match_number
+        assert_equal :timeout, session.last_result.status
         assert_includes File.binread(path), "BEFORE_TIMEOUT\n"
-        assert_equal 1, session.expect("AFTER_TIMEOUT\n", timeout: 2).number
-        assert_equal 1, session.expect(ScriptProbe::PROMPT, timeout: 2).number
+        assert_equal 1, session.expect("AFTER_TIMEOUT\n", timeout: 2).match_number
+        assert_equal 1, session.expect(ScriptProbe::PROMPT, timeout: 2).match_number
         runner.finish!
         refute transcript.closed?
       end

@@ -96,7 +96,7 @@ class RelayHistoryTest < ExpectTest
     200.times do
       key = Array.new(random.rand(1..100)) { random.rand(4) }.pack("C*")
       buffer = Array.new(random.rand(0..120)) { random.rand(4) }.pack("C*")
-      expected = (1...[key.bytesize, buffer.bytesize + 1].min).to_a.reverse.find do |length|
+      expected = (1...[key.bytesize, buffer.bytesize + 1].min).to_a.rfind do |length|
         buffer.end_with?(key.byteslice(0, length))
       end || 0
 

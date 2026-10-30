@@ -32,14 +32,14 @@ module ScriptProbe
 
     def ready!
       result = session.expect(PROMPT, timeout: @timeout)
-      ScriptProbe.check(result.matched?, "shell prompt missing (#{result.error})")
+      ScriptProbe.check(result.matched?, "shell prompt missing (#{result.status})")
       # 避免将终端回显误判为脚本输出，或让测试包装命令
       # 混入待验证的输出。
       # 在 C locale 下，交互 shell 可能将高位字节解释为 readline 命令。
       # 关闭行编辑，保证脚本字节原样传输。
       session.write("stty -echo; set +o emacs; set +o vi\n")
       result = session.expect(PROMPT, timeout: @timeout)
-      ScriptProbe.check(result.matched?, "shell setup failed (#{result.error})")
+      ScriptProbe.check(result.matched?, "shell setup failed (#{result.status})")
       session.clear_buffer
       self
     end

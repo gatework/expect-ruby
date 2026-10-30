@@ -40,7 +40,7 @@ module KibitzProbe
     def expect(terminal, pattern)
       result = terminal.expect(pattern, timeout: 5)
       ScriptProbe.check(result.matched?,
-                        "#{terminal.equal?(host) ? "host" : "guest"} missing #{pattern.inspect} (#{result.error})")
+                        "#{terminal.equal?(host) ? "host" : "guest"} missing #{pattern.inspect} (#{result.status})")
       result
     end
 

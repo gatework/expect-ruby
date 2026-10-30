@@ -255,9 +255,9 @@ class RelayRecoveryTest < ExpectTest
     session, writer = pipe_session
     writer.write("\xe4".b)
     writer.close
-    assert_raises(EncodingError) { session.expect(/中/u, timeout: 1).number }
+    assert_raises(EncodingError) { session.expect(/中/u, timeout: 1).match_number }
     assert_equal "\xe4".b, session.buffer
-    assert_equal 1, session.expect("\xe4".b, timeout: 0).number
+    assert_equal 1, session.expect("\xe4".b, timeout: 0).match_number
   end
 
   def test_blocked_target_does_not_starve_another_source
@@ -435,8 +435,8 @@ class RelayRecoveryTest < ExpectTest
     assert_same(source, bounded { Expect.interconnect(source, timeout: 2) })
     refute source.pending_output?
     assert_empty source.buffer
-    assert_equal 1, target.expect("ready", timeout: 1).number
-    assert_equal 1, target.expect("reply", timeout: 1).number
+    assert_equal 1, target.expect("ready", timeout: 1).match_number
+    assert_equal 1, target.expect("reply", timeout: 1).match_number
   end
 
   def test_eof_validates_truncated_utf8_in_escape_regex
@@ -452,7 +452,7 @@ class RelayRecoveryTest < ExpectTest
     source.buffer = "#{"a" * 30}!"
     regexp = Regexp.new('\\A(a+)+\\1\\z', timeout: 0.01)
     global_timeout = Regexp.timeout
-    assert_raises(Regexp::TimeoutError) { bounded { source.expect(regexp, timeout: 0).number } }
+    assert_raises(Regexp::TimeoutError) { bounded { source.expect(regexp, timeout: 0).match_number } }
     assert_equal "#{"a" * 30}!", source.buffer
     assert Regexp.timeout == global_timeout, "matching must not change the process regexp timeout"
     assert_equal 0.01, regexp.timeout

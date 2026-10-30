@@ -6,7 +6,7 @@
 
 一个通过 POSIX 伪终端自动操作交互式程序的 Ruby 库。启动子进程、等待文本或正则匹配、发送输入，并用 Ruby 对象和代码块管理超时、回调与资源清理。
 
-RubyGems 包名：**expect-pty**。要求 Ruby 3.4+，支持 Linux 和 macOS。
+RubyGems 包名：**expect-pty**。要求 Ruby 4.0.6+，支持 Linux 和 macOS。
 
 ## 安装
 

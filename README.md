@@ -6,7 +6,7 @@
 
 A Ruby library for automating interactive programs through POSIX pseudo-terminals. Start a child process, wait for text or regular expressions, send input, and manage timeouts, callbacks, and cleanup with Ruby objects and blocks.
 
-RubyGems package: **expect-pty**. Requires Ruby 3.4+ on Linux or macOS.
+RubyGems package: **expect-pty**. Requires Ruby 4.0.6+ on Linux or macOS.
 
 ## Install
 

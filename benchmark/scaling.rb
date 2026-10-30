@@ -11,6 +11,34 @@ runner = ExpectBenchmark::Runner.new("scaling") do |options|
   end
 end
 counts = [1, 8] if runner.smoke
+# 计量会话与规则声明的构造成本，避免只报告运行时扫描收益而遗漏缓存建立的代价。
+reader, producer = IO.pipe
+begin
+  patterns = Array.new(16) { |index| /missing#{index}/n }
+  [0, 16].product([false, true]).each do |rules, first_relay|
+    name = first_relay ? "construction_and_first_relay/#{rules}" : "construction/#{rules}"
+    runner.measure(name, bytes: 0, inputs: { sessions: 32, regexps: rules, first_relay: }, iterations: 10,
+                         verify: lambda { |sessions|
+                           ExpectBenchmark.check(sessions.size == 32 && sessions.all?(&:closed?))
+                           ExpectBenchmark.check(sessions.all? { |session| session.buffer.empty? })
+                           ExpectBenchmark.check(!reader.closed? && !producer.closed?)
+                         }) do
+      Array.new(32) do
+        Expect.open(reader) do |session|
+          patterns.first(rules).each { |pattern| session.on_sequence(pattern) }
+          if first_relay
+            session.buffer = "x" * 4096
+            Expect.interconnect(session, timeout: 0)
+          end
+          session
+        end
+      end
+    end
+  end
+ensure
+  reader.close
+  producer.close
+end
 counts.each do |count|
   if (count * 2) + 32 > Process.getrlimit(:NOFILE).first
     raise ArgumentError, "#{count} sessions need a larger process fd limit; run ulimit -n before this benchmark"

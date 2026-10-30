@@ -52,7 +52,7 @@ class ProcessInterruptionTest < ExpectTest
   def test_hard_close_reaps_a_real_child_after_one_wait_interruption
     session = child('Signal.trap("HUP", "IGNORE"); Signal.trap("TERM", "IGNORE"); puts "ready"; sleep 60',
                     raw: true)
-    assert_equal 1, session.expect("ready", timeout: 2).number
+    assert_equal 1, session.expect("ready", timeout: 2).match_number
     pid = session.pid
     original = Process.method(:waitpid2)
     interrupted = false
@@ -203,7 +203,7 @@ class ProcessInterruptionTest < ExpectTest
 
   def test_forked_copy_cannot_reap_signal_or_detach_the_parent_child
     session = child('puts "ready"; sleep 60', raw: true)
-    assert_equal 1, session.expect("ready", timeout: 2).number
+    assert_equal 1, session.expect("ready", timeout: 2).match_number
     reader, writer = IO.pipe
     @ios.push(reader, writer)
     probe = fork do

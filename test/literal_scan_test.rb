@@ -42,7 +42,7 @@ class LiteralScanTest < ExpectTest
     writer.write("word:")
     session.__send__(:read_available)
     result = matcher.__send__(:find_match)
-    assert_equal 1, result[1].number
+    assert_equal 1, result[1].match_number
     assert_equal [7, 9, []], result[2]
   end
 
@@ -51,10 +51,10 @@ class LiteralScanTest < ExpectTest
     list = Expect::PatternList.new([session], %w[preferred ready])
     matcher = Expect.const_get(:Matcher, false).new(list, nil)
     session.buffer = "ready"
-    assert_equal 2, matcher.__send__(:find_match)[1].number
+    assert_equal 2, matcher.__send__(:find_match)[1].match_number
     writer.write(" preferred")
     session.__send__(:read_available)
-    assert_equal 1, matcher.__send__(:find_match)[1].number
+    assert_equal 1, matcher.__send__(:find_match)[1].match_number
   end
 
   def test_destructive_buffer_changes_invalidate_old_misses
@@ -64,12 +64,12 @@ class LiteralScanTest < ExpectTest
     session.buffer = "x" * 100
     assert_nil matcher.__send__(:find_match)
     session.buffer = "start"
-    assert_equal 1, matcher.__send__(:find_match)[1].number
+    assert_equal 1, matcher.__send__(:find_match)[1].match_number
     session.clear_buffer
     assert_nil matcher.__send__(:find_match)
     writer.write("token")
     session.__send__(:read_available)
-    assert_equal 2, matcher.__send__(:find_match)[1].number
+    assert_equal 2, matcher.__send__(:find_match)[1].match_number
     session.expect("token", timeout: 0)
     session.buffer_limit = 8
     writer.write("xxxxstart")
@@ -77,7 +77,7 @@ class LiteralScanTest < ExpectTest
     assert_equal [3, 5, []], matcher.__send__(:find_match)[2]
     session.clear_buffer
     session.__send__(:restore_relay_buffer, "token")
-    assert_equal 2, matcher.__send__(:find_match)[1].number
+    assert_equal 2, matcher.__send__(:find_match)[1].match_number
   end
 
   def test_repeated_scans_equal_a_fresh_matcher_across_operation_sequences
@@ -98,7 +98,7 @@ class LiteralScanTest < ExpectTest
       when 3
         session.__send__(:restore_relay_buffer, chunks.sample(random:).b)
       when 4
-        session.expect("x", timeout: 0).number
+        session.expect("x", timeout: 0).match_number
       else
         writer.write(chunks.sample(random:))
         session.__send__(:read_available)
@@ -122,6 +122,6 @@ class LiteralScanTest < ExpectTest
   private
 
   def signature(result)
-    result ? [result[0], result[1].number, result[2]] : []
+    result ? [result[0], result[1].match_number, result[2]] : []
   end
 end

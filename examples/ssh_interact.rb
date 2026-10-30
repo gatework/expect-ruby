@@ -47,8 +47,8 @@ begin
   Dir.mktmpdir("expect-known-hosts-") do |temporary|
     args = SSHExample.arguments(options, directory: temporary, prompt: ScriptProbe::PROMPT)
     session = Expect.spawn(*args, raw: true, write_timeout: 5)
-    login = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).number
-    ScriptProbe.check(login == 1, "SSH password prompt missing (#{session.error || "authentication rejected"})")
+    login = session.expect(/password:\s*\z/i, /Permission denied/i, timeout: 10).match_number
+    ScriptProbe.check(login == 1, "SSH password prompt missing (#{session.last_result.status})")
     session.write(password, "\n")
     runner = ScriptProbe::Runner.new(session, timeout: 10).ready!
     InteractProbe.prepare(session, echo: !automatic)

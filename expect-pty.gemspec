@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.description = "Automate interactive programs with PTY sessions, pattern matching, callbacks, " \
                      "timeouts, logging and multi-session IO."
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.4"
+  spec.required_ruby_version = ">= 4.0.6"
   spec.files = Dir[
     "lib/**/*.rb", "sig/**/*.rbs", "README.md", "README.zh-CN.md", "LICENSE", "CHANGELOG.md",
     "docs/API.md", "docs/COMPATIBILITY.md", "docs/MIGRATION.md"

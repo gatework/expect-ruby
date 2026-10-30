@@ -8,7 +8,7 @@ require_relative "literal_scan"
 # 为会话补充人工接管和多路 IO 转接；核心会话定义位于 session.rb。
 module Expect
   # 为公开 Session 混入转义注册与人工接管接口；协作方法各自标记为内部协议。
-  # 宿主提供真实读写 IO、缓冲及 outputs；本模块保存转义、显示历史和待写游标。
+  # 宿主提供真实读写 IO 和缓冲；本模块保存输出目标、转义、显示历史和待写游标。
   # Relay 暂借输入缓冲并调度游标，Matcher 可在转义回调中临时接管，退出时归还未消费尾部。
   module Interaction
     # 正则没有“潜在部分匹配”接口，只保留有限历史；已转发的历史字节不能撤回。
@@ -54,7 +54,7 @@ module Expect
             end
       raise ArgumentError, "escape sequence must not be empty" if key == ""
 
-      @sequences[key] = block || STOP
+      self.sequences = @sequences.merge(key => block || STOP).freeze
       self
     end
 
@@ -79,15 +79,34 @@ module Expect
     # 超时或异常后仍有未交付的数据；重新 interconnect 同一源会话可继续发送。
     def pending_output? = @pending_writes.any? { |output| !output.done? }
 
+    # 返回协议转发目标的副本，外部修改不能原地改变转发图。
+    def outputs = @outputs.dup
+
+    # 先校验整个数组再替换，失败时保留原输出图；目标始终由调用方拥有。
+    def outputs=(targets)
+      unless targets.is_a?(Array) && targets.all? { |target| target.respond_to?(:write) }
+        raise ArgumentError, "outputs must be an Array of writers"
+      end
+
+      @outputs = targets.dup
+    end
+
+    # 普通接收同步交付原始字节；日志脱敏不影响协议输出。
+    # @api private
+    def propagate(data)
+      @outputs.each { |output| emit(output, data) }
+    end
+
     # 将待处理输入排入唯一的转接发送队列；返回 :ready、:queued、:stopped 或 :timeout。
     # 字面序列暂存潜在前缀，正则序列结合历史匹配；final 为真时不再等待后续字节。
     # @api private
     def self.queue_input(session, buffer, final: false, deadline: nil, literal_scan: nil)
       loop do
-        sequences = session.sequences.except(:eof)
+        sequences = session.text_sequences
         history = session.relay_history
         found, regexp_scanned, utf8_regexp = scan_sequences(
-          buffer, sequences, history, final:, literal_scan:, generation: session.buffer_generation
+          buffer, sequences, history, final:, literal_scan:, generation: session.buffer_generation,
+                                      compiled: session.sequence_patterns
         )
         return :timeout if expired?(deadline)
 
@@ -141,17 +160,19 @@ module Expect
     end
 
     # 单轮正则共用一个组合文本；回调返回后下一轮重新取得规则和历史。
-    def self.scan_sequences(buffer, sequences, history, final:, literal_scan: nil, generation: nil)
+    def self.scan_sequences(buffer, sequences, history, final:, literal_scan: nil, generation: nil, compiled: {})
       text = nil
       utf8_regexp = false
       earliest = nil
+      earliest_offset = Float::INFINITY
       # 只保存最早候选，同位置不替换先注册者；仍扫描全部正则以校验零宽规则并收集编码状态。
       sequences.each do |key, handler|
         if key.is_a?(Regexp)
           # 仅在本轮扫描复用组合文本；回调可能更换规则或消费缓冲，下一轮必须重新构造。
           text ||= history + buffer
           utf8_regexp ||= key.fixed_encoding? && key.encoding == Encoding::UTF_8
-          position = Pattern.new(value: key).locate(text, final:, captures: false)
+          pattern = compiled.fetch(key) { Pattern.new(value: key) }
+          position = pattern.locate(text, final:, captures: false)
           next unless position
 
           offset, length, = position
@@ -165,7 +186,10 @@ module Expect
 
           length = key.bytesize
         end
-        earliest = [offset, length, handler] if !earliest || offset < earliest.first
+        if offset < earliest_offset
+          earliest = [offset, length, handler]
+          earliest_offset = offset
+        end
       end
       [earliest, !text.nil?, utf8_regexp]
     end
@@ -173,11 +197,10 @@ module Expect
     # 普通转发和超时排出的字面前缀都属于正则历史，跨次转接时必须接续同一字节流。
     # @api private
     def self.remember_output(session, data)
-      regexps = session.sequences.keys.grep(Regexp)
-      return if regexps.empty?
+      return if session.sequence_patterns.empty?
 
-      utf8 = regexps.any? { |regexp| regexp.fixed_encoding? && regexp.encoding == Encoding::UTF_8 }
-      trim_history(session.relay_history, data, limit: session.buffer_limit || REGEXP_ESCAPE_HISTORY_LIMIT, utf8:)
+      trim_history(session.relay_history, data, limit: session.buffer_limit || REGEXP_ESCAPE_HISTORY_LIMIT,
+                                                utf8: session.utf8_sequences?)
     end
 
     # 只暂存可能拼成完整字面转义的最长后缀。
@@ -221,14 +244,54 @@ module Expect
       end
     end
 
-    # 仅供转接内部保存和恢复注册表，避免公开可变 Hash 绕过 on_sequence 的校验。
+    # 冻结的注册快照只能通过 on_sequence 或内部恢复入口替换，不能绕过编译及历史失效。
     # @api private
     attr_reader :sequences
 
     # @api private
     def sequences=(sequences)
-      @sequences = sequences
-      @literal_prefix_tables&.delete_if { |sequence, _table| !sequences.key?(sequence) }
+      # Hash 的值相等忽略插入顺序；转义优先级必须同时比较声明顺序。
+      return if @sequences == sequences && @sequences.keys == sequences.keys
+
+      @sequences = sequences.frozen? ? sequences : sequences.dup.freeze
+      @literal_prefix_tables.delete_if { |sequence, _table| !sequences.key?(sequence) }
+    end
+
+    # 连续声明只发布注册快照；首次扫描统一编译，后续读取不重复创建集合及正则包装。
+    # @api private
+    def text_sequences
+      return @text_sequences if @compiled_sequences.equal?(@sequences)
+
+      registered = @sequences
+      text = registered.except(:eof).freeze
+      patterns = text.each_key.with_object({}) do |key, patterns|
+        patterns[key] = @sequence_patterns[key] || Pattern.new(value: key) if key.is_a?(Regexp)
+      end.freeze
+      utf8 = patterns.each_key.any? do |regexp|
+        regexp.fixed_encoding? && regexp.encoding == Encoding::UTF_8
+      end
+      # 编译结果一起发布；失败时旧缓存仍完整，下次扫描可以重新编译，不读取陈旧规则。
+      Thread.handle_interrupt(Object => :never) do
+        @text_sequences = text
+        @sequence_patterns = patterns
+        @utf8_sequences = utf8
+        @compiled_sequences = registered
+      end
+      text
+    end
+
+    # 冻结的正则包装快照；已存在的正则跨规则变更复用。
+    # @api private
+    def sequence_patterns
+      text_sequences
+      @sequence_patterns
+    end
+
+    # 正则历史的编码边界由当前已注册规则决定。
+    # @api private
+    def utf8_sequences?
+      text_sequences
+      @utf8_sequences
     end
     # 冻结字面规则对应的 KMP 前缀表，跨转接复用，避免每个读块重新编译长规则。
     # @api private
@@ -252,8 +315,9 @@ module Expect
     # 同规则保留跨次转接的连续历史；换规则或消费、改写输入后，不能拼接旧的前缀。
     # @api private
     def relay_history
-      sequences = @sequences.except(:eof)
-      @relay_history = "".b unless @relay_history_sequences == sequences
+      # interact 的临时注册和恢复不消费输入；只比较实际扫描时的规则，保留同规则跨次接管的历史。
+      sequences = text_sequences
+      @relay_history.clear unless @relay_history_sequences == sequences
       @relay_history_sequences = sequences
       @relay_history
     end
@@ -266,6 +330,22 @@ module Expect
     end
 
     private
+
+    # 转接状态集中在所属模块初始化；缓冲和进程状态仍由 Session 管理。
+    def initialize_interaction
+      @outputs = []
+      @sequences = {}.freeze
+      @text_sequences = @sequence_patterns = @sequences
+      @compiled_sequences = @sequences
+      @utf8_sequences = false
+      @literal_prefix_tables = {}
+      @pending_writes = []
+      @interact_inputs = {}.compare_by_identity
+      @interact_output = nil
+      @interaction_buffer = @relay_owner = @relay_callback = nil
+      @relay_history = "".b
+      @relay_history_sequences = @text_sequences
+    end
 
     # 同一输入 IO 重用一个借用会话，以保留上次接管预读的尾部并避免不断积累包装器。
     def interact_source(input)

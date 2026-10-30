@@ -2,7 +2,6 @@
 
 require "yard"
 require "rbs"
-require "pathname"
 require_relative "../lib/expect/pty"
 
 # 从真实方法查找链校验接口；YARD 标记的内部协议不属于发布契约。
@@ -57,6 +56,21 @@ module APICheck
       raise "Undocumented public API: #{path}" unless object && !object.docstring.empty?
 
       validate_declaration!(type, method, path, owner, definition)
+    end
+    validate_existing_methods!(type, separator, definition)
+  end
+
+  def self.validate_existing_methods!(type, separator, definition)
+    # 反向检查仅属于当前类型的声明，防止已移除接口继续留在消费者签名中。
+    definition.methods.each do |method, declaration|
+      next unless declaration.defined_in.to_s == "::#{type}"
+
+      available = if separator == "." then type.respond_to?(method)
+                  else method == :initialize || type.public_method_defined?(method)
+                  end
+      next if available
+
+      raise "Stale public RBS declaration: #{type}#{separator}#{method}"
     end
   end
 

@@ -12,7 +12,7 @@ class MultiSessionTest < ExpectTest
       on("first", from: first)
       on(/second:(\d+)/, from: second)
     end
-    assert_equal 2, result.number
+    assert_equal 2, result.match_number
     assert_same second, result.session
     assert_equal ["42"], result.captures
     assert_equal "irrelevant", first.buffer
@@ -22,7 +22,7 @@ class MultiSessionTest < ExpectTest
     first, = pipe_session
     second, writer = pipe_session
     writer.write("ready")
-    assert_equal 1, Expect.expect("ready", from: [first, second], timeout: 1).number
+    assert_equal 1, Expect.expect("ready", from: [first, second], timeout: 1).match_number
     assert_equal "ready", second.match
   end
 
@@ -40,7 +40,7 @@ class MultiSessionTest < ExpectTest
       on("done", from: second)
     end
     assert_equal [first], ended
-    assert_equal 2, result.number
+    assert_equal 2, result.match_number
     assert_same second, result.session
   end
 
@@ -109,7 +109,7 @@ class MultiSessionTest < ExpectTest
       on("missing", from: other)
       on("right", from: session)
     end
-    assert_equal 3, result.number
+    assert_equal 3, result.match_number
     assert_equal "right", result.match
   end
 

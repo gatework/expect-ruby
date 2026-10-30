@@ -84,14 +84,14 @@ class EdgeCaseTest < ExpectTest
   def test_stdout_works_with_utf8_banner_and_ascii_regexp
     session, writer = pipe_session
     writer.write("欢迎登录\nprompt>")
-    assert_equal 1, session.expect(/prompt>/, timeout: 1).number
+    assert_equal 1, session.expect(/prompt>/, timeout: 1).match_number
     assert_equal "欢迎登录\n".b, session.before
   end
 
   def test_invalid_fixed_encoding_regexp_data_raises
     session, = pipe_session
     session.buffer = "\xffinvalid".b
-    assert_raises(EncodingError) { session.expect(/中文/, timeout: 0).number }
+    assert_raises(EncodingError) { session.expect(/中文/, timeout: 0).match_number }
   end
 
   def test_replacing_transcript_with_invalid_target_preserves_current_writer
@@ -116,7 +116,7 @@ class EdgeCaseTest < ExpectTest
       file.write("first\nsecond\n")
       file.rewind
       Expect.open(file) do |session|
-        assert_equal 1, session.expect(/^second$/, timeout: 0).number
+        assert_equal 1, session.expect(/^second$/, timeout: 0).match_number
         assert_equal "first\n", session.before
         assert session.expect(:eof, timeout: 1).eof?
       end
@@ -131,7 +131,7 @@ class EdgeCaseTest < ExpectTest
     @sessions << session
     slave.write("end")
     slave.flush
-    assert_equal 1, session.expect("end", timeout: 1).number
+    assert_equal 1, session.expect("end", timeout: 1).match_number
     slave.close
     assert bounded { session.expect(:eof, timeout: 1) }.eof?
   end
@@ -143,7 +143,7 @@ class EdgeCaseTest < ExpectTest
     session = Expect.open(incoming, writer: outgoing)
     @sessions << session
     producer.write("ready")
-    assert_equal 1, session.expect("ready", timeout: 1).number
+    assert_equal 1, session.expect("ready", timeout: 1).match_number
     assert_equal 3, session.write("abc")
     assert_equal "abc", consumer.read(3)
     session.close
@@ -153,7 +153,7 @@ class EdgeCaseTest < ExpectTest
 
   def test_control_character_delivers_signal_to_foreground_child
     session = child('Signal.trap("INT") { exit 42 }; puts "ready"; sleep 30')
-    assert_equal 1, session.expect("ready", timeout: 2).number
+    assert_equal 1, session.expect("ready", timeout: 2).match_number
     session.write("\x03")
     assert_equal 42, session.wait(timeout: 2).exitstatus
   end
@@ -177,7 +177,7 @@ class EdgeCaseTest < ExpectTest
     end
     assert_equal [first], seen
     assert_same second, result.session
-    assert_equal 3, result.number
+    assert_equal 3, result.match_number
   end
 
   def test_signal_interruption_preserves_deadline
@@ -190,7 +190,7 @@ class EdgeCaseTest < ExpectTest
       end
       writer.write("ready")
     end
-    assert_equal(1, bounded { session.expect("ready", timeout: 1).number })
+    assert_equal(1, bounded { session.expect("ready", timeout: 1).match_number })
   ensure
     Signal.trap("USR1", old_handler) if old_handler
   end
@@ -206,8 +206,8 @@ class EdgeCaseTest < ExpectTest
   def test_invalid_options_raise_before_spawning
     assert_raises(ArgumentError) { Expect::Session.new(typo: true) }
     session, = pipe_session
-    assert_raises(ArgumentError) { session.expect(0, "x").number }
-    assert_raises(ArgumentError) { session.expect(["-unknown", "x"], timeout: 0).number }
+    assert_raises(ArgumentError) { session.expect(0, "x").match_number }
+    assert_raises(ArgumentError) { session.expect(["-unknown", "x"], timeout: 0).match_number }
     assert_raises(ArgumentError) { session.on_sequence("") }
   end
 

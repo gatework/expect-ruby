@@ -71,7 +71,7 @@ class DiagnosticsTest < ExpectTest
     assert_same failure, result.error
     assert_equal "ready", session.buffer
     session.logger = nil
-    assert_equal 1, session.expect("ready", timeout: 0).number
+    assert_equal 1, session.expect("ready", timeout: 0).match_number
   end
 
   def test_nested_diagnostic_wait_preserves_the_outer_match_result
@@ -124,7 +124,7 @@ class DiagnosticsTest < ExpectTest
       session.__send__(:read_available)
       refute_includes log.string, "password"
     end
-    assert_equal 1, session.expect("password!", timeout: 0).number
+    assert_equal 1, session.expect("password!", timeout: 0).match_number
     writer.close
     assert session.expect(:eof, timeout: 1).eof?
     assert_equal "[FILTERED]!", log.string
@@ -347,7 +347,7 @@ class DiagnosticsTest < ExpectTest
         assert_equal initial_send, peer.read(initial_send.bytesize)
       end
       peer.write("xyz")
-      assert_equal 1, session.expect("xyz", timeout: 0).number
+      assert_equal 1, session.expect("xyz", timeout: 0).match_number
       replacement = StringIO.new
       session.logger = Logger.new(replacement)
       assert_equal "ack", peer.read(3)
@@ -366,7 +366,7 @@ class DiagnosticsTest < ExpectTest
     writer.write("ready")
     _stdout, stderr = capture_io do
       output.stub(:write, ->(_) { raise IOError, "logger controlled failure" }) do
-        assert_equal 1, session.expect("ready", timeout: 1).number
+        assert_equal 1, session.expect("ready", timeout: 1).match_number
       end
     end
     assert_includes stderr, "logger controlled failure"

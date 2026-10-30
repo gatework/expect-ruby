@@ -1,5 +1,24 @@
 # 验证记录
 
+## 2026-10-30：精简结构与 Ruby 4 结果契约
+
+在 RVM Ruby 4.0.6 / Bundler 4.0.16 / Linux x86_64 中运行 `bash script/ci`：
+641 runs、11,814 assertions，零失败、错误或跳过；104 个 Ruby 文件 lint、API/RBS、示例、七类基准 smoke、
+构建及普通/Bundler 隔离安装均通过。生产类和模块数量不增加，现有文件继续承担其领域职责。
+
+新增回归覆盖结果状态一致性、with 校验、异常身份与安全摘要；转义规则冻结、编译复用、规则重排的优先级。
+既有回归继续覆盖终端模式、输入所有权移交、异步取消、跨次 interact 历史、字节编码和短写恢复。
+
+一次与其他仓库并行的测试出现三个短时限失败：子进程一秒回收、慢发回复一秒等待、Kibitz 一秒启动/转接预算。
+最终候选在没有并行测试负载时运行完整 CI 全部通过，保留失败日志供追溯，没有修改失败场景的等待逻辑、放宽期限或跳过测试。
+最终日志为 `tmp/lean-ci.log`，并行运行日志为 `tmp/lean-ci-concurrent.log`。
+最终新增的构造/首次转接基准另通过 lint 与 smoke；串行性能数据和代价见 PERFORMANCE.md。
+配套 net-connector 默认及最低依赖测试各 1,285 项通过；VXLAN 483、Wireless 343 项测试及各自 lint/示例通过。
+九模块候选在普通 Ruby 和最小 Bundler 隔离安装中通过版本约束、领域 Batch、schema 4、示例、CLI 与真实本地 PTY 验证，
+制品 SHA-256 清单位于工作区 `.expect-review-20261030/stack/manifest.json`。
+
+Linux/macOS × Ruby 4.0.6/4.0 的远端矩阵已配置；本轮本地结果不代表 macOS、远端 Actions、真实 SSH 或网络设备验收。
+
 ## 2026-10-18：结果诊断与工厂异常清理
 
 基线为 `832cb39`，起始工作区干净。Result 的 inspect/to_s 改为仅显示匹配序号和错误状态，不检查文本、捕获、

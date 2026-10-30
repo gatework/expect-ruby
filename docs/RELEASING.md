@@ -60,7 +60,7 @@ git push origin v0.7.4
 推送版本标签会自动启动 Release；也可在 Actions → Release → Run workflow 选择同一标签恢复失败任务。
 本地与 Actions 不应同时上传同一版本，优先由标签工作流完成发布。
 
-发布作业先验证标签与版本号一致，再复用 Linux/macOS、Ruby 3.4/4.0 共 4 个 CI 环境。全部通过后，下载 Ubuntu / Ruby
+发布作业先验证标签与版本号一致，再复用 Linux/macOS、Ruby 4.0.6/4.0 共 4 个 CI 环境。全部通过后，下载 Ubuntu / Ruby
 4.0 作业验证过的 Gem，配置 OIDC 凭据并交给同一个发布脚本；发布阶段不重新构建。脚本仍核对提交内容、GitHub 附件和 RubyGems 下载包的 SHA256。
 
 未配置匹配的可信发布者时，OIDC 交换会明确失败，不能将它当成发布成功。补齐配置后使用原 CI 产物恢复；本地发布保留现有 Gem 登录及 MFA 方式。

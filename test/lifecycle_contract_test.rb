@@ -5,7 +5,7 @@ require_relative "test_helper"
 class LifecycleContractTest < ExpectTest
   def test_external_reaping_releases_pid_without_fabricating_process_status
     session = child('puts "ready"; exit 7', raw: true)
-    assert_equal 1, session.expect("ready", timeout: 2).number
+    assert_equal 1, session.expect("ready", timeout: 2).match_number
     pid = session.pid
     assert_equal(7, bounded { Process.waitpid2(pid).last.exitstatus })
     refute session.alive?
@@ -58,11 +58,11 @@ class LifecycleContractTest < ExpectTest
     session, writer = pipe_session
     timeout = session.expect("missing", timeout: 0)
     assert timeout.timeout?
-    assert_equal :timeout, timeout.error
+    assert_equal :timeout, timeout.status
     writer.close
     eof = session.expect(:eof, timeout: 1)
     assert eof.eof?
-    assert_equal :eof, eof.error
+    assert_equal :eof, eof.status
     failure = Expect::WriteTimeout.new(bytes_written: 3)
     assert_kind_of IOError, failure
     assert_equal 3, failure.bytes_written

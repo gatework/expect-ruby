@@ -8,15 +8,15 @@ class RubyAPITest < ExpectTest
     session.buffer = "before value=42 after"
     session.expect(/value=(\d+)/, timeout: 0)
     result = session.last_result
-    values = [1, nil, "value=42", "before ", " after", session, ["42"]]
+    values = [:matched, 1, nil, "value=42", "before ", " after", session, ["42"]]
 
     refute_respond_to result, :to_a
     assert_equal values, result.deconstruct
     assert_equal ["42"], result.to_h.fetch(:captures)
     refute_respond_to result, :to_ary
-    number, error, match, before, after, connection, captures = result.deconstruct
-    assert_equal values, [number, error, match, before, after, connection, captures]
-    assert((result in { number: 1, captures: ["42"] }))
+    status, match_number, error, match, before, after, connection, captures = result.deconstruct
+    assert_equal values, [status, match_number, error, match, before, after, connection, captures]
+    assert((result in { match_number: 1, captures: ["42"] }))
   end
 
   def test_send_retains_ruby_reflection_and_write_sends_bytes
@@ -40,7 +40,7 @@ class RubyAPITest < ExpectTest
         Expect.continue
       end
       on(/hello (\w+)/)
-    end.number
+    end.match_number
     assert_equal 2, matched
     assert_equal "hello Ruby", session.match
     assert_equal ["Ruby"], session.captures
@@ -74,14 +74,14 @@ class RubyAPITest < ExpectTest
     matched = session.expect(timeout: 0) do |patterns|
       assert_same owner, self
       patterns.on("ready") { assert_same owner, self }
-    end.number
+    end.match_number
     assert_equal 1, matched
   end
 
   def test_optional_block_parameter_still_receives_the_pattern_builder
     session, = pipe_session
     session.buffer = "ready"
-    matched = session.expect(timeout: 0) { |patterns = nil| patterns.on("ready") }.number
+    matched = session.expect(timeout: 0) { |patterns = nil| patterns.on("ready") }.match_number
     assert_equal 1, matched
   end
 
@@ -104,7 +104,7 @@ class RubyAPITest < ExpectTest
       session.expect(timeout: 0) do
         on("ready")
         raise "definition failed"
-      end.number
+      end.match_number
     end
     assert_equal "ready", session.to_io.read_nonblock(5)
   end
@@ -129,7 +129,7 @@ class RubyAPITest < ExpectTest
       patterns.on(/hello (\w+):(\d+)/)
     end
 
-    assert_equal 3, result.number
+    assert_equal 3, result.match_number
     assert_equal %w[Ruby 123], result.captures
     assert_same session, result.session
     assert_equal 0, session.wait(timeout: 1).exitstatus
@@ -144,14 +144,14 @@ class RubyAPITest < ExpectTest
       sleep 0.02
       writer.write("ready")
     end
-    assert_equal(1, bounded { session.expect("ready", timeout: nil).number })
+    assert_equal(1, bounded { session.expect("ready", timeout: nil).match_number })
     assert_equal 0, session.timeout
   end
 
   def test_block_uses_keyword_timeout_and_returns_pattern_number
     session, = pipe_session
     session.buffer = "ready"
-    number = session.expect(timeout: 0) { |patterns| patterns.on("ready") }.number
+    number = session.expect(timeout: 0) { |patterns| patterns.on("ready") }.match_number
     assert_equal 1, number
   end
 
@@ -188,7 +188,7 @@ class RubyAPITest < ExpectTest
       session.expect(timeout: 0) do
         timeout { nil }
         timeout { nil }
-      end.number
+      end.match_number
     end
     assert_equal "ready", session.to_io.read_nonblock(5)
   end
@@ -212,7 +212,7 @@ class RubyAPITest < ExpectTest
       patterns.on("first")
       patterns.on("second")
     end
-    assert_equal 1, result.number
+    assert_equal 1, result.match_number
     assert_equal "second ", result.before
   end
 
@@ -240,7 +240,7 @@ class RubyAPITest < ExpectTest
       session.expect(timeout: 0) do |patterns|
         patterns.on("ready") { flunk "callbacks must wait until configuration finishes" }
         raise "configuration failed"
-      end.number
+      end.match_number
     end
     assert_nil session.last_result
     assert_equal "ready", session.to_io.read_nonblock(5)
@@ -252,7 +252,7 @@ class RubyAPITest < ExpectTest
     error = assert_raises(RuntimeError) do
       session.expect(timeout: 0) do |patterns|
         patterns.on("ready") { raise "callback failed" }
-      end.number
+      end.match_number
     end
     assert_equal "callback failed", error.message
     assert_equal "ready", session.match
@@ -271,7 +271,7 @@ class RubyAPITest < ExpectTest
       end
     end
     assert_equal [session], observed
-    assert_equal 1, result.number
+    assert_equal 1, result.match_number
   end
 
   def test_continuation_without_reset_observes_the_deadline
@@ -307,7 +307,7 @@ class RubyAPITest < ExpectTest
       patterns.on("missing", from: first)
       patterns.on(/ready:(\d+)/, from: [first, second])
     end
-    assert_equal 2, result.number
+    assert_equal 2, result.match_number
     assert_same second, result.session
     assert_equal ["42"], result.captures
   end
@@ -315,7 +315,7 @@ class RubyAPITest < ExpectTest
   def test_class_keyword_from_selects_a_session
     session, writer = pipe_session
     writer.write("ready")
-    assert_equal 1, Expect.expect("ready", from: session, timeout: 1).number
+    assert_equal 1, Expect.expect("ready", from: session, timeout: 1).match_number
   end
 
   def test_eof_continuation_keeps_other_sessions_active
@@ -333,7 +333,7 @@ class RubyAPITest < ExpectTest
     end
     assert_equal [first], observed
     assert_same second, result.session
-    assert_equal 2, result.number
+    assert_equal 2, result.match_number
   end
 
   def test_timeout_before_class_patterns_receives_active_sessions

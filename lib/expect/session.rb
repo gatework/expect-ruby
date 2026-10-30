@@ -50,8 +50,8 @@ module Expect
     # 等待自身输入，返回 Result；匹配消费和接收重置策略只对本轮有效。
     def expect(*patterns, timeout: self.timeout, deadline: nil, consume: true, reset_timeout_on_read: false,
                search_window: nil, &)
-      Expect.__send__(:run_expect, [self], patterns, timeout,
-                      deadline:, consume:, reset_timeout_on_read:, search_window:, &)
+      Expect.run_expect([self], patterns, timeout,
+                        deadline:, consume:, reset_timeout_on_read:, search_window:, &)
     end
 
     # 在新控制终端中执行命令并同步确认 exec 结果；同一会话只能启动一次。
@@ -119,12 +119,12 @@ module Expect
     def match = @last_result&.match
 
     # 最近命中的模式序号；EOF、超时或尚无结果时为 nil。
-    def match_number = @last_result&.number
+    def match_number = @last_result&.match_number
 
     # 最近捕获值的不可变数组；未参与的捕获为 nil。
     def captures = @last_result&.captures || []
 
-    # 最近的 EOF、超时事件或原始 IO 异常。
+    # 最近结果的原始 IO 异常；等待状态通过 last_result.status 查询。
     def error = @last_result&.error
 
     # 返回缓冲副本，防止调用方原地修改绕过裁剪规则。
@@ -309,7 +309,8 @@ module Expect
     # @api private
     def record_match(pattern, position, consume: true)
       offset, length, captures = position
-      @last_result = Result.new(number: pattern.number, before: @buffer.byteslice(0, offset),
+      @last_result = Result.new(status: :matched, match_number: pattern.match_number,
+                                before: @buffer.byteslice(0, offset),
                                 match: @buffer.byteslice(offset, length), after: @buffer.byteslice((offset + length)..),
                                 session: self, captures:)
       if consume
@@ -320,22 +321,28 @@ module Expect
       end
       # 诊断回调可能嵌套等待；恢复本次结果后再交给正式模式回调，不能返回内层等待的结果。
       result = @last_result
-      trace { "matched pattern #{pattern.number}" }
+      trace { "matched pattern #{pattern.match_number}" }
       @last_result = result
     end
 
-    # 记录超时、EOF 或原始 IO 异常，保留当前缓冲快照并清除旧匹配及捕获组。
+    # 记录原始 IO 异常，保留当前缓冲快照并清除旧匹配及捕获组。
     # @api private
     def record_error(error)
       # Result 自行复制冻结文本，无须先通过公开 buffer 再复制一遍。
-      @last_result = Result.new(error:, before: @buffer, session: self, captures: [])
+      @last_result = Result.new(status: :error, error:, before: @buffer, session: self)
+    end
+
+    # 超时是本次等待的正常终止事件，未消费输入继续留在缓冲中。
+    # @api private
+    def record_timeout
+      @last_result = Result.new(status: :timeout, before: @buffer, session: self)
     end
 
     # 输入结束时将剩余缓冲放入 before 并清空，尝试回收但不终止仍活跃的子进程。
     # @api private
     def record_eof
       process_status
-      record_error(:eof)
+      @last_result = Result.new(status: :eof, before: @buffer, session: self)
       clear_buffer
       @last_result
     end
@@ -403,18 +410,8 @@ module Expect
       @buffer_generation = 0
       @received_bytes = 0
       @buffer_discarded_bytes = 0
-      @outputs = []
-      @sequences = {}
-      @literal_prefix_tables = {}
-      @pending_writes = []
-      @interact_inputs = {}.compare_by_identity
-      @interact_output = nil
-      @interaction_buffer = @relay_owner = @relay_callback = nil
-      @relay_history = "".b
-      @relay_history_sequences = {}
-      @secrets = @transcript_redactor = nil
-      @diagnostic_redactors = {}
-      @logger = @transcript = nil
+      initialize_interaction
+      initialize_logging
       @last_result = @command = nil
       @closed = @eof = @receiving = false
       self.timeout = timeout

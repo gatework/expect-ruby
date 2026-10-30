@@ -71,7 +71,7 @@ class InterconnectTest < ExpectTest
     result = nil
     session.on_sequence("!") do
       writer.write("ready tail")
-      result = session.expect("ready", timeout: 0.05).number
+      result = session.expect("ready", timeout: 0.05).match_number
       false
     end
     session.buffer = "!"
@@ -88,7 +88,7 @@ class InterconnectTest < ExpectTest
     session, = pipe_session
     result = nil
     session.on_sequence("!") do
-      result = session.expect("ready", timeout: 0).number
+      result = session.expect("ready", timeout: 0).match_number
       false
     end
     session.buffer = "!ready tail"
@@ -102,7 +102,7 @@ class InterconnectTest < ExpectTest
     session, writer = pipe_session
     session.on_sequence("!") do
       writer.write("\xff".b)
-      session.expect(/ready/u, timeout: 0.05).number
+      session.expect(/ready/u, timeout: 0.05).match_number
     end
     session.buffer = "!prefix"
 
@@ -138,7 +138,7 @@ class InterconnectTest < ExpectTest
     assert session.pending_output?
     assert_empty session.buffer
     session.outputs = []
-    assert_equal 1, session.expect("tail", timeout: 0).number
+    assert_equal 1, session.expect("tail", timeout: 0).match_number
   end
 
   def test_backpressure_reads_still_apply_escape_sequences
@@ -167,7 +167,7 @@ class InterconnectTest < ExpectTest
     assert_equal "tail", target.buffer
     target.transcript = nil
     writer.write("ready")
-    assert_equal 1, target.expect("ready", timeout: 1).number
+    assert_equal 1, target.expect("ready", timeout: 1).match_number
     assert_equal "tail", target.before
   end
 
@@ -465,7 +465,7 @@ class InterconnectTest < ExpectTest
     refute session.eof?
 
     session.transcript = nil
-    assert_equal 1, session.expect("before!", timeout: 0).number
+    assert_equal 1, session.expect("before!", timeout: 0).match_number
     assert_equal "tail", session.buffer
   end
 
@@ -495,7 +495,7 @@ class InterconnectTest < ExpectTest
     Expect.interconnect(session, timeout: 1)
     assert_equal "before", output.string
     assert_equal "before!tail", log.string
-    assert_equal 1, session.expect("tail", timeout: 0).number
+    assert_equal 1, session.expect("tail", timeout: 0).match_number
     assert_equal "before!tail", log.string
   end
 end

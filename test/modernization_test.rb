@@ -3,12 +3,45 @@
 require_relative "test_helper"
 
 class ModernizationTest < ExpectTest
+  def test_result_status_rejects_contradictory_outcomes
+    invalid = [
+      { status: :matched, match_number: 1, match: "ready", error: IOError.new("failed") },
+      { status: :timeout, match_number: 1, match: "ready" },
+      { status: :eof, captures: ["unexpected"] },
+      { status: :error },
+      { status: :matched, match_number: 0, match: "ready" },
+      { status: :matched, match_number: 1 },
+      { status: :timeout, after: "tail" },
+      { status: :unknown },
+      { status: :error, error: :timeout }
+    ]
+    invalid.each { |fields| assert_raises(ArgumentError) { Expect::Result.new(**fields) } }
+    assert_raises(ArgumentError) { Expect::Result.new }
+    result = Expect::Result.new(status: :matched, match_number: 1, match: "")
+    assert result.matched?
+    refute result.timeout?
+    refute result.eof?
+    refute result.error?
+    assert_raises(ArgumentError) { result.with(status: :timeout) }
+    refute_respond_to result, :number
+  end
+
+  def test_result_text_and_capture_validation_does_not_convert_arbitrary_objects
+    object = Object.new
+    object.define_singleton_method(:to_s) { raise "unexpected conversion" }
+    [{ before: object }, { captures: [object] }, { captures: nil }].each do |fields|
+      assert_raises(ArgumentError) { Expect::Result.new(status: :eof, **fields) }
+    end
+  end
+
   def test_result_copies_and_freezes_values_without_freezing_the_session_or_error
     session, = pipe_session
     failure = IOError.new("read failed")
     text = +"bytes"
     captures = [+"capture", nil]
-    result = Expect::Result.new(before: text, match: text, after: text, captures:, session:, error: failure)
+    result = Expect::Result.new(status: :matched, match_number: 1, before: text, match: text, after: text,
+                                captures:, session:)
+    failed = Expect::Result.new(status: :error, before: text, session:, error: failure)
     text.clear
     captures.first.clear
     captures.clear
@@ -24,7 +57,9 @@ class ModernizationTest < ExpectTest
     assert_raises(FrozenError) { result.match.clear }
     refute_respond_to result, :before=
     refute_respond_to result, :to_a
-    assert_same failure, result.error
+    assert_same failure, failed.error
+    assert failed.error?
+    refute failed.matched?
     refute_predicate failure, :frozen?
     refute_predicate session, :frozen?
     changed = result.with(before: +"changed")

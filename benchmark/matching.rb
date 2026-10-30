@@ -3,6 +3,8 @@
 require_relative "support"
 
 runner = ExpectBenchmark::Runner.new("matching")
+# 只在校验时适配旧基线的字段名，计时内仍运行同一匹配算法。
+number_reader = Expect.const_get(:Pattern).members.include?(:match_number) ? :match_number : :number
 reader, writer = IO.pipe
 session = Expect.open(reader)
 begin
@@ -17,9 +19,8 @@ begin
       valid = if hit == :miss
                 result.nil?
               else
-                result && result[0].equal?(session) && result[1].number == index + 1 && result[2] == [
-                  size - 3, 3, []
-                ]
+                result && result[0].equal?(session) && result[1].public_send(number_reader) == index + 1 &&
+                  result[2] == [size - 3, 3, []]
               end
       ExpectBenchmark.check(valid)
     end
@@ -44,7 +45,8 @@ begin
     patterns[-1] = "END"
     patterns.map! { |value| Regexp.new(Regexp.escape(value)) } if kind == :regexp
     verify = lambda do |result|
-      ExpectBenchmark.check(result && result[1].number == 32 && result[2] == [size + (chunks * 1024), 3, []])
+      ExpectBenchmark.check(result && result[1].public_send(number_reader) == 32 &&
+                            result[2] == [size + (chunks * 1024), 3, []])
     end
     runner.measure("stream/#{size}/#{kind}", bytes: size + (chunks * 1024) + 3,
                                              inputs: { initial_bytes: size, chunks:, patterns: 32, kind: },
@@ -135,11 +137,17 @@ session = Expect.open(reader)
 begin
   payload = "x" * (runner.smoke ? 4096 : 1_048_576)
   session.buffer = payload
+  # 两个接口均记录同一超时快照；在计时前选择入口，不修改基线库。
+  record_timeout = if session.respond_to?(:record_timeout)
+                     session.method(:record_timeout)
+                   else
+                     -> { session.record_error(:timeout) }
+                   end
   runner.measure("snapshot/timeout", bytes: 0, inputs: { buffered_bytes: payload.bytesize }, iterations: 1000,
                                      verify: lambda { |result|
                                        ExpectBenchmark.check(result.timeout? && result.before == payload &&
                                                              result.before.frozen?)
-                                     }) { session.record_error(:timeout) }
+                                     }) { record_timeout.call }
   session.clear_buffer
   runner.measure("snapshot/continue", bytes: 0, inputs: { buffered_bytes: payload.bytesize }, iterations: 1000,
                                       verify: lambda { |result|
